@@ -13,8 +13,11 @@ compiler/               Rust compiler + interpreter + toolchain
   src/interpreter.rs    Tree-walk interpreter
   src/linter.rs         Static analysis (unused vars, unnecessary mut, unreachable code, shadowed vars, constant conditions)
   src/codegen.rs        Translators (Nebula → Python, JS, TS, Go, Swift, Kotlin, Rust, C)
+  src/ingest.rs         Reverse translators (Python, JS, TS, Go, Swift, Kotlin, Rust, C → Nebula) via tree-sitter
+  src/mcp.rs            MCP server (JSON-RPC over stdio) — read_code, write_code, search_code tools
+  src/lang_detect.rs    File extension → language detection and dispatch
   src/formatter.rs      Code formatter (AST → canonical Nebula)
-  src/main.rs           CLI entrypoint (run, check, lint, fmt, compact, expand, to-{py,js,ts,go,swift,kt,rs,c}, repl)
+  src/main.rs           CLI entrypoint (run, check, lint, fmt, compact, expand, to-*, from-*, mcp, repl)
 examples/               Working .neb example programs
 ```
 
@@ -35,6 +38,10 @@ cargo run -- to-python examples/hello.neb # Translate to Python
 cargo run -- to-js examples/hello.neb    # Translate to JavaScript
 cargo run -- to-ts examples/hello.neb    # Translate to TypeScript
 cargo run -- to-rs examples/hello.neb    # Translate to Rust
+cargo run -- from-python app.py          # Ingest Python → Nebula
+cargo run -- from-js app.js              # Ingest JavaScript → Nebula
+cargo run -- from-rs lib.rs              # Ingest Rust → Nebula
+cargo run -- mcp                         # Start MCP server (JSON-RPC over stdio)
 cargo run                                # Start REPL
 ```
 
@@ -63,4 +70,4 @@ cargo run                                # Start REPL
 - Zero compiler warnings policy — build must be clean
 - All codegen targets in `codegen.rs` follow the same `XxxGen { indent }` struct pattern — copy `PythonGen` when adding new targets
 - AST enums use exhaustive matching — adding a new variant will cause compiler errors at every match that needs updating; follow the errors
-- All source files are small enough to read in full (~12K lines total across 9 modules)
+- All source files are small enough to read in full (~16K lines total across 12 modules)

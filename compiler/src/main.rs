@@ -2,13 +2,13 @@
 mod ast;
 mod codegen;
 mod compactor;
-mod from_go;
-mod from_js;
-mod from_python;
 mod formatter;
+mod ingest;
 mod interpreter;
+mod lang_detect;
 mod lexer;
 mod linter;
+mod mcp;
 mod parser;
 
 use std::env;
@@ -35,6 +35,7 @@ fn main() {
         let arg = args[1].as_str();
         match arg {
             "repl" => { repl(); return; }
+            "mcp" => { mcp::serve(); return; }
             "--help" | "-h" | "help" => { print_cli_help(); return; }
             "--version" | "-v" | "version" => { println!("Nebula v0.2.0"); return; }
             "builtins" | "api" => { print_builtins(); return; }
@@ -74,9 +75,14 @@ fn main() {
         "to-typescript" | "to-ts" => translate_to(&source, file_path, "typescript"),
         "to-rust" | "to-rs" => translate_to(&source, file_path, "rust"),
         "to-c" => translate_to(&source, file_path, "c"),
-        "from-python" | "from-py" => print!("{}", from_python::convert(&source)),
-        "from-javascript" | "from-js" | "from-ts" => print!("{}", from_js::convert(&source)),
-        "from-go" => print!("{}", from_go::convert(&source)),
+        "from-python" | "from-py" => print!("{}", ingest::from_python(&source)),
+        "from-javascript" | "from-js" => print!("{}", ingest::from_javascript(&source)),
+        "from-typescript" | "from-ts" => print!("{}", ingest::from_typescript(&source)),
+        "from-go" => print!("{}", ingest::from_go(&source)),
+        "from-swift" => print!("{}", ingest::from_swift(&source)),
+        "from-kotlin" | "from-kt" => print!("{}", ingest::from_kotlin(&source)),
+        "from-rust" | "from-rs" => print!("{}", ingest::from_rust(&source)),
+        "from-c" => print!("{}", ingest::from_c(&source)),
         "fmt" | "format" => format_file(&source),
         "compact" | "minify" => print!("{}", compactor::compact(&source)),
         "expand" => print!("{}", compactor::expand(&source)),
@@ -84,7 +90,7 @@ fn main() {
         "tokens" | "tokencount" => show_token_count(&source, file_path),
         other => {
             eprintln!("Unknown command: {other}");
-            eprintln!("Usage: nebula [run|check|lint|fmt|compact|expand|to-python|to-js|to-go|to-swift|to-kt|to-ts|to-rs|repl] [file.neb]");
+            eprintln!("Usage: nebula [run|check|lint|fmt|compact|expand|to-*|from-*|mcp|repl] [file]");
             process::exit(1);
         }
     }
