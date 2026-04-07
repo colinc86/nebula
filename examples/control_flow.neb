@@ -1,0 +1,45 @@
+// Control flow in Nebula
+
+// If as expression
+lt x = 42
+lt label = if x > 0 { "positive" } el { "non-positive" }
+print(label)
+
+// For loop with index
+lt fruits = ["apple", "banana", "cherry"]
+fo i, fruit in fruits {
+    print("{i}: {fruit}")
+}
+
+// While loop
+mt count = 0
+wl count < 5 {
+    print(count)
+    count += 1
+}
+
+// Loop with break value
+mt n = 0
+lp {
+    n += 1
+    if n > 10 { bk }
+}
+print(n)
+
+// Nested control flow
+fo i in 0..5 {
+    fo j in 0..5 {
+        if i == j {
+            print("{i},{j}")
+        }
+    }
+}
+
+// Nil coalescing
+lt maybe = nil
+lt value = maybe ?? "default"
+print(value)
+
+// Ranges
+lt nums = 1..=5
+print(nums)

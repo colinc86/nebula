@@ -1,0 +1,96 @@
+// Comprehensive Nebula example — showcases all major features
+
+// === Enums with pattern matching ===
+en Shape {
+    Circle(radius: Float)
+    Rect(w: Float, h: Float)
+    Point
+}
+
+fn area(s) = mc s {
+    Shape.Circle(r) => 3.14159 * r * r
+    Shape.Rect(w, h) => w * h
+    Shape.Point => 0.0
+    _ => 0.0
+}
+
+fn describe_shape(s) = mc s {
+    Shape.Circle(r) => "circle with radius {r}"
+    Shape.Rect(w, h) => "rectangle {w}x{h}"
+    Shape.Point => "a point"
+    _ => "unknown"
+}
+
+lt shapes = [Shape.Circle(5.0), Shape.Rect(3.0, 4.0), Shape.Point]
+fo s in shapes {
+    lt desc = describe_shape(s)
+    lt a = area(s)
+    print("{desc}: area = {a}")
+}
+
+// === Map literals ===
+lt scores = {"alice": 95, "bob": 87, "charlie": 92}
+print(scores["alice"])
+
+// === Standard library math ===
+print(sqrt(144.0))
+print(abs(-42))
+print(min(10, 3))
+print(max(10, 3))
+
+// === Structs with methods ===
+st Vec2 {
+    x: Float
+    y: Float
+}
+
+im Vec2 {
+    fn new(x: Float, y: Float) -> Vec2 {
+        Vec2 { x, y }
+    }
+
+    fn magnitude(sf) -> Float {
+        sqrt(sf.x * sf.x + sf.y * sf.y)
+    }
+
+    fn to_string(sf) -> String {
+        "Vec2({sf.x}, {sf.y})"
+    }
+}
+
+lt v = Vec2.new(3.0, 4.0)
+print(v.to_string())
+print(v.magnitude())
+
+// === Functional pipeline ===
+lt evens = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].filter(|x| x % 2 == 0)
+lt squared = evens.map(|x| x * x)
+lt result = squared.fold(0, |acc, x| acc + x)
+print(result)  // sum of squares of evens: 4+16+36+64+100 = 220
+
+// === List operations ===
+lt words = ["nebula", "is", "terse"]
+print(words.join(" "))
+print([5, 2, 8, 1, 9].sort())
+
+// === Closures ===
+fn make_adder(n) = |x| x + n
+lt add10 = make_adder(10)
+print(add10(5))   // 15
+print(add10(20))  // 30
+
+// === String methods ===
+lt msg = "Hello, World!"
+print(msg.to_lower())
+print(msg.replace("World", "Nebula"))
+print(msg.contains("World"))
+print(msg.split(", ").join(" | "))
+
+// === Nil coalescing ===
+lt maybe = nil
+print(maybe ?? "default value")
+
+// === Range ===
+lt nums = range(1, 6)
+print(nums)
+print(nums.map(|x| x ** 2))

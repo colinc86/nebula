@@ -1,0 +1,79 @@
+// Conway's Game of Life — stress test for Nebula
+fn make_board(rows, cols) {
+    mt board = []
+    fo _ in 0..rows {
+        mt row = []
+        fo _ in 0..cols { row = row.push(ff) }
+        board = board.push(row)
+    }
+    board
+}
+
+fn set_alive(board, r, c) {
+    mt row = board[r]
+    row[c] = tt
+    mt b = board
+    b[r] = row
+    b
+}
+
+fn count_neighbors(board, r, c) {
+    lt rows = board.len()
+    lt cols = board[0].len()
+    mt count = 0
+    fo dr in [-1, 0, 1] {
+        fo dc in [-1, 0, 1] {
+            if dr == 0 and dc == 0 { ct }
+            lt nr = r + dr
+            lt nc = c + dc
+            if nr >= 0 and nr < rows and nc >= 0 and nc < cols {
+                if board[nr][nc] { count += 1 }
+            }
+        }
+    }
+    count
+}
+
+fn step(board) {
+    lt rows = board.len()
+    lt cols = board[0].len()
+    mt next = make_board(rows, cols)
+    fo r in 0..rows {
+        fo c in 0..cols {
+            lt n = count_neighbors(board, r, c)
+            lt alive = board[r][c]
+            if alive and (n == 2 or n == 3) {
+                next = set_alive(next, r, c)
+            }
+            if not alive and n == 3 {
+                next = set_alive(next, r, c)
+            }
+        }
+    }
+    next
+}
+
+fn display(board) {
+    fo row in board {
+        lt line = row.map(|cell| if cell { "#" } el { "." }).join("")
+        print(line)
+    }
+    print("")
+}
+
+// Glider pattern
+mt board = make_board(6, 6)
+board = set_alive(board, 0, 1)
+board = set_alive(board, 1, 2)
+board = set_alive(board, 2, 0)
+board = set_alive(board, 2, 1)
+board = set_alive(board, 2, 2)
+
+print("Generation 0:")
+display(board)
+
+fo gen in 1..=4 {
+    board = step(board)
+    print("Generation {gen}:")
+    display(board)
+}

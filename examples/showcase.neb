@@ -1,0 +1,53 @@
+// Showcase: Nebula's density — a complete program in minimal tokens
+// Compare this to equivalent Python/JS — Nebula fits more logic per line
+
+// --- Data types ---
+st User { name: String, age: Int, scores: List }
+
+im User {
+    fn new(name, age) = User { name: name, age: age, scores: [] }
+    fn add_score(sf, s) = User { name: sf.name, age: sf.age, scores: sf.scores.push(s) }
+    fn avg(sf) = if sf.scores.is_empty() { 0.0 } el { to_float(sf.scores.sum()) / sf.scores.len() }
+    fn to_string(sf) = "{sf.name} (age {sf.age}, avg {sf.avg()})"
+}
+
+en Grade { A, B, C, D, F }
+
+fn grade(avg) = mc avg {
+    _ if avg >= 90 => Grade.A
+    _ if avg >= 80 => Grade.B
+    _ if avg >= 70 => Grade.C
+    _ if avg >= 60 => Grade.D
+    _ => Grade.F
+}
+
+// --- Build data ---
+lt users = [
+    User.new("Alice", 22).add_score(95).add_score(88).add_score(92),
+    User.new("Bob", 20).add_score(75).add_score(82).add_score(78),
+    User.new("Carol", 21).add_score(65).add_score(70).add_score(68),
+]
+
+// --- Process ---
+fo u in users {
+    lt avg = u.avg()
+    lt g = grade(avg)
+    print("{u.name}: avg={avg}, grade={g}")
+}
+
+// Functional pipeline
+lt top_students = users
+    .filter(|u| u.avg() >= 80)
+    .map(|u| u.name)
+print("Honor roll: {top_students.join(", ")}")
+
+// Stats
+lt all_avgs = users.map(|u| u.avg())
+print("Class average: {all_avgs.sum() / all_avgs.len()}")
+
+// Destructuring + map iteration
+lt word_freq = {"nebula": 5, "is": 3, "terse": 7}
+fo word, count in word_freq {
+    lt bar = "*" * count
+    print("  {word}: {bar}")
+}

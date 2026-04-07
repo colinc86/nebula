@@ -1,0 +1,27 @@
+// math/vec2.neb — 2D vector math library
+
+st Vec2 { x: Float, y: Float }
+
+im Vec2 {
+    fn new(x: Float, y: Float) -> Vec2 {
+        Vec2 { x, y }
+    }
+
+    fn add(sf, other: Vec2) -> Vec2 {
+        Vec2 { x: sf.x + other.x, y: sf.y + other.y }
+    }
+
+    fn magnitude(sf) -> Float {
+        sqrt(sf.x * sf.x + sf.y * sf.y)
+    }
+
+    fn to_string(sf) -> String {
+        "Vec2({sf.x}, {sf.y})"
+    }
+}
+
+fn distance(a: Vec2, b: Vec2) -> Float {
+    lt dx = b.x - a.x
+    lt dy = b.y - a.y
+    sqrt(dx * dx + dy * dy)
+}

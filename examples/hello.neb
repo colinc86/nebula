@@ -1,0 +1,16 @@
+// Hello World in Nebula
+lt name = "World"
+print("Hello, {name}!")
+
+// Basic arithmetic
+lt x = 10
+lt y = 3
+print("Sum: {x} + {y}")
+
+// Functions
+fn factorial(n: Int) -> Int {
+    if n <= 1 { 1 } el { n * factorial(n - 1) }
+}
+
+print(factorial(5))
+print(factorial(10))

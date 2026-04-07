@@ -1,0 +1,11 @@
+[package]
+name = "nebula"
+version = "0.2.0"
+edition = "2021"
+description = "LLM-friendly programming language — maximum code density, universal translatability"
+
+[[bin]]
+name = "nebula"
+path = "src/main.rs"
+
+[dependencies]

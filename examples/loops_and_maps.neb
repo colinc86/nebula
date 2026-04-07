@@ -1,0 +1,64 @@
+// Loops and Maps — demonstrates ct, bk, and Map methods
+
+// === ct in fo loop ===
+// Collect only odd numbers
+mt odds = []
+fo x in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] {
+    if x % 2 == 0 { ct }
+    odds = odds.push(x)
+}
+print("Odd numbers: {odds}")
+
+// === ct in wl loop ===
+// Sum only numbers not divisible by 3
+mt i = 0
+mt sum = 0
+wl i < 20 {
+    i += 1
+    if i % 3 == 0 { ct }
+    sum += i
+}
+print("Sum (skip multiples of 3): {sum}")
+
+// === bk with value from lp ===
+mt n = 0
+lt found = lp {
+    n += 1
+    if n * n > 50 { bk n }
+}
+print("First n where n^2 > 50: {found}")
+
+// === Map methods ===
+lt scores = {"alice": 95, "bob": 87, "charlie": 92, "diana": 98}
+
+print("Keys: {scores.keys()}")
+print("Values: {scores.values()}")
+lt has_alice = scores.contains_key("alice")
+lt has_eve = scores.contains_key("eve")
+print("Has alice? {has_alice}")
+print("Has eve? {has_eve}")
+
+// Iterate over map entries
+fo entry in scores.entries() {
+    print("  {entry}")
+}
+
+// === FizzBuzz with ct ===
+print("FizzBuzz 1-20:")
+mt result = []
+fo n in range(1, 21) {
+    if n % 15 == 0 {
+        result = result.push("FizzBuzz")
+        ct
+    }
+    if n % 3 == 0 {
+        result = result.push("Fizz")
+        ct
+    }
+    if n % 5 == 0 {
+        result = result.push("Buzz")
+        ct
+    }
+    result = result.push(to_string(n))
+}
+print(result.join(" "))

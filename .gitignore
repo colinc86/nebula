@@ -1,0 +1,5 @@
+/compiler/target/
+/linter/
+*.swp
+*.swo
+.DS_Store

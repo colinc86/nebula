@@ -1,0 +1,46 @@
+// Object-oriented programming in Nebula
+
+st Point {
+    x: Float
+    y: Float
+}
+
+im Point {
+    fn new(x: Float, y: Float) -> Point {
+        Point { x, y }
+    }
+
+    fn distance_to(sf, other: Point) -> Float {
+        lt dx = other.x - sf.x
+        lt dy = other.y - sf.y
+        (dx * dx + dy * dy)
+    }
+
+    fn to_string(sf) -> String {
+        "({sf.x}, {sf.y})"
+    }
+}
+
+lt a = Point.new(0.0, 0.0)
+lt b = Point.new(3.0, 4.0)
+
+print(a.to_string())
+print(b.to_string())
+print(a.distance_to(b))  // 25.0 (squared distance for now)
+
+// Struct spread
+lt c = Point { x: 10.0, y: 20.0 }
+lt d = Point { ...c, x: 99.0 }
+print(d.x)  // 99.0
+print(d.y)  // 20.0
+
+// Lists of structs
+lt points = [
+    Point.new(1.0, 2.0),
+    Point.new(3.0, 4.0),
+    Point.new(5.0, 6.0),
+]
+
+fo p in points {
+    print(p.to_string())
+}

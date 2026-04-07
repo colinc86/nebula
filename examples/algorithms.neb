@@ -1,0 +1,72 @@
+// Classic algorithms in Nebula — compact and readable
+
+// Quicksort
+fn qsort(a) {
+    if a.len() <= 1 { rt a }
+    lt p = a[0]
+    lt r = a.skip(1)
+    qsort(r.filter(|x| x <= p)) + [p] + qsort(r.filter(|x| x > p))
+}
+
+// Binary search
+fn bsearch(a, t) {
+    mt lo = 0
+    mt hi = a.len() - 1
+    wl lo <= hi {
+        lt m = (lo + hi) / 2
+        if a[m] == t { rt m }
+        if a[m] < t { lo = m + 1 } el { hi = m - 1 }
+    }
+    -1
+}
+
+// Fibonacci (iterative)
+fn fib(n) {
+    if n <= 1 { rt n }
+    mt a = 0; mt b = 1
+    fo _ in 2..=n { lt t = b; b = a + b; a = t }
+    b
+}
+
+// FizzBuzz (functional)
+fn fizzbuzz(n) = range(1, n + 1).map(|i| {
+    if i % 15 == 0 { "FizzBuzz" }
+    el if i % 3 == 0 { "Fizz" }
+    el if i % 5 == 0 { "Buzz" }
+    el { to_string(i) }
+})
+
+// Matrix multiply
+fn mat_mul(a, b) {
+    lt rows = a.len()
+    lt cols = b[0].len()
+    lt inner = b.len()
+    mt result = []
+    fo r in 0..rows {
+        mt row = []
+        fo c in 0..cols {
+            mt sum = 0
+            fo k in 0..inner { sum += a[r][k] * b[k][c] }
+            row = row.push(sum)
+        }
+        result = result.push(row)
+    }
+    result
+}
+
+// --- Run ---
+lt data = [38, 27, 43, 3, 9, 82, 10]
+print("Sort:   {qsort(data)}")
+
+lt sorted = qsort(data)
+print("Search 43: idx {bsearch(sorted, 43)}")
+print("Search 99: idx {bsearch(sorted, 99)}")
+
+print("Fib(20): {fib(20)}")
+print("Fib(30): {fib(30)}")
+
+print("FizzBuzz: {fizzbuzz(15).join(" ")}")
+
+lt a = [[1, 2], [3, 4]]
+lt b = [[5, 6], [7, 8]]
+print("MatMul: {mat_mul(a, b)}")

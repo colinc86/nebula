@@ -1,0 +1,49 @@
+// Functional programming in Nebula
+
+// Higher-order functions
+fn apply_twice(f, value) {
+    f(f(value))
+}
+
+lt double = |x| x * 2
+print(apply_twice(double, 3))  // 12
+
+// List operations with lambdas
+lt numbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+lt evens = numbers.filter(|x| x % 2 == 0)
+print(evens)
+
+lt doubled = numbers.map(|x| x * 2)
+print(doubled)
+
+lt total = numbers.fold(0, |acc, x| acc + x)
+print(total)  // 55
+
+// Pipe operator
+lt result = [1, 2, 3, 4, 5]
+lt mapped = result.map(|x| x * 3)
+lt filtered = mapped.filter(|x| x > 6)
+print(filtered)
+
+// Closures
+fn make_counter(start) {
+    mt count = start
+    |step| {
+        count += step
+        count
+    }
+}
+
+// Pattern matching
+fn classify(n) {
+    mc n {
+        0 => "zero"
+        1..=9 => "single digit"
+        _ => "big number"
+    }
+}
+
+print(classify(0))
+print(classify(5))
+print(classify(42))

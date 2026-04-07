@@ -1,0 +1,61 @@
+// Data pipeline: CSV-like processing in dense Nebula
+
+fn parse_row(line, sep) = line.split(sep).mp(|s| s.trim())
+
+fn parse_table(header_line, data_lines, sep) {
+    lt fields = parse_row(header_line, sep)
+    data_lines.mp(|line| {
+        lt vals = parse_row(line, sep)
+        mt record = {}
+        fo i in 0..fields.ln() {
+            record[fields[i]] = vals[i]
+        }
+        record
+    })
+}
+
+fn group_by(items, key_fn) {
+    mt groups = {}
+    fo item in items {
+        lt k = key_fn(item)
+        if not groups.ck(k) { groups[k] = [] }
+        groups[k] = groups[k].psh(item)
+    }
+    groups
+}
+
+// --- Demo ---
+lt header = "name,dept,salary"
+lt rows = [
+    "Alice,Engineering,120000",
+    "Bob,Marketing,85000",
+    "Carol,Engineering,115000",
+    "Dave,Marketing,90000",
+    "Eve,Engineering,130000",
+    "Frank,Sales,75000",
+]
+
+lt data = parse_table(header, rows, ",")
+
+// Group by department
+lt by_dept = group_by(data, |r| r["dept"])
+
+prt("Department Report")
+prt("=" * 40)
+fo dept, people in by_dept {
+    lt names = people.mp(|p| p["name"]).jn(", ")
+    lt salaries = people.mp(|p| toi(p["salary"]))
+    lt avg = tof(salaries.sum()) / salaries.ln()
+    lt top = salaries.max()
+    prt("{dept}:")
+    prt("  Staff: {names}")
+    prt("  Avg salary: {avg}")
+    prt("  Top salary: {top}")
+    prt("")
+}
+
+// Overall stats
+lt all_salaries = data.mp(|r| toi(r["salary"]))
+prt("Total employees: {data.ln()}")
+prt("Salary range: {all_salaries.min()} - {all_salaries.max()}")
+prt("Mean salary: {tof(all_salaries.sum()) / all_salaries.ln()}")

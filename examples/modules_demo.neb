@@ -1,0 +1,13 @@
+// Demo: importing from another file
+use math.vec2
+
+lt a = Vec2.new(0.0, 0.0)
+lt b = Vec2.new(3.0, 4.0)
+
+print(a.to_string())
+print(b.to_string())
+print(b.magnitude())
+print(distance(a, b))
+
+lt c = a.add(b)
+print(c.to_string())

@@ -1,0 +1,80 @@
+// Every feature in one program
+
+// 1. Types: struct, enum, trait
+st Item { name: String, price: Float, qty: Int }
+en Discount { Flat(amount: Float), Percent(rate: Float), None }
+tr Describable { fn describe(sf) -> String }
+
+// 2. Impl blocks
+im Item {
+    fn new(name, price, qty) = Item { name: name, price: price, qty: qty }
+    fn total(sf) = sf.price * tof(sf.qty)
+}
+
+im Describable fo Item {
+    fn describe(sf) -> String = "{sf.name}: ${sf.price} x {sf.qty}"
+}
+
+// 3. Functions with defaults, named args
+fn apply_discount(item, discount) {
+    lt base = item.total()
+    mc discount {
+        Discount.Flat(amt) => base - amt
+        Discount.Percent(rate) => base * (1.0 - rate / 100.0)
+        Discount.None => base
+        _ => base
+    }
+}
+
+// 4. Data processing pipeline
+lt inventory = [
+    Item.new("Widget", 9.99, 5),
+    Item.new("Gadget", 24.99, 2),
+    Item.new("Doohickey", 4.99, 10),
+]
+
+// 5. Map, filter, fold with short aliases
+lt grand_total = inventory.mp(|i| i.total()).sum()
+lt expensive = inventory.fl(|i| i.price > 10.0)
+lt descriptions = inventory.mp(|i| i.describe())
+
+prt("Inventory:")
+descriptions.each(|d| prt("  {d}"))
+prt("Total: ${grand_total}")
+prt("Expensive items: {expensive.mp(|i| i.name).jn(", ")}")
+
+// 6. Destructuring + tuple return
+fn stats(items) {
+    lt prices = items.mp(|i| i.price)
+    (prices.min(), prices.max(), tof(prices.sum()) / prices.ln())
+}
+lt (lo, hi, avg) = stats(inventory)
+prt("Price range: ${lo} - ${hi}, avg: ${avg}")
+
+// 7. Try/catch + error handling
+lt safe_total = try {
+    apply_discount(inventory[0], Discount.Percent(110.0))
+} ch e {
+    prt("Discount error: {e}")
+    0.0
+}
+prt("Discounted: ${safe_total}")
+
+// 8. Map operations
+mt price_map = {}
+fo item in inventory {
+    price_map[item.name] = item.price
+}
+prt("Price map: {price_map}")
+prt("Widget price: {price_map.get("Widget", 0.0)}")
+
+// 9. Slicing + negative indices
+lt names = inventory.mp(|i| i.name)
+prt("First 2: {names.take(2)}")
+prt("Last: {names.last()}")
+prt("Reversed: {names.rv()}")
+
+// 10. String operations
+lt receipt = descriptions.jn(" | ")
+prt("Receipt: {receipt.to_upper()}")
+prt("Length: {receipt.ln()}")

@@ -1,0 +1,26 @@
+fn to_json(val) {
+    lt t = type_of(val)
+    mc t {
+        "Int" => tsr(val)
+        "Float" => tsr(val)
+        "Bool" => if val { "true" } el { "false" }
+        "String" => val
+        "Nil" => "null"
+        "List" => {
+            lt items = val.mp(|v| to_json(v)).jn(", ")
+            "[" + items + "]"
+        }
+        "Map" => {
+            mt parts = []
+            fo k, v in val {
+                parts = parts.psh(tsr(k) + ": " + to_json(v))
+            }
+            "\{" + parts.jn(", ") + "\}"
+        }
+        _ => "?"
+    }
+}
+prt(to_json(42))
+prt(to_json([1, 2, 3]))
+prt(to_json({"name": "Alice", "age": 30}))
+prt(to_json({"users": [{"id": 1}, {"id": 2}]}))
