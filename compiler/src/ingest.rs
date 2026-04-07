@@ -29,14 +29,16 @@ pub fn from_swift(source: &str) -> String {
     // Swift uses pattern-based conversion (tree-sitter-swift has inconsistent
     // field names causing duplicate output)
     let nebula = swift::convert_swift_raw(source, 0);
-    strip_semicolons(&nebula)
+    let nebula = strip_semicolons(&nebula);
+    minify(&nebula)
 }
 
 pub fn from_kotlin(source: &str) -> String {
     // Kotlin uses pattern-based conversion (tree-sitter-kotlin depends on
     // tree-sitter 0.20 which conflicts with 0.26 at link time)
     let nebula = kotlin::convert_kotlin_raw(source, 0);
-    strip_semicolons(&nebula)
+    let nebula = strip_semicolons(&nebula);
+    minify(&nebula)
 }
 
 pub fn from_rust(source: &str) -> String {
@@ -67,7 +69,9 @@ fn convert_with_language(
     // Post-processing: catch patterns the tree-sitter emitter misses
     let nebula = postprocess(&nebula);
     // Strip trailing semicolons (Nebula doesn't use them)
-    strip_semicolons(&nebula)
+    let nebula = strip_semicolons(&nebula);
+    // Minify: strip comments, blank lines, compact indentation
+    minify(&nebula)
 }
 
 /// Post-process Nebula output to catch patterns the tree-sitter emitters miss.
@@ -90,6 +94,28 @@ fn postprocess(source: &str) -> String {
         .replace("list(filter(", "fl(")
         .replace("list(mp(", "mp(")
         .replace("list(fl(", "fl(")
+}
+
+/// Minify ingested code: strip comments, blank lines, compact indentation.
+/// Based on LLMLingua's principle of removing low-information-density tokens.
+fn minify(source: &str) -> String {
+    source.lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+            // Remove comment-only lines and blank lines
+            !trimmed.is_empty() && !trimmed.starts_with("//")
+        })
+        .map(|line| {
+            // Compact indentation: replace 4-space indents with 1-space
+            let stripped = line.trim_start();
+            let leading = line.len() - stripped.len();
+            let indent_level = leading / 4;
+            let remainder = leading % 4;
+            let compact_indent = " ".repeat(indent_level + if remainder > 0 { 1 } else { 0 });
+            format!("{}{}", compact_indent, stripped)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Strip trailing semicolons from each line (Nebula uses newlines as terminators).
@@ -131,19 +157,21 @@ fn emit_children_as_statements(
 }
 
 /// Map common builtin function names to Nebula equivalents.
+/// Only maps to aliases that are SINGLE tokens in cl100k_base.
+/// Aliases that cost 2+ tokens (tsr, tof, psh, srt, trm, fnd) are avoided.
 fn map_builtin(name: &str) -> &str {
     match name {
         "print" | "println" | "puts" | "fmt.Println" | "fmt.Printf" | "console.log"
             | "console.warn" | "console.error" | "printf" | "fprintf" => "prt",
         "len" | "strlen" => "ln",
-        "str" => "tsr",
+        // "str" stays as "str" (1 token) — "tsr" costs 2 tokens
         "int" => "toi",
-        "float" | "parseFloat" => "tof",
+        // "float" stays as "float" (1 token) — "tof" costs 2 tokens
         "type" | "isinstance" | "typeof" => "typ",
         "range" => "rng",
         "enumerate" => "enu",
-        "append" | "push" => "psh",
-        "sorted" => "srt",
+        // "push"/"append" stay as-is (1 token) — "psh" costs 2 tokens
+        // "sorted" stays as "sorted" (1 token) — "srt" costs 2 tokens
         "abs" => "abs",
         "min" => "min",
         "max" => "max",
@@ -153,36 +181,37 @@ fn map_builtin(name: &str) -> &str {
 }
 
 /// Map common method names to Nebula equivalents.
+/// Only maps to aliases that are SINGLE tokens in cl100k_base.
 fn map_method(name: &str) -> &str {
     match name {
-        "append" | "push" | "push_back" => "psh",
+        // These aliases are all verified single-tokens in cl100k_base:
         "length" | "count" | "size" | "len" => "ln",
         "contains" | "includes" | "containsKey" | "has" => "ck",
-        "to_string" | "toString" | "String" | "string" => "tsr",
         "join" => "jn",
-        "split" => "spl",
-        "trim" | "strip" => "trm",
         "map" => "mp",
         "filter" | "retain" => "fl",
         "reduce" | "fold" | "fold_left" => "fld",
         "forEach" | "for_each" => "ea",
-        "keys" => "keys",
-        "values" | "vals" => "vals",
-        "pop" | "removeLast" => "pop",
-        "insert" => "ins",
-        "sort" | "sorted" | "sortedBy" | "sort_by" | "sort_by_key" => "srt",
-        "reverse" | "reversed" | "rev" => "rev",
+        "reverse" | "reversed" => "rev",
         "iter" | "iterator" => "it",
-        "iter_mut" => "itm",
         "collect" => "col",
-        "cloned" | "copied" => "cln",
         "unwrap" | "unwrap_or" => "uw",
-        "find" | "first" => "fnd",
         "isEmpty" | "is_empty" => "emp",
         "removeAll" | "clear" => "clr",
         "toFixed" | "format" => "fmt",
         "enumerate" | "enumerated" => "enu",
+        "pop" | "removeLast" => "pop",
+        "insert" => "ins",
+        "keys" => "keys",
+        "values" | "vals" => "vals",
         "sum" => "sum",
+        // These stay as source names — our aliases cost 2 tokens:
+        // push/append → keep as-is (push=1tok, psh=2tok)
+        // sort/sorted → keep as-is (sort=1tok, srt=2tok)
+        // trim/strip → keep as-is (trim=1tok, trm=2tok)
+        // find/first → keep as-is (find=1tok, fnd=2tok)
+        // to_string → keep as-is (str=1tok, tsr=2tok)
+        // split → keep as-is (split=1tok, spl=1tok — wash, but split is more readable)
         _ => name,
     }
 }
