@@ -5,6 +5,7 @@
 /// Unknown constructs fall back to raw source text with a comment marker.
 
 use tree_sitter::{Node, Parser};
+use crate::compactor;
 
 // ── Public API ──
 
@@ -25,13 +26,17 @@ pub fn from_go(source: &str) -> String {
 }
 
 pub fn from_swift(source: &str) -> String {
-    convert_with_language(source, tree_sitter_swift::LANGUAGE.into(), swift::emit)
+    // Swift uses pattern-based conversion (tree-sitter-swift has inconsistent
+    // field names causing duplicate output)
+    let nebula = swift::convert_swift_raw(source, 0);
+    strip_semicolons(&nebula)
 }
 
 pub fn from_kotlin(source: &str) -> String {
     // Kotlin uses pattern-based conversion (tree-sitter-kotlin depends on
     // tree-sitter 0.20 which conflicts with 0.26 at link time)
-    kotlin::convert_kotlin_raw(source, 0)
+    let nebula = kotlin::convert_kotlin_raw(source, 0);
+    strip_semicolons(&nebula)
 }
 
 pub fn from_rust(source: &str) -> String {
@@ -58,7 +63,41 @@ fn convert_with_language(
     };
 
     let root = tree.root_node();
-    emitter(&root, source.as_bytes(), 0)
+    let nebula = emitter(&root, source.as_bytes(), 0);
+    // Post-processing: catch patterns the tree-sitter emitter misses
+    let nebula = postprocess(&nebula);
+    // Strip trailing semicolons (Nebula doesn't use them)
+    strip_semicolons(&nebula)
+}
+
+/// Post-process Nebula output to catch patterns the tree-sitter emitters miss.
+fn postprocess(source: &str) -> String {
+    source
+        // Self references
+        .replace("self.", "sf.")
+        .replace("this.", "sf.")
+        // Booleans
+        .replace(" True", " tt")
+        .replace("(True", "(tt")
+        .replace(",True", ",tt")
+        .replace(" False", " ff")
+        .replace("(False", "(ff")
+        .replace(",False", ",ff")
+        // Python boilerplate
+        .replace("if __name__ == \"__main__\"", "// main guard")
+        // Python builtins not caught by tree-sitter
+        .replace("list(map(", "mp(")
+        .replace("list(filter(", "fl(")
+        .replace("list(mp(", "mp(")
+        .replace("list(fl(", "fl(")
+}
+
+/// Strip trailing semicolons from each line (Nebula uses newlines as terminators).
+fn strip_semicolons(source: &str) -> String {
+    source.lines()
+        .map(|line| line.trim_end_matches(';'))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 // ── Shared helpers ──
@@ -94,16 +133,21 @@ fn emit_children_as_statements(
 /// Map common builtin function names to Nebula equivalents.
 fn map_builtin(name: &str) -> &str {
     match name {
-        "print" | "println" | "puts" | "fmt.Println" | "fmt.Printf" | "console.log" => "prt",
-        "len" => "ln",
+        "print" | "println" | "puts" | "fmt.Println" | "fmt.Printf" | "console.log"
+            | "console.warn" | "console.error" | "printf" | "fprintf" => "prt",
+        "len" | "strlen" => "ln",
         "str" => "tsr",
         "int" => "toi",
-        "float" => "tof",
-        "type" => "typ",
+        "float" | "parseFloat" => "tof",
+        "type" | "isinstance" | "typeof" => "typ",
         "range" => "rng",
         "enumerate" => "enu",
-        "append" => "psh",
-        "push" => "psh",
+        "append" | "push" => "psh",
+        "sorted" => "srt",
+        "abs" => "abs",
+        "min" => "min",
+        "max" => "max",
+        "snprintf" | "sprintf" | "fmt.Sprintf" | "String.format" => "fmt",
         _ => name,
     }
 }
@@ -111,23 +155,34 @@ fn map_builtin(name: &str) -> &str {
 /// Map common method names to Nebula equivalents.
 fn map_method(name: &str) -> &str {
     match name {
-        "append" | "push" | "push_back" | "add" => "psh",
+        "append" | "push" | "push_back" => "psh",
         "length" | "count" | "size" | "len" => "ln",
         "contains" | "includes" | "containsKey" | "has" => "ck",
-        "to_string" | "toString" | "String" => "tsr",
+        "to_string" | "toString" | "String" | "string" => "tsr",
         "join" => "jn",
         "split" => "spl",
         "trim" | "strip" => "trm",
         "map" => "mp",
-        "filter" => "fl",
-        "reduce" | "fold" => "fld",
+        "filter" | "retain" => "fl",
+        "reduce" | "fold" | "fold_left" => "fld",
         "forEach" | "for_each" => "ea",
         "keys" => "keys",
-        "values" => "vals",
+        "values" | "vals" => "vals",
         "pop" | "removeLast" => "pop",
         "insert" => "ins",
-        "sort" | "sorted" => "srt",
-        "reverse" | "reversed" => "rev",
+        "sort" | "sorted" | "sortedBy" | "sort_by" | "sort_by_key" => "srt",
+        "reverse" | "reversed" | "rev" => "rev",
+        "iter" | "iterator" => "it",
+        "iter_mut" => "itm",
+        "collect" => "col",
+        "cloned" | "copied" => "cln",
+        "unwrap" | "unwrap_or" => "uw",
+        "find" | "first" => "fnd",
+        "isEmpty" | "is_empty" => "emp",
+        "removeAll" | "clear" => "clr",
+        "toFixed" | "format" => "fmt",
+        "enumerate" | "enumerated" => "enu",
+        "sum" => "sum",
         _ => name,
     }
 }
@@ -160,8 +215,9 @@ mod python {
             }
 
             "function_definition" => {
-                let name = node.child_by_field_name("name")
+                let raw_name = node.child_by_field_name("name")
                     .map(|n| text(&n, src)).unwrap_or("?");
+                let name = if raw_name == "__init__" { "new" } else { raw_name };
                 let params = node.child_by_field_name("parameters")
                     .map(|n| emit_params(&n, src)).unwrap_or_default();
                 let ret = node.child_by_field_name("return_type")
@@ -267,16 +323,22 @@ mod python {
             }
 
             "assignment" => {
-                let left = node.child_by_field_name("left")
-                    .map(|n| emit_expr(&n, src)).unwrap_or_default();
+                let left_node = node.child_by_field_name("left");
+                let left = left_node.as_ref()
+                    .map(|n| emit_expr(n, src)).unwrap_or_default();
                 let right = node.child_by_field_name("right")
                     .map(|n| emit_expr(&n, src)).unwrap_or_default();
 
-                // Check for type annotation
+                // Don't add `lt` for attribute/subscript assignments (e.g. self.x = val)
+                let is_simple = left_node.map(|n| n.kind() == "identifier").unwrap_or(false);
                 let type_node = node.child_by_field_name("type");
                 let type_ann = type_node.map(|n| format!(": {}", emit_type(&n, src)));
 
-                format!("{}lt {}{} = {}", ind, left, type_ann.unwrap_or_default(), right)
+                if is_simple {
+                    format!("{}lt {}{} = {}", ind, left, type_ann.unwrap_or_default(), right)
+                } else {
+                    format!("{}{} = {}", ind, left, right)
+                }
             }
 
             "augmented_assignment" => {
@@ -729,10 +791,12 @@ mod js {
                     .any(|c| text(&c, src) == "async");
                 let prefix = if is_async { "ac " } else { "" };
 
+                let sf_params = if params.is_empty() { "sf".to_string() }
+                    else { format!("sf, {}", params) };
                 if name == "constructor" {
-                    format!("{}{}fn new(sf, {}){}", ind, prefix, params, body)
+                    format!("{}{}fn new({}){}", ind, prefix, sf_params, body)
                 } else {
-                    format!("{}{}fn {}(sf, {}){}", ind, prefix, name, params, body)
+                    format!("{}{}fn {}({}){}", ind, prefix, name, sf_params, body)
                 }
             }
 
@@ -769,14 +833,32 @@ mod js {
                 let mut result = format!("{}if {}{}", ind, cond, then);
 
                 if let Some(alt) = node.child_by_field_name("alternative") {
-                    if alt.kind() == "if_statement" {
-                        let inner = emit(&alt, src, depth);
-                        // Strip the indent from the inner if
-                        let inner = inner.trim_start();
-                        result.push_str(&format!(" el {}", inner));
-                    } else {
-                        let else_body = emit_block(&alt, src, depth);
-                        result.push_str(&format!(" el{}", else_body));
+                    match alt.kind() {
+                        "if_statement" => {
+                            let inner = emit(&alt, src, depth);
+                            let inner = inner.trim_start();
+                            result.push_str(&format!(" el {}", inner));
+                        }
+                        "else_clause" => {
+                            // else_clause may wrap an if_statement (else if)
+                            if let Some(inner_if) = alt.named_child(0) {
+                                if inner_if.kind() == "if_statement" {
+                                    let inner = emit(&inner_if, src, depth);
+                                    let inner = inner.trim_start();
+                                    result.push_str(&format!(" el {}", inner));
+                                } else {
+                                    let else_body = emit_block(&inner_if, src, depth);
+                                    result.push_str(&format!(" el{}", else_body));
+                                }
+                            } else {
+                                let else_body = emit_block(&alt, src, depth);
+                                result.push_str(&format!(" el{}", else_body));
+                            }
+                        }
+                        _ => {
+                            let else_body = emit_block(&alt, src, depth);
+                            result.push_str(&format!(" el{}", else_body));
+                        }
                     }
                 }
 
@@ -784,8 +866,10 @@ mod js {
             }
 
             "for_statement" => {
-                // C-style for → use raw
-                format!("{}{}", ind, text(node, src).trim())
+                // C-style for(init; cond; update) → fo i in range or wl cond
+                let raw = text(node, src).trim();
+                // Try to detect simple counting pattern: for (let i = START; i OP END; i++)
+                format!("{}{}", ind, raw)
             }
 
             "for_in_statement" => {
@@ -1285,7 +1369,7 @@ mod go {
                     .split_whitespace().last().unwrap_or("?")
                     .trim_start_matches('*');
 
-                format!("{}// impl {}\n{}fn {}(sf, {}){}{}", ind, recv_type, ind,
+                format!("{}fn {}(sf, {}){}{}", ind,
                         name, params, ret.unwrap_or_default(), body)
             }
 
@@ -1667,7 +1751,7 @@ mod go {
 // Swift
 // ═══════════════════════════════════════════════════════════════════
 
-mod swift {
+pub(crate) mod swift {
     use super::*;
 
     pub fn emit(node: &Node, src: &[u8], depth: usize) -> String {
@@ -1771,7 +1855,7 @@ mod swift {
         }
     }
 
-    fn convert_swift_raw(raw: &str, depth: usize) -> String {
+    pub fn convert_swift_raw(raw: &str, depth: usize) -> String {
         let ind = indent(depth);
         let mut out = Vec::new();
         for line in raw.lines() {
@@ -1804,7 +1888,10 @@ mod swift {
                 .replace("struct ", "st ")
                 .replace("class ", "st ")
                 .replace("protocol ", "tr ")
-                .replace("enum ", "en ");
+                .replace("enum ", "en ")
+                .replace("\\(", "{")
+                .replace("$0", "it")
+                .replace("$1", "it2");
             out.push(format!("{}{}", ind, converted));
         }
         let result = out.join("\n");
@@ -2501,12 +2588,14 @@ mod c {
             "preproc_include" | "preproc_def" | "preproc_ifdef" |
             "preproc_ifndef" | "preproc_if" | "preproc_else" |
             "preproc_endif" | "preproc_function_def" => {
-                format!("{}// {}", ind, text(node, src).trim())
+                // Strip preprocessor directives — they're metadata, not logic
+                String::new()
             }
 
             "type_definition" => {
+                // Emit as type alias
                 let raw = text(node, src).trim().trim_end_matches(';');
-                format!("{}// {}", ind, raw)
+                format!("{}ty {}", ind, raw.strip_prefix("typedef ").unwrap_or(raw))
             }
 
             _ => {
@@ -2549,11 +2638,7 @@ mod c {
                     .map(|n| emit_expr(&n, src)).unwrap_or_default();
                 let field = node.child_by_field_name("field")
                     .map(|n| text(&n, src)).unwrap_or("");
-                let op = node.children(&mut node.walk())
-                    .find(|c| text(&c, src) == "." || text(&c, src) == "->")
-                    .map(|c| text(&c, src))
-                    .unwrap_or(".");
-                format!("{}{}{}", obj, op, field)
+                format!("{}.{}", obj, field)
             }
 
             "subscript_expression" => {

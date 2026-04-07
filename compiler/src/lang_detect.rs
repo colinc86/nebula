@@ -3,7 +3,7 @@
 /// Maps file extensions to languages and dispatches to the appropriate
 /// ingest (source → Nebula) and codegen (Nebula → source) functions.
 
-use crate::{ast, codegen, ingest, lexer, parser};
+use crate::{ast, codegen, compactor, ingest, lexer, parser};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Language {
@@ -74,7 +74,14 @@ pub fn from_nebula(nebula: &str, lang: Language) -> Result<String, String> {
         return Ok(nebula.to_string());
     }
 
-    let tokens = lexer::tokenize(nebula)
+    // Expand compacted identifiers if present (@map{} / @std{} headers)
+    let expanded = if nebula.starts_with("@map{") || nebula.starts_with("@std{") {
+        compactor::expand(nebula)
+    } else {
+        nebula.to_string()
+    };
+
+    let tokens = lexer::tokenize(&expanded)
         .map_err(|e| format!("Lex error at {}:{}: {}", e.line, e.col, e.message))?;
     let program = parser::parse(tokens)
         .map_err(|e| format!("Parse error at {}:{}: {}", e.line, e.col, e.message))?;
