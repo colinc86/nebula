@@ -29,6 +29,7 @@ pub fn from_swift(source: &str) -> String {
     // Swift uses pattern-based conversion (tree-sitter-swift has inconsistent
     // field names causing duplicate output)
     let nebula = swift::convert_swift_raw(source, 0);
+    let nebula = postprocess(&nebula);
     let nebula = strip_semicolons(&nebula);
     minify(&nebula)
 }
@@ -37,6 +38,7 @@ pub fn from_kotlin(source: &str) -> String {
     // Kotlin uses pattern-based conversion (tree-sitter-kotlin depends on
     // tree-sitter 0.20 which conflicts with 0.26 at link time)
     let nebula = kotlin::convert_kotlin_raw(source, 0);
+    let nebula = postprocess(&nebula);
     let nebula = strip_semicolons(&nebula);
     minify(&nebula)
 }
@@ -76,7 +78,7 @@ fn convert_with_language(
 
 /// Post-process Nebula output to catch patterns the tree-sitter emitters miss.
 fn postprocess(source: &str) -> String {
-    source
+    let s = source
         // Self references
         .replace("self.", "sf.")
         .replace("this.", "sf.")
@@ -87,6 +89,13 @@ fn postprocess(source: &str) -> String {
         .replace(" False", " ff")
         .replace("(False", "(ff")
         .replace(",False", ",ff")
+        // Logical operators (C-family ! → Nebula not)
+        .replace("&&", "and")
+        .replace("||", "or")
+        // Null variants
+        .replace("nullptr", "nil")
+        .replace("NULL", "nil")
+        .replace("undefined", "nil")
         // Python boilerplate
         .replace("if __name__ == \"__main__\"", "// main guard")
         // Python builtins not caught by tree-sitter
@@ -94,6 +103,116 @@ fn postprocess(source: &str) -> String {
         .replace("list(filter(", "fl(")
         .replace("list(mp(", "mp(")
         .replace("list(fl(", "fl(")
+        // Dict key single quotes → double quotes (Python stats['key'] → stats["key"])
+        .replace("['", "[\"")
+        .replace("']", "\"]")
+        // Spread operator (JS [...x]) — strip the dots, Nebula doesn't have spread
+        .replace("[...", "[")
+        .replace("...", "")
+        // Rust lifetime annotations — strip 'static, 'a, etc.
+        .replace("'static ", "")
+        .replace("'a ", "")
+        .replace("'b ", "")
+        // C/Go format strings — escape literal newlines in strings
+        .replace("\\n\"", "\"")
+        .replace("\\n", "")
+        // Go raw syntax leakage
+        .replace(":=", "=")
+        // Raw `return` keyword that slipped through tree-sitter
+        .replace("\nreturn ", "\nrt ")
+        .replace(" return ", " rt ")
+        // Rust reference types — strip & from type positions
+        .replace("&str", "Str")
+        .replace("&mut ", "")
+        .replace("&[", "[");
+
+    // Fix Python lambdas that leaked through: "lambda x: expr" → "|x| expr"
+    let s = fix_lambda_syntax(&s);
+    // Fix Python ternary: "val if cond else alt" → "if cond { val } el { alt }"
+    let s = fix_python_ternary(&s);
+
+    // Fix ! prefix operator → not (but not != or !important etc.)
+    fix_negation_operator(&s)
+}
+
+/// Fix Python ternary: `val if cond else alt` → `if cond { val } el { alt }`
+fn fix_python_ternary(source: &str) -> String {
+    let mut result = String::new();
+    for line in source.lines() {
+        let trimmed = line.trim();
+        // Look for pattern: SOMETHING = EXPR if COND else EXPR
+        // or standalone: EXPR if COND else EXPR
+        if let Some(if_pos) = trimmed.find(" if ") {
+            if let Some(else_pos) = trimmed.find(" else ") {
+                if else_pos > if_pos {
+                    let before_if = &trimmed[..if_pos];
+                    let cond = &trimmed[if_pos + 4..else_pos];
+                    let alt = &trimmed[else_pos + 6..];
+
+                    // Check if there's an assignment: "var = val if cond else alt"
+                    if let Some(eq_pos) = before_if.rfind(" = ") {
+                        let var_part = &before_if[..eq_pos + 3]; // "var = "
+                        let val = &before_if[eq_pos + 3..];
+                        let indent = &line[..line.len() - trimmed.len()];
+                        result.push_str(&format!("{}{}if {} {{ {} }} el {{ {} }}\n",
+                            indent, var_part, cond, val, alt));
+                        continue;
+                    } else {
+                        // Standalone ternary
+                        let indent = &line[..line.len() - trimmed.len()];
+                        result.push_str(&format!("{}if {} {{ {} }} el {{ {} }}\n",
+                            indent, cond, before_if, alt));
+                        continue;
+                    }
+                }
+            }
+        }
+        result.push_str(line);
+        result.push('\n');
+    }
+    if result.ends_with('\n') && !source.ends_with('\n') {
+        result.pop();
+    }
+    result
+}
+
+/// Convert `lambda params: body` to `|params| body`.
+fn fix_lambda_syntax(source: &str) -> String {
+    let mut result = source.to_string();
+    while let Some(pos) = result.find("lambda ") {
+        // Find the colon after params
+        if let Some(colon_offset) = result[pos + 7..].find(": ") {
+            let params = &result[pos + 7..pos + 7 + colon_offset];
+            let before = &result[..pos];
+            let after = &result[pos + 7 + colon_offset + 2..];
+            result = format!("{}|{}| {}", before, params, after);
+        } else {
+            break;
+        }
+    }
+    result
+}
+
+/// Convert `!expr` to `not expr`, but leave `!=` alone.
+fn fix_negation_operator(source: &str) -> String {
+    let mut result = String::with_capacity(source.len());
+    let chars: Vec<char> = source.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '!' {
+            // Don't touch !=
+            if i + 1 < chars.len() && chars[i + 1] == '=' {
+                result.push('!');
+            } else {
+                // It's a prefix negation — replace with "not "
+                result.push_str("not ");
+            }
+        } else {
+            result.push(chars[i]);
+        }
+        i += 1;
+    }
+    result
 }
 
 /// Minify ingested code: strip comments, blank lines, compact indentation.
@@ -274,10 +393,11 @@ mod python {
             "class_definition" => {
                 let name = node.child_by_field_name("name")
                     .map(|n| text(&n, src)).unwrap_or("?");
+                // Nebula: st {} for fields, im {} for methods
                 let body = node.child_by_field_name("body")
                     .map(|n| emit_block(&n, src, depth))
                     .unwrap_or_else(|| format!(" {{\n{}}}", ind));
-                format!("{}st {}{}", ind, name, body)
+                format!("{}st {} {{}}\n{}im {}{}", ind, name, ind, name, body)
             }
 
             "if_statement" => {
@@ -638,8 +758,37 @@ mod python {
 
             "list_comprehension" => {
                 // [expr for x in iter if cond] → iter.fl(|x| cond).mp(|x| expr)
-                // For now, emit raw since comprehensions are complex
-                text(node, src).to_string()
+                // [expr for x in iter] → iter.mp(|x| expr)
+                let mut cursor = node.walk();
+                let children: Vec<_> = node.named_children(&mut cursor).collect();
+
+                // First child is the expression, rest are for_in_clause / if_clause
+                let expr = children.first().map(|n| emit_expr(n, src)).unwrap_or_default();
+                let mut binding = String::new();
+                let mut iterable = String::new();
+                let mut condition = None;
+
+                for child in &children[1..] {
+                    match child.kind() {
+                        "for_in_clause" => {
+                            binding = child.child_by_field_name("left")
+                                .map(|n| text(&n, src).to_string()).unwrap_or_default();
+                            iterable = child.child_by_field_name("right")
+                                .map(|n| emit_expr(&n, src)).unwrap_or_default();
+                        }
+                        "if_clause" => {
+                            condition = child.named_child(0)
+                                .map(|n| emit_expr(&n, src));
+                        }
+                        _ => {}
+                    }
+                }
+
+                if let Some(cond) = condition {
+                    format!("{}.fl(|{}| {}).mp(|{}| {})", iterable, binding, cond, binding, expr)
+                } else {
+                    format!("{}.mp(|{}| {})", iterable, binding, expr)
+                }
             }
 
             "slice" => {
@@ -801,10 +950,12 @@ mod js {
             "class_declaration" => {
                 let name = node.child_by_field_name("name")
                     .map(|n| text(&n, src)).unwrap_or("?");
-                let body = node.child_by_field_name("body")
+                // Nebula requires st {} for fields, im {} for methods
+                // JS classes only have methods, so emit st {} + im { methods }
+                let methods = node.child_by_field_name("body")
                     .map(|n| emit_block(&n, src, depth))
                     .unwrap_or_else(|| format!(" {{\n{}}}", ind));
-                format!("{}st {}{}", ind, name, body)
+                format!("{}st {} {{}}\n{}im {}{}", ind, name, ind, name, methods)
             }
 
             "method_definition" => {
@@ -895,10 +1046,36 @@ mod js {
             }
 
             "for_statement" => {
-                // C-style for(init; cond; update) → fo i in range or wl cond
-                let raw = text(node, src).trim();
-                // Try to detect simple counting pattern: for (let i = START; i OP END; i++)
-                format!("{}{}", ind, raw)
+                // C-style for → extract condition and emit as wl (while)
+                let cond = node.child_by_field_name("condition")
+                    .map(|n| emit_expr(&n, src));
+                let body = node.child_by_field_name("body")
+                    .map(|n| emit_block(&n, src, depth))
+                    .unwrap_or_else(|| format!(" {{\n{}}}", ind));
+                let init = node.child_by_field_name("initializer")
+                    .map(|n| {
+                        let raw = text(&n, src).trim().trim_end_matches(';');
+                        let raw = raw.strip_prefix("let ").or(raw.strip_prefix("const "))
+                            .or(raw.strip_prefix("var ")).unwrap_or(raw);
+                        format!("{}mt {}\n", ind, raw)
+                    }).unwrap_or_default();
+                let update = node.child_by_field_name("increment")
+                    .map(|n| format!("\n{}{}", indent(depth + 1), emit_expr(&n, src)));
+
+                match cond {
+                    Some(c) => {
+                        // Inject update at end of body
+                        let body_with_update = if let Some(upd) = update {
+                            let body_trimmed = body.trim_end();
+                            let close_pos = body_trimmed.rfind('}').unwrap_or(body_trimmed.len());
+                            format!("{}{}\n{}}}", &body_trimmed[..close_pos], upd, ind)
+                        } else {
+                            body
+                        };
+                        format!("{}{}wl {}{}", init, ind, c, body_with_update)
+                    }
+                    None => format!("{}lp{}", ind, body),
+                }
             }
 
             "for_in_statement" => {
@@ -1874,6 +2051,29 @@ pub(crate) mod swift {
         raw.split_whitespace().nth(1).unwrap_or("?").trim_end_matches('{').trim()
     }
 
+    /// Fix Swift string interpolation: `\(expr)` → `{expr}`
+    fn fix_swift_interpolation(s: &str) -> String {
+        let mut result = String::with_capacity(s.len());
+        let chars: Vec<char> = s.chars().collect();
+        let mut i = 0;
+        let mut interp_depth = 0;
+        while i < chars.len() {
+            if i + 1 < chars.len() && chars[i] == '\\' && chars[i + 1] == '(' {
+                result.push('{');
+                interp_depth += 1;
+                i += 2;
+            } else if interp_depth > 0 && chars[i] == ')' {
+                result.push('}');
+                interp_depth -= 1;
+                i += 1;
+            } else {
+                result.push(chars[i]);
+                i += 1;
+            }
+        }
+        result
+    }
+
     fn extract_between<'a>(s: &'a str, open: &str, close: &str) -> Option<String> {
         let start = s.find(open)? + open.len();
         let end = s.rfind(close)?;
@@ -1918,9 +2118,10 @@ pub(crate) mod swift {
                 .replace("class ", "st ")
                 .replace("protocol ", "tr ")
                 .replace("enum ", "en ")
-                .replace("\\(", "{")
                 .replace("$0", "it")
                 .replace("$1", "it2");
+            // Fix Swift string interpolation: \(expr) → {expr}
+            let converted = fix_swift_interpolation(&converted);
             out.push(format!("{}{}", ind, converted));
         }
         let result = out.join("\n");

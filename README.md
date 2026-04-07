@@ -79,13 +79,48 @@ nebula to-rs <file>        Rust
 nebula to-c <file>         C
 ```
 
-## Translate From
+## Translate From (8 sources, tree-sitter powered)
 
 ```
 nebula from-py <file>      Python → Nebula
-nebula from-js <file>      JavaScript/TypeScript → Nebula
+nebula from-js <file>      JavaScript → Nebula
+nebula from-ts <file>      TypeScript → Nebula
 nebula from-go <file>      Go → Nebula
+nebula from-swift <file>   Swift → Nebula
+nebula from-kt <file>      Kotlin → Nebula
+nebula from-rs <file>      Rust → Nebula
+nebula from-c <file>       C → Nebula
 ```
+
+## MCP Server
+
+Nebula includes an MCP (Model Context Protocol) server that works as a transparent compression layer between LLMs and codebases. The LLM reads/writes Nebula; the user's files stay in their original language.
+
+```
+nebula mcp                 Start MCP server (JSON-RPC over stdio)
+```
+
+Three tools: `read_code` (translate file → Nebula), `write_code` (translate Nebula → file), `search_code` (grep with Nebula results).
+
+## Token Compression Benchmark
+
+Measured with tiktoken cl100k_base on equivalent ~100-line programs:
+
+| Language | Token Compression | Byte Compression |
+|----------|------------------|-----------------|
+| TypeScript | **14.6%** | 30.6% |
+| Kotlin | **13.7%** | 25.0% |
+| Swift | **12.8%** | 25.1% |
+| Go | **12.5%** | 9.6% |
+| Rust | **9.1%** | 22.0% |
+| JavaScript | **8.1%** | 27.3% |
+| C | **6.0%** | 16.8% |
+| Python | **2.4%** | 20.2% |
+| **Mean** | **9.9%** | **22.1%** |
+
+Techniques: tokenizer-aware alias selection (arXiv:2512.08266 Token Sugar), LLMLingua-inspired minification (comment/whitespace pruning), tree-sitter AST-based structural conversion.
+
+Full results: [`bench/results.md`](bench/results.md)
 
 ## Built-in Aliases
 
@@ -109,13 +144,14 @@ compiler/src/
   ast.rs            Abstract syntax tree
   interpreter.rs    Tree-walk interpreter
   linter.rs         Static analysis
-  codegen.rs        8 language translators
+  codegen.rs        8 language translators (Nebula → target)
+  ingest.rs         8 language ingesters (source → Nebula, tree-sitter)
+  mcp.rs            MCP server (JSON-RPC over stdio)
+  lang_detect.rs    File extension → language detection
   formatter.rs      Code formatter
   compactor.rs      LLM context compressor
-  from_python.rs    Python → Nebula converter
-  from_js.rs        JavaScript/TypeScript → Nebula converter
-  from_go.rs        Go → Nebula converter
   main.rs           CLI
-examples/           14 working example programs
-spec/               Language specification + cheat sheet
+bench/              Token compression benchmark suite
+examples/           17 working example programs
+spec/               Language specification
 ```

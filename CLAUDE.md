@@ -19,6 +19,11 @@ compiler/               Rust compiler + interpreter + toolchain
   src/formatter.rs      Code formatter (AST → canonical Nebula)
   src/main.rs           CLI entrypoint (run, check, lint, fmt, compact, expand, to-*, from-*, mcp, repl)
 examples/               Working .neb example programs
+bench/                  Token compression benchmark suite
+  corpus/               Test programs in 8 languages (equivalent logic)
+  run_bench.py          Benchmark runner (tiktoken cl100k_base)
+  token_audit.py        Tokenizer audit — checks keyword efficiency
+  results.md            Latest benchmark results
 ```
 
 ## Commands
@@ -43,6 +48,7 @@ cargo run -- from-js app.js              # Ingest JavaScript → Nebula
 cargo run -- from-rs lib.rs              # Ingest Rust → Nebula
 cargo run -- mcp                         # Start MCP server (JSON-RPC over stdio)
 cargo run                                # Start REPL
+cd ../bench && ../.venv/bin/python3 run_bench.py  # Run token compression benchmark
 ```
 
 ## Design Principles
@@ -71,3 +77,5 @@ cargo run                                # Start REPL
 - All codegen targets in `codegen.rs` follow the same `XxxGen { indent }` struct pattern — copy `PythonGen` when adding new targets
 - AST enums use exhaustive matching — adding a new variant will cause compiler errors at every match that needs updating; follow the errors
 - All source files are small enough to read in full (~16K lines total across 12 modules)
+- **Tokenizer-aware design** — All keywords/builtins must be single tokens in cl100k_base. Run `bench/token_audit.py` to verify. Aliases that cost more tokens than the source keyword they replace are counterproductive.
+- The `ingest.rs` pipeline applies: tree-sitter parse → emit Nebula → postprocess (self→sf, True→tt) → strip semicolons → minify (strip comments, compact indent)
