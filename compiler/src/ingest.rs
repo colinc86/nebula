@@ -5,7 +5,6 @@
 /// Unknown constructs fall back to raw source text with a comment marker.
 
 use tree_sitter::{Node, Parser};
-use crate::compactor;
 
 // ── Public API ──
 
@@ -2270,7 +2269,7 @@ mod go {
                     .unwrap_or_else(|| format!(" {{\n{}}}", ind));
 
                 // Extract receiver type for impl context
-                let recv_type = receiver.trim_matches(|c: char| c == '(' || c == ')')
+                let _recv_type = receiver.trim_matches(|c: char| c == '(' || c == ')')
                     .split_whitespace().last().unwrap_or("?")
                     .trim_start_matches('*');
 
@@ -2659,97 +2658,6 @@ mod go {
 pub(crate) mod swift {
     use super::*;
 
-    pub fn emit(node: &Node, src: &[u8], depth: usize) -> String {
-        let ind = indent(depth);
-
-        match node.kind() {
-            "source_file" => emit_children_as_statements(node, src, depth, emit),
-
-            "comment" | "multiline_comment" => {
-                format!("{}{}", ind, text(node, src).trim())
-            }
-
-            "function_declaration" => {
-                let name = node.child_by_field_name("name")
-                    .map(|n| text(&n, src)).unwrap_or("?");
-                let raw = text(node, src);
-                // Extract params from raw (tree-sitter-swift field names vary)
-                let params = extract_between(raw, "(", ")").unwrap_or_default();
-                let neb_params = convert_swift_params(&params);
-                let body = find_body_block(node, src, depth);
-                format!("{}fn {}({}){}", ind, name, neb_params, body)
-            }
-
-            "class_declaration" => {
-                let name = extract_name_from_raw(text(node, src));
-                let body = find_body_block(node, src, depth);
-                format!("{}st {}{}", ind, name, body)
-            }
-
-            "struct_declaration" => {
-                let name = extract_name_from_raw(text(node, src));
-                let body = find_body_block(node, src, depth);
-                format!("{}st {}{}", ind, name, body)
-            }
-
-            "protocol_declaration" => {
-                let name = extract_name_from_raw(text(node, src));
-                let body = find_body_block(node, src, depth);
-                format!("{}tr {}{}", ind, name, body)
-            }
-
-            "enum_declaration" => {
-                let name = extract_name_from_raw(text(node, src));
-                let body = find_body_block(node, src, depth);
-                format!("{}en {}{}", ind, name, body)
-            }
-
-            _ => {
-                // For Swift, fall back to line-by-line conversion of raw text
-                let raw = text(node, src);
-                convert_swift_raw(raw, depth)
-            }
-        }
-    }
-
-    fn find_body_block(node: &Node, src: &[u8], depth: usize) -> String {
-        let ind = indent(depth);
-        let mut cursor = node.walk();
-        for child in node.children(&mut cursor) {
-            let kind = child.kind();
-            if kind.contains("body") || kind.contains("block") || kind == "{" {
-                if child.named_child_count() > 0 {
-                    let inner = emit_children_as_statements(&child, src, depth + 1, emit);
-                    return format!(" {{\n{}{}}}", inner, ind);
-                }
-            }
-        }
-        // Try to find curly braces in the raw text
-        let raw = text(node, src);
-        if let Some(brace_pos) = raw.find('{') {
-            let body = &raw[brace_pos + 1..raw.len().saturating_sub(1)];
-            let converted = convert_swift_raw(body.trim(), depth + 1);
-            format!(" {{\n{}{}}}", converted, ind)
-        } else {
-            format!(" {{\n{}}}", ind)
-        }
-    }
-
-    fn convert_swift_params(params: &str) -> String {
-        params
-            .replace("_ ", "")
-            .replace(": String", ": Str")
-            .replace(": Int", ": Int")
-            .replace(": Bool", ": Bool")
-            .replace(": Double", ": Float")
-            .replace("self", "sf")
-    }
-
-    fn extract_name_from_raw(raw: &str) -> &str {
-        // "struct Foo {" → "Foo"
-        raw.split_whitespace().nth(1).unwrap_or("?").trim_end_matches('{').trim()
-    }
-
     /// Fix Swift string interpolation: `\(expr)` → `{expr}`
     fn fix_swift_interpolation(s: &str) -> String {
         let mut result = String::with_capacity(s.len());
@@ -2771,16 +2679,6 @@ pub(crate) mod swift {
             }
         }
         result
-    }
-
-    fn extract_between<'a>(s: &'a str, open: &str, close: &str) -> Option<String> {
-        let start = s.find(open)? + open.len();
-        let end = s.rfind(close)?;
-        if start <= end {
-            Some(s[start..end].to_string())
-        } else {
-            None
-        }
     }
 
     pub fn convert_swift_raw(raw: &str, depth: usize) -> String {
