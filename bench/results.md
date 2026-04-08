@@ -1,30 +1,30 @@
 # Nebula Token Compression Benchmark
 
-**Date:** 2026-04-07 17:16
+**Date:** 2026-04-07 21:27
 **Tokenizer:** cl100k_base (tiktoken)
 **Corpus:** Task Manager (~100 lines per language, equivalent logic)
-**Nebula binary:** `compiler/target/debug/nebula`
+**Nebula binary:** `/Users/colin/Local Documents/Programming/nebula/bench/../compiler/target/debug/nebula`
 
 ## Results
 
 | Language   | Src Tokens | Neb Tokens | Token +/- | Src Bytes | Neb Bytes | Byte +/- | Src Lines | Neb Lines |
 |------------|-----------|-----------|----------|----------|----------|---------|----------|----------|
-| Python     |       870 |       868 | -  0.2%  |    3,232 |    2,605 | - 19.4%  |      135 |      135 |
-| JavaScript |       933 |       863 | -  7.5%  |    3,564 |    2,612 | - 26.7%  |      155 |      135 |
-| TypeScript |      1140 |       978 | - 14.2%  |    4,368 |    3,043 | - 30.3%  |      177 |      153 |
-| Go         |      1024 |       889 | - 13.2%  |    3,297 |    2,945 | - 10.7%  |      175 |      142 |
-| Swift      |       967 |       847 | - 12.4%  |    3,489 |    2,629 | - 24.6%  |      148 |      124 |
-| Kotlin     |       922 |       803 | - 12.9%  |    3,338 |    2,523 | - 24.4%  |      143 |      121 |
-| Rust       |      1071 |       975 | -  9.0%  |    3,797 |    2,955 | - 22.2%  |      158 |      133 |
-| C          |      1258 |      1173 | -  6.8%  |    4,131 |    3,427 | - 17.0%  |      174 |      155 |
+| Python     |       870 |       944 | +  8.5%  |    3,232 |    2,694 | - 16.6%  |      135 |      134 |
+| JavaScript |       933 |       939 | +  0.6%  |    3,564 |    2,704 | - 24.1%  |      155 |      135 |
+| TypeScript |      1140 |      1030 | -  9.6%  |    4,368 |    3,014 | - 31.0%  |      177 |      147 |
+| Go         |      1024 |       969 | -  5.4%  |    3,297 |    2,866 | - 13.1%  |      175 |      142 |
+| Swift      |       967 |       827 | - 14.5%  |    3,489 |    2,611 | - 25.2%  |      148 |      128 |
+| Kotlin     |       922 |       785 | - 14.9%  |    3,338 |    2,473 | - 25.9%  |      143 |      126 |
+| Rust       |      1071 |       965 | -  9.9%  |    3,797 |    2,901 | - 23.6%  |      158 |      133 |
+| C          |      1258 |      1123 | - 10.7%  |    4,131 |    3,202 | - 22.5%  |      174 |      155 |
 
 ## Summary
 
-- **Overall token compression:** +9.6% (8185 -> 7396 tokens)
-- **Mean token compression:** +9.5%
-- **Mean byte compression:** +21.9%
-- **Best compression:** TypeScript (+14.2% tokens)
-- **Least compression:** Python (+0.2% tokens)
+- **Overall token compression:** +7.4% (8185 -> 7582 tokens)
+- **Mean token compression:** +7.0%
+- **Mean byte compression:** +22.8%
+- **Best compression:** Kotlin (+14.9% tokens)
+- **Least compression:** Python (-8.5% tokens)
 
 ### Interpretation
 

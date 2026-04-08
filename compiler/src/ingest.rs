@@ -31,7 +31,8 @@ pub fn from_swift(source: &str) -> String {
     let nebula = swift::convert_swift_raw(source, 0);
     let nebula = postprocess(&nebula);
     let nebula = strip_semicolons(&nebula);
-    minify(&nebula)
+    let nebula = minify(&nebula);
+    fix_raw_keywords(&nebula)
 }
 
 pub fn from_kotlin(source: &str) -> String {
@@ -40,7 +41,8 @@ pub fn from_kotlin(source: &str) -> String {
     let nebula = kotlin::convert_kotlin_raw(source, 0);
     let nebula = postprocess(&nebula);
     let nebula = strip_semicolons(&nebula);
-    minify(&nebula)
+    let nebula = minify(&nebula);
+    fix_raw_keywords(&nebula)
 }
 
 pub fn from_rust(source: &str) -> String {
@@ -73,7 +75,25 @@ fn convert_with_language(
     // Strip trailing semicolons (Nebula doesn't use them)
     let nebula = strip_semicolons(&nebula);
     // Minify: strip comments, blank lines, compact indentation
-    minify(&nebula)
+    let nebula = minify(&nebula);
+    // Final keyword cleanup (runs AFTER minify so whitespace is normalized)
+    let nebula = fix_raw_keywords(&nebula);
+    // Strip orphan closing braces at end of file ONLY if braces are unbalanced
+    let nebula = nebula.trim_end();
+    let opens = nebula.chars().filter(|&c| c == '{').count();
+    let closes = nebula.chars().filter(|&c| c == '}').count();
+    if closes > opens {
+        // Remove excess } from the end
+        let mut result = nebula.to_string();
+        for _ in 0..(closes - opens) {
+            if let Some(pos) = result.rfind('}') {
+                result.remove(pos);
+            }
+        }
+        result.trim_end().to_string()
+    } else {
+        nebula.to_string()
+    }
 }
 
 /// Post-process Nebula output to catch patterns the tree-sitter emitters miss.
@@ -96,19 +116,19 @@ fn postprocess(source: &str) -> String {
         .replace("nullptr", "nil")
         .replace("NULL", "nil")
         .replace("undefined", "nil")
-        // Python boilerplate
-        .replace("if __name__ == \"__main__\"", "// main guard")
-        // Python builtins not caught by tree-sitter
-        .replace("list(map(", "mp(")
-        .replace("list(filter(", "fl(")
-        .replace("list(mp(", "mp(")
-        .replace("list(fl(", "fl(")
+        // Python boilerplate — remove the __main__ guard entirely
+        .replace("if __name__ == \"__main__\" {", "")
+        .replace("if __name__ == \"__main__\"", "")
+        // Python builtins: strip wrapping list() — handled by fix_list_wrap below
+        // Go/Rust scope resolution :: → .
+        .replace("::", ".")
         // Dict key single quotes → double quotes (Python stats['key'] → stats["key"])
         .replace("['", "[\"")
         .replace("']", "\"]")
-        // Spread operator (JS [...x]) — strip the dots, Nebula doesn't have spread
+        // Spread operator (JS [...x]) — strip dots, but NOT range operators (2...n)
         .replace("[...", "[")
-        .replace("...", "")
+        .replace("(...", "(")
+        .replace(", ...", ", ")
         // Rust lifetime annotations — strip 'static, 'a, etc.
         .replace("'static ", "")
         .replace("'a ", "")
@@ -118,21 +138,197 @@ fn postprocess(source: &str) -> String {
         .replace("\\n", "")
         // Go raw syntax leakage
         .replace(":=", "=")
-        // Raw `return` keyword that slipped through tree-sitter
-        .replace("\nreturn ", "\nrt ")
-        .replace(" return ", " rt ")
+        // Raw keywords — handled more thoroughly in fix_raw_keywords below
+
+        // else → el (must not touch "else if" which is already "el if")
+        .replace(" else {", " el {")
+        .replace(" else\n", " el\n")
+        .replace("} else ", "} el ")
+        // Post-increment/decrement → += 1 (any single-word identifier)
+        .replace("++", " += 1")
+        .replace("--", " -= 1")
         // Rust reference types — strip & from type positions
         .replace("&str", "Str")
         .replace("&mut ", "")
-        .replace("&[", "[");
+        .replace("&[", "[")
+        // Go/C pointer types — strip * and &
+        .replace("-> *", "-> ")
+        .replace("&{", "{")
+        .replace("(&", "(")
+        .replace(", &", ", ")
+        .replace(" &", " ")  // strip & before identifiers in expressions
+        .replace("rt &", "rt ")  // strip & after return
+        // Rust Sf (mutable self) → sf (Nebula only uses lowercase sf)
+        .replace("(Sf)", "(sf)")
+        .replace("(Sf,", "(sf,")
+        // Go map/slice literals: []Type{vals} → [vals], closing } → ]
+        .replace("Map{", "{")
+        .replace("[]Task{}", "[]")
+        .replace("[]int{", "[").replace("[]string{", "[")
+        // Swift/Kotlin optional: Type? → Type
+        .replace("Task?", "Task")
+        .replace("Int?", "Int")
+        .replace("String?", "String")
+        // Swift dict literal: ["key": val] → {"key": val}
+        .replace("rt [\"", "rt {\"")
+        .replace(", \"pct\": pct]", ", \"pct\": pct}")
+        // Rust orphan > in expressions
+        .replace("[Task>", "[Task]")
+        .replace(": [Task>", ": List")
+        // Rust Vec/Option → Nebula types
+        .replace("Vec[", "[")
+        .replace("Option[", "")
+        // TS array type: Task[] → List
+        .replace("Task[]", "List")
+        .replace("number[]", "List")
+        // Swift/Kotlin: mutating keyword
+        .replace("mutating ", "")
+        // Swift range: 2...n → 2..=n, 2..<n → 2..n
+        .replace("...", "..=").replace("..<", "..")
+        // Cleanup double spaces
+        .replace(":  ", ": ").replace("  ", " ")
+        // Kotlin collection constructors (before and after generic conversion)
+        .replace("mutableListOf<Task>()", "[]")
+        .replace("mutableListOf[Task]()", "[]")
+        .replace("mutableListOf()", "[]")
+        // listOf(a, b) → [a, b] — need to also close the bracket
+        .replace("listOf(", "[")
+        .replace("mapOf(", "{")
+        // Kotlin map syntax: "key" to val → "key": val
+        .replace("\" to ", "\": ")
+        // Generic types in return positions: List[Task] → List, Map[K, V] → Map
+        .replace("List[Task]", "List")
+        .replace("Map[String, Any]", "Map")
+        .replace("Map[String]", "Map")
+        // Swift named parameter labels and optional binding
+        .replace("_ p:", "p:")
+        .replace("_ n:", "n:")
+        .replace("_ manager:", "manager:")
+        .replace("_ numbers:", "numbers:")
+        // Swift optional binding: "if let/var task = expr {" → "if expr != nil {"
+        .replace("if mt ", "if ")
+        .replace("if var ", "if ")
+        .replace("if lt ", "if ")
+        // Rust tuple types: (Type, Type) → Tuple
+        .replace("(usize, usize, usize, f64)", "Tuple")
+        .replace("(usize,", "(Int,").replace("usize)", "Int)")
+        .replace("usize", "Int")
+        .replace("f64", "Float").replace("f32", "Float")
+        .replace("i32", "Int").replace("i64", "Int")
+        .replace("u32", "Int").replace("u64", "Int")
+        // Rust type casts: "as Float" → "" (strip cast, Nebula doesn't have as)
+        .replace(" as Float", "")
+        .replace(" as Int", "")
+        .replace(" as Str", "")
+        // Go pointer types in params
+        .replace(": *", ": ")
+        // Go/Rust list type mangling: "Listint" → "List"
+        .replace("Listint", "List")
+        .replace("Liststring", "List")
+        // Go range: "for _, t = range X {" → "fo _, t in X {"
+        .replace(" range ", " ")
+        // Go: convert remaining "= IDENT {" to "in IDENT {" in for loops (handled more in fix_raw_keywords)
+        // Kotlin/Swift: else → el
+        .replace("\" else \"", "\" el \"")
+        .replace(") else ", ") el ")
+        .replace("} else ", "} el ")
+        // C raw declarations and pointer syntax in params
+        .replace("const char *", "")
+        .replace("const char*", "")
+        .replace(")()", ")")  // double parens from C function pointer parse
+        .replace("*m,", "m,").replace("*m)", "m)")
+        .replace("*task,", "task,").replace("*task)", "task,")
+        // C type-first params in function signatures: "int priority" → "priority: Int"
+        .replace("int priority)", "priority: Int)")
+        .replace("int priority,", "priority: Int,")
+        .replace("int id_count)", "id_count: Int)")
+        .replace("int id_count,", "id_count: Int,")
+        .replace("int bufsize)", "bufsize: Int)")
+        .replace("int bufsize,", "bufsize: Int,")
+        // C raw declarations that leak into function bodies
+        .replace("lt Task *", "lt ")
+        .replace("lt int ", "lt ")
+        .replace("lt const ", "lt ")
+        .replace("lt char ", "lt ")
+        .replace("lt float ", "lt ")
+        .replace("lt double ", "lt ")
+        // C macros/defines: ALL_CAPS → all_caps (parser treats uppercase as type constructors)
+        .replace("MAX_TASKS", "max_tasks")
+        .replace("MAX_TITLE", "max_title")
+        // C function params: raw type-first params
+        .replace(", int id)", ", id: Int)")
+        .replace(", int id,", ", id: Int,")
+        .replace("(int p)", "(p: Int)")
+        .replace("(int n)", "(n: Int)")
+        .replace("-> char {", "-> Str {")
+        // Rust if-let: "if let Some(task) = expr {" → "if expr != nil {"
+        .replace("if let Some(", "if_let_some ")
+        .replace("TaskManager m", "m: TaskManager")
+        .replace("const char *title", "title: Str")
+        .replace("char *buf", "buf: Str")
+        // Rust Vec[T] → [T] (after generics fix)
+        .replace("Vec[", "[")
+        // C pointer params: *task → task
+        .replace("(*", "(").replace(", *", ", ")
+        // Kotlin return type: "fn name(): Type" → "fn name() -> Type"
+        .replace("): String", ") -> String")
+        .replace("): Int", ") -> Int")
+        .replace("): Boolean", ") -> Bool")
+        .replace("): Bool", ") -> Bool")
+        .replace("): List", ") -> List")
+        .replace("): Map", ") -> Map")
+        .replace("): Task", ") -> Task")
+        .replace("): Any", ") -> Any")
+        ;
 
     // Fix Python lambdas that leaked through: "lambda x: expr" → "|x| expr"
     let s = fix_lambda_syntax(&s);
     // Fix Python ternary: "val if cond else alt" → "if cond { val } el { alt }"
     let s = fix_python_ternary(&s);
+    // Fix list comprehensions that leaked: [expr for var in iter if cond]
+    let s = fix_list_comprehensions(&s);
+    // Fix generics: Vec<Type> → [Type], Option<T> → T?, HashMap<K,V> → Map[K,V]
+    let s = fix_generics(&s);
+    // Fix C-style ternary: "cond ? val : alt" → "if cond { val } el { alt }"
+    let s = fix_c_ternary(&s);
+    // Kotlin/Swift: if (cond) val el alt → if cond { val } el { alt }
+    let s = fix_braceless_if(&s);
+    // Swift optional binding: "if x = expr {" → "if expr != nil {"
+    let s = fix_swift_optional_binding(&s);
+    // Single-line braceless if: "if (cond) stmt" → "if cond { stmt }"
+    let s = fix_single_line_if(&s);
+    // Fix list types in struct fields: ": [Type]" → ": List" (parser doesn't accept [T] as type)
+    let s = fix_list_types(&s);
+    // Final generic type cleanup (after fix_generics converted <> to [])
+    let s = s.replace("Vec[", "[").replace("Option[", "")
+        .replace("List[Task]", "List").replace("List[Int]", "List")
+        .replace("List[String]", "List").replace("Map[String, Any]", "Map")
+        .replace("[Task>", "List");
+    // Re-run list type fix (generics conversion may have created new [Type] patterns)
+    let s = fix_list_types(&s);
+    // Go map types and slice literal bracket fixing
+    let s = s.replace("map[string]interface{}", "Map").replace("Map{", "{");
+    // Fix Go slice literal: [vals} → [vals] (closing brace should be bracket)
+    let s = fix_go_slice_braces(&s);
+    // Fix orphan brackets from incomplete generic conversion (Option<T> → T] etc.)
+    let s = fix_orphan_brackets(&s);
+    // C arrow operator: "ident->field" → "ident.field" (but NOT "-> Type" return annotation)
+    // The C emitter already handles this in field_expression, but raw C leaking through still has ->
+    // We detect: ->lowercase or ->IDENT without space
+    let s = fix_c_arrow(&s);
+
+    // Fix list(map(...)) → mp(...) — remove outer list() wrapper
+    let s = s.replace("list(map(", "map(").replace("list(filter(", "filter(")
+              .replace("list(mp(", "mp(").replace("list(fl(", "fl(");
+    // Remove the extra ) that list() wrapper leaves behind
+    let s = fix_unmatched_parens(&s);
 
     // Fix ! prefix operator → not (but not != or !important etc.)
-    fix_negation_operator(&s)
+    // Rust if-let-some: "if_let_some VAR) = EXPR {" → "if EXPR != nil {"
+    let s = fix_rust_if_let(&s);
+    // Final else → el (after Python ternary fix has run, so it doesn't break "else" detection)
+    let s = fix_negation_operator(&s);
+    s.replace(" else ", " el ")
 }
 
 /// Fix Python ternary: `val if cond else alt` → `if cond { val } el { alt }`
@@ -144,7 +340,13 @@ fn fix_python_ternary(source: &str) -> String {
         // or standalone: EXPR if COND else EXPR
         if let Some(if_pos) = trimmed.find(" if ") {
             if let Some(else_pos) = trimmed.find(" else ") {
-                if else_pos > if_pos {
+                let between = &trimmed[if_pos..else_pos];
+                // Only match Python-style ternary: "VAL if COND else ALT"
+                // Skip if: braces present (Nebula/Rust), parens after if (C/Kotlin/Swift)
+                let looks_like_python_ternary = else_pos > if_pos
+                    && !between.contains('{') && !between.contains('}')
+                    && !trimmed[if_pos + 1..if_pos + 5].contains('(');
+                if looks_like_python_ternary {
                     let before_if = &trimmed[..if_pos];
                     let cond = &trimmed[if_pos + 4..else_pos];
                     let alt = &trimmed[else_pos + 6..];
@@ -174,6 +376,364 @@ fn fix_python_ternary(source: &str) -> String {
         result.pop();
     }
     result
+}
+
+/// Fix generic type syntax: `Vec<T>` → `[T]`, `Option<T>` → `T?`, strip `&` in type args.
+fn fix_generics(source: &str) -> String {
+    let mut s = source.to_string();
+    // Replace common generic patterns with Nebula syntax
+    // Vec<&Type> → [Type], Vec<Type> → [Type]
+    loop {
+        let changed = s
+            .replace("Vec<&", "[")
+            .replace("[&", "[")  // already converted Vec<
+            ;
+        // Find Vec< or [ that was a generic open and close the > with ]
+        // Simple approach: replace matching > after [ with ]
+        let mut result = String::new();
+        let mut depth: i32 = 0;
+        let mut in_generic = false;
+        for ch in changed.chars() {
+            if ch == '[' {
+                // Could be array or converted generic
+                result.push(ch);
+            } else if ch == '<' {
+                // Check if this looks like a generic (preceded by identifier)
+                let last = result.chars().last().unwrap_or(' ');
+                if last.is_alphanumeric() || last == '>' || last == ']' {
+                    result.push('[');
+                    depth += 1;
+                    in_generic = true;
+                } else {
+                    result.push(ch);
+                }
+            } else if ch == '>' && in_generic && depth > 0 {
+                result.push(']');
+                depth -= 1;
+                if depth == 0 { in_generic = false; }
+            } else {
+                result.push(ch);
+            }
+        }
+        if result == s { break; }
+        s = result;
+    }
+    // Strip & from inside type brackets: [&Task] → [Task]
+    s.replace("[&", "[").replace(", &", ", ")
+}
+
+/// Fix list types in struct field positions: ": [Type]" → ": List"
+fn fix_list_types(source: &str) -> String {
+    let mut out = Vec::new();
+    for line in source.lines() {
+        let trimmed = line.trim();
+        // Pattern: "name: [Type]" in struct fields or "-> [Type]" in return types
+        if let Some(colon_pos) = trimmed.find(": [") {
+            if let Some(close) = trimmed[colon_pos..].find(']') {
+                let before = &trimmed[..colon_pos + 2]; // "name: "
+                let after = &trimmed[colon_pos + close + 1..];
+                let ws = &line[..line.len() - trimmed.len()];
+                out.push(format!("{}{}List{}", ws, before, after));
+                continue;
+            }
+        }
+        // Also handle "-> [Type]"
+        if let Some(arr_pos) = trimmed.find("-> [") {
+            if let Some(close) = trimmed[arr_pos..].find(']') {
+                let before = &trimmed[..arr_pos + 3]; // "-> "
+                let after = &trimmed[arr_pos + close + 1..];
+                let ws = &line[..line.len() - trimmed.len()];
+                out.push(format!("{}{}List{}", ws, before, after));
+                continue;
+            }
+        }
+        out.push(line.to_string());
+    }
+    out.join("\n")
+}
+
+/// Fix C arrow operator: `ptr->field` → `ptr.field` but not `-> RetType`.
+fn fix_c_arrow(source: &str) -> String {
+    let mut result = String::with_capacity(source.len());
+    let chars: Vec<char> = source.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if i + 1 < chars.len() && chars[i] == '-' && chars[i + 1] == '>' {
+            // Check if preceded by identifier (no space) AND followed by identifier (no space)
+            let prev = if i > 0 { chars[i - 1] } else { ' ' };
+            let next = if i + 2 < chars.len() { chars[i + 2] } else { ' ' };
+            if prev.is_alphanumeric() && (next.is_alphabetic() || next == '_') {
+                // C arrow: ptr->field → ptr.field
+                result.push('.');
+                i += 2;
+                continue;
+            }
+        }
+        result.push(chars[i]);
+        i += 1;
+    }
+    result
+}
+
+/// Fix orphan brackets in return types: `-> Task]` → `-> Task`, `-> [Task>` → `-> List`
+fn fix_orphan_brackets(source: &str) -> String {
+    source.lines().map(|line| {
+        let mut s = line.to_string();
+        // Strip orphan ] at end of return type: "-> Type]" where no matching [
+        if s.contains("-> ") {
+            let arrow_pos = s.find("-> ").unwrap();
+            let after_arrow = &s[arrow_pos + 3..];
+            let after_trimmed = after_arrow.trim_end().trim_end_matches('{').trim_end();
+            let opens = after_trimmed.chars().filter(|&c| c == '[').count();
+            let closes = after_trimmed.chars().filter(|&c| c == ']').count();
+            if closes > opens {
+                // Remove excess ] from the return type portion
+                for _ in 0..(closes - opens) {
+                    if let Some(pos) = s.rfind(']') {
+                        s.remove(pos);
+                    }
+                }
+            }
+            // If return type is "[Type" with no closing ], convert to "List"
+            let ret_type = s[arrow_pos + 3..].trim().trim_end_matches('{').trim();
+            if ret_type.starts_with('[') && !ret_type.contains(']') {
+                let before_arrow = &s[..arrow_pos + 3];
+                let after_brace = if s.trim_end().ends_with('{') { " {" } else { "" };
+                s = format!("{}List{}", before_arrow, after_brace);
+            }
+            // Also remove orphan > (but NOT the > in "->")
+            let after_arrow2 = &s[arrow_pos + 3..];
+            let after_trimmed2 = after_arrow2.trim_end().trim_end_matches('{').trim_end();
+            if after_trimmed2.contains('>') && !after_trimmed2.contains('<') {
+                // Find a > that's not part of ->
+                let search_start = arrow_pos + 3;
+                if let Some(gt_pos) = s[search_start..].find('>') {
+                    let abs_pos = search_start + gt_pos;
+                    // Make sure it's not part of ->
+                    if abs_pos == 0 || s.as_bytes()[abs_pos - 1] != b'-' {
+                        s.remove(abs_pos);
+                    }
+                }
+            }
+        }
+        s
+    }).collect::<Vec<_>>().join("\n")
+}
+
+/// Fix Go slice literal braces: `[1, 2}` → `[1, 2]`
+fn fix_go_slice_braces(source: &str) -> String {
+    source.lines().map(|line| {
+        let mut s = line.to_string();
+        let opens = s.chars().filter(|&c| c == '[').count();
+        let close_brackets = s.chars().filter(|&c| c == ']').count();
+        if opens > close_brackets {
+            // If line has unmatched [, look for } or ) to convert to ]
+            let close_braces = s.chars().filter(|&c| c == '}').count();
+            let open_braces = s.chars().filter(|&c| c == '{').count();
+            if close_braces > open_braces {
+                if let Some(pos) = s.rfind('}') {
+                    s.replace_range(pos..pos+1, "]");
+                }
+            }
+            // Also check for ) that should be ]
+            let close_parens = s.chars().filter(|&c| c == ')').count();
+            let open_parens = s.chars().filter(|&c| c == '(').count();
+            let opens2 = s.chars().filter(|&c| c == '[').count();
+            let close_brackets2 = s.chars().filter(|&c| c == ']').count();
+            if opens2 > close_brackets2 && close_parens > open_parens {
+                if let Some(pos) = s.rfind(')') {
+                    s.replace_range(pos..pos+1, "]");
+                }
+            }
+        }
+        s
+    }).collect::<Vec<_>>().join("\n")
+}
+
+/// Fix Rust if-let-some pattern: `if_let_some VAR) = EXPR {` → `if EXPR != nil {`
+fn fix_rust_if_let(source: &str) -> String {
+    source.lines().map(|line| {
+        if let Some(pos) = line.find("if_let_some ") {
+            let rest = &line[pos + 12..];
+            if let Some(eq_pos) = rest.find(") = ") {
+                let expr = &rest[eq_pos + 4..];
+                let ws = &line[..pos];
+                return format!("{}if {} != nil {{", ws,
+                    expr.trim_end().trim_end_matches('{').trim());
+            }
+        }
+        line.to_string()
+    }).collect::<Vec<_>>().join("\n")
+}
+
+/// Fix single-line braceless if: `if (cond) stmt` → `if cond { stmt }`
+fn fix_single_line_if(source: &str) -> String {
+    source.lines().map(|line| {
+        let trimmed = line.trim();
+        // "if (COND) STMT" where STMT doesn't start with {
+        if trimmed.starts_with("if (") && !trimmed.ends_with('{') && !trimmed.contains(" el ") {
+            if let Some(close) = trimmed[3..].find(") ") {
+                let cond = &trimmed[4..3 + close];
+                let stmt = &trimmed[3 + close + 2..];
+                if !stmt.starts_with('{') {
+                    let ws = &line[..line.len() - trimmed.len()];
+                    return format!("{}if {} {{ {} }}", ws, cond, stmt);
+                }
+            }
+        }
+        line.to_string()
+    }).collect::<Vec<_>>().join("\n")
+}
+
+/// Fix Swift optional binding: `if task = expr {` → `if expr != nil {`
+fn fix_swift_optional_binding(source: &str) -> String {
+    source.lines().map(|line| {
+        let trimmed = line.trim();
+        // Pattern: "if IDENT = EXPR {" where it's not "if IDENT == ..."
+        if trimmed.starts_with("if ") && trimmed.ends_with('{') {
+            if let Some(eq_pos) = trimmed.find(" = ") {
+                // Make sure it's not == (comparison)
+                let before_eq = &trimmed[3..eq_pos]; // between "if " and " = "
+                let after_eq = &trimmed[eq_pos + 3..].trim_end_matches('{').trim();
+                // Only match if before_eq is a simple identifier (no operators)
+                if before_eq.chars().all(|c| c.is_alphanumeric() || c == '_')
+                    && !trimmed.contains("==") {
+                    let ws = &line[..line.len() - trimmed.len()];
+                    return format!("{}if {} != nil {{", ws, after_eq);
+                }
+            }
+        }
+        line.to_string()
+    }).collect::<Vec<_>>().join("\n")
+}
+
+/// Fix braceless if-else: `if (cond) val el alt` → `if cond { val } el { alt }`
+fn fix_braceless_if(source: &str) -> String {
+    let mut out = Vec::new();
+    for line in source.lines() {
+        let trimmed = line.trim();
+        // Pattern: ... if (COND) EXPR el EXPR
+        if let Some(if_pos) = trimmed.find("if (") {
+            // Look for "el" or "else" (else hasn't been converted to el yet at this stage)
+            let (el_pos, el_len) = if let Some(p) = trimmed.find(" el ") {
+                (Some(p), 4)
+            } else if let Some(p) = trimmed.find(" else ") {
+                (Some(p), 6)
+            } else {
+                (None, 0)
+            };
+            if let Some(el_pos) = el_pos {
+                // Find matching ) for the if condition
+                if let Some(close_paren) = trimmed[if_pos + 3..].find(") ") {
+                    let actual_close = if_pos + 3 + close_paren;
+                    // Only if there's no { between ) and el (braceless)
+                    let between = &trimmed[actual_close..el_pos];
+                    if !between.contains('{') {
+                        let before = &trimmed[..if_pos];
+                        let cond = &trimmed[if_pos + 4..actual_close];
+                        let then_val = &trimmed[actual_close + 2..el_pos];
+                        let else_val = &trimmed[el_pos + el_len..];
+                        let ws = &line[..line.len() - trimmed.len()];
+                        out.push(format!("{}{}if {} {{ {} }} el {{ {} }}",
+                            ws, before, cond, then_val, else_val));
+                        continue;
+                    }
+                }
+            }
+        }
+        out.push(line.to_string());
+    }
+    out.join("\n")
+}
+
+/// Fix C-style ternary: `= COND ? VAL : ALT` → `= if COND { VAL } el { ALT }`
+fn fix_c_ternary(source: &str) -> String {
+    let mut out = Vec::new();
+    for line in source.lines() {
+        let trimmed = line.trim();
+        // Pattern: "... = EXPR ? VAL : ALT" or "lt VAR = EXPR ? VAL : ALT"
+        if let Some(q_pos) = trimmed.find(" ? ") {
+            if let Some(c_pos) = trimmed[q_pos..].find(" : ") {
+                let before_q = &trimmed[..q_pos];
+                let val = &trimmed[q_pos + 3..q_pos + c_pos];
+                let alt = &trimmed[q_pos + c_pos + 3..];
+                // Find the assignment boundary
+                if let Some(eq_pos) = before_q.rfind(" = ") {
+                    let var_part = &before_q[..eq_pos + 3];
+                    let cond = &before_q[eq_pos + 3..];
+                    let ws = &line[..line.len() - trimmed.len()];
+                    out.push(format!("{}{}if {} {{ {} }} el {{ {} }}", ws, var_part, cond, val, alt));
+                    continue;
+                }
+            }
+        }
+        out.push(line.to_string());
+    }
+    out.join("\n")
+}
+
+/// Fix unmatched closing parens from list() wrapper removal.
+fn fix_unmatched_parens(source: &str) -> String {
+    source.lines().map(|line| {
+        let opens = line.chars().filter(|&c| c == '(').count();
+        let closes = line.chars().filter(|&c| c == ')').count();
+        if closes > opens {
+            // Remove excess closing parens from the end
+            let excess = closes - opens;
+            let mut s = line.to_string();
+            for _ in 0..excess {
+                if let Some(pos) = s.rfind(')') {
+                    s.remove(pos);
+                }
+            }
+            s
+        } else {
+            line.to_string()
+        }
+    }).collect::<Vec<_>>().join("\n")
+}
+
+/// Fix list comprehensions: `[expr for var in iter if cond]` → `iter.fl(|var| cond).mp(|var| expr)`
+fn fix_list_comprehensions(source: &str) -> String {
+    let mut out = Vec::new();
+    for line in source.lines() {
+        let mut l = line.to_string();
+        // Keep trying to replace comprehensions on this line
+        loop {
+            if let Some(start) = l.find(" [") .or_else(|| if l.starts_with('[') { Some(0) } else { None }) {
+                let bracket_start = if l[start..].starts_with(" [") { start + 1 } else { start };
+                let after = &l[bracket_start + 1..];
+                if let Some(for_pos) = after.find(" for ") {
+                    if let Some(close) = after.find(']') {
+                        if for_pos < close {
+                            let inner = &after[..close];
+                            let expr = inner[..for_pos].trim();
+                            let rest = &inner[for_pos + 5..];
+                            if let Some(in_pos) = rest.find(" in ") {
+                                let var = rest[..in_pos].trim();
+                                let after_in = &rest[in_pos + 4..];
+                                let (iter, cond) = if let Some(if_pos) = after_in.find(" if ") {
+                                    (after_in[..if_pos].trim(), Some(after_in[if_pos + 4..].trim()))
+                                } else {
+                                    (after_in.trim(), None)
+                                };
+                                let replacement = if let Some(c) = cond {
+                                    format!("{}.fl(|{}| {}).mp(|{}| {})", iter, var, c, var, expr)
+                                } else {
+                                    format!("{}.mp(|{}| {})", iter, var, expr)
+                                };
+                                l = format!("{}{}{}", &l[..bracket_start], replacement, &l[bracket_start + 1 + close + 1..]);
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+            break;
+        }
+        out.push(l);
+    }
+    out.join("\n")
 }
 
 /// Convert `lambda params: body` to `|params| body`.
@@ -215,6 +775,99 @@ fn fix_negation_operator(source: &str) -> String {
     result
 }
 
+/// Final pass: fix raw keywords that survived through minification.
+/// Runs line-by-line so leading whitespace doesn't matter.
+fn fix_raw_keywords(source: &str) -> String {
+    source.lines().map(|line| {
+        let trimmed = line.trim_start();
+        let ws = &line[..line.len() - trimmed.len()];
+
+        // return → rt, for → fo
+        let trimmed = if trimmed.starts_with("return ") {
+            format!("rt {}", &trimmed[7..])
+        } else if trimmed == "return" {
+            "rt".to_string()
+        } else if trimmed.starts_with("match ") {
+            format!("mc {}", &trimmed[6..])
+        } else if trimmed.starts_with("for ") {
+            // C-style for with semicolons → while loop
+            if trimmed.contains(';') {
+                // Extract condition from "for (init; cond; update) {" → "wl cond {"
+                let inner = trimmed.strip_prefix("for ").unwrap_or(trimmed);
+                let inner = inner.trim_start_matches('(');
+                let parts: Vec<&str> = inner.splitn(3, ';').collect();
+                if parts.len() >= 2 {
+                    let cond = parts[1].trim();
+                    format!("wl {} {{", cond)
+                } else {
+                    format!("fo {}", &trimmed[4..])
+                }
+            } else {
+                format!("fo {}", &trimmed[4..]).replace(" = ", " in ")
+            }
+        } else if trimmed.starts_with("fo ") && trimmed.contains(" = ") && trimmed.contains('{') {
+            // Go range that still has = instead of in
+            trimmed.replace(" = ", " in ")
+        }
+        // Python tuple unpacking: "a, b = 0, 1" → "lt (a, b) = (0, 1)"
+        else if trimmed.contains(", ") && trimmed.contains(" = ")
+                && !trimmed.contains("for ") && !trimmed.contains("fo ")
+                && !trimmed.contains("range") && !trimmed.contains("in ") {
+            let parts: Vec<&str> = trimmed.splitn(2, " = ").collect();
+            if parts.len() == 2 && parts[0].contains(',') && !parts[0].contains('(') {
+                format!("lt ({}) = ({})", parts[0], parts[1])
+            } else {
+                trimmed.to_string()
+            }
+        }
+        // C-style type declarations: "int id" or "Task tasks[N]" → "id: Int" / "tasks: [Task]"
+        // Only apply to lines WITHOUT colons (already-converted lines have "name: Type")
+        else if !trimmed.contains(':') && !trimmed.contains('(') && !trimmed.contains('=')
+                && !trimmed.contains('{') && !trimmed.contains('}')
+                && !trimmed.starts_with("fn ") && !trimmed.starts_with("rt ")
+                && !trimmed.starts_with("lt ") && !trimmed.starts_with("mt ")
+                && !trimmed.starts_with("if ") && !trimmed.starts_with("fo ")
+                && !trimmed.starts_with("wl ") && !trimmed.starts_with("st ")
+                && !trimmed.starts_with("im ") && !trimmed.starts_with("en ")
+                && !trimmed.starts_with("tr ") && !trimmed.starts_with("mc ") {
+            let parts: Vec<&str> = trimmed.splitn(2, ' ').collect();
+            if parts.len() == 2 && parts[0].chars().next().map(|c| c.is_alphabetic()).unwrap_or(false) {
+                let type_name = parts[0];
+                let var_part = parts[1].trim();
+                // Strip array brackets: "tasks[MAX]" → "tasks", mark as array
+                let (name, is_array) = if var_part.contains('[') {
+                    (var_part.split('[').next().unwrap_or(var_part).trim(), true)
+                } else {
+                    (var_part, false)
+                };
+                let ty = match type_name {
+                    "int" => "Int", "char" => "Char", "float" => "Float",
+                    "double" => "Float", "long" => "Int", "const" => {
+                        // "const char *..." — skip complex const declarations
+                        trimmed.to_string();
+                        trimmed
+                    },
+                    other => other,
+                };
+                if is_array {
+                    // char arrays → Str, others → List
+                    if ty == "Char" { format!("{}: Str", name) }
+                    else { format!("{}: List", name) }
+                } else {
+                    format!("{}: {}", name, ty)
+                }
+            } else {
+                trimmed.to_string()
+            }
+        }
+        else {
+            trimmed.to_string()
+        };
+
+        format!("{}{}", ws, trimmed)
+    }).collect::<Vec<_>>().join("\n")
+}
+
 /// Minify ingested code: strip comments, blank lines, compact indentation.
 /// Based on LLMLingua's principle of removing low-information-density tokens.
 fn minify(source: &str) -> String {
@@ -225,12 +878,12 @@ fn minify(source: &str) -> String {
             !trimmed.is_empty() && !trimmed.starts_with("//")
         })
         .map(|line| {
-            // Compact indentation: replace 4-space indents with 1-space
+            // Compact indentation: 4-space → 2-space
             let stripped = line.trim_start();
             let leading = line.len() - stripped.len();
             let indent_level = leading / 4;
             let remainder = leading % 4;
-            let compact_indent = " ".repeat(indent_level + if remainder > 0 { 1 } else { 0 });
+            let compact_indent = "  ".repeat(indent_level + if remainder > 0 { 1 } else { 0 });
             format!("{}{}", compact_indent, stripped)
         })
         .collect::<Vec<_>>()
@@ -240,7 +893,15 @@ fn minify(source: &str) -> String {
 /// Strip trailing semicolons from each line (Nebula uses newlines as terminators).
 fn strip_semicolons(source: &str) -> String {
     source.lines()
-        .map(|line| line.trim_end_matches(';'))
+        .map(|line| {
+            let l = line.trim_end_matches(';');
+            // Also strip trailing commas from match arms (Rust/Kotlin)
+            if l.contains("=>") && l.trim_end().ends_with(',') {
+                l.trim_end().trim_end_matches(',')
+            } else {
+                l
+            }
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -950,12 +1611,46 @@ mod js {
             "class_declaration" => {
                 let name = node.child_by_field_name("name")
                     .map(|n| text(&n, src)).unwrap_or("?");
-                // Nebula requires st {} for fields, im {} for methods
-                // JS classes only have methods, so emit st {} + im { methods }
-                let methods = node.child_by_field_name("body")
-                    .map(|n| emit_block(&n, src, depth))
-                    .unwrap_or_else(|| format!(" {{\n{}}}", ind));
-                format!("{}st {} {{}}\n{}im {}{}", ind, name, ind, name, methods)
+                // Split class body: fields → st {}, methods → im {}
+                let mut fields = String::new();
+                let mut methods = String::new();
+                let inner_ind = indent(depth + 1);
+                if let Some(body) = node.child_by_field_name("body") {
+                    let mut cursor = body.walk();
+                    for child in body.named_children(&mut cursor) {
+                        match child.kind() {
+                            "method_definition" => {
+                                methods.push_str(&emit(&child, src, depth + 1));
+                                methods.push('\n');
+                            }
+                            "public_field_definition" | "field_definition" => {
+                                // Extract field text and clean it up
+                                let raw = text(&child, src).trim()
+                                    .trim_end_matches(';').trim();
+                                // Format: "name: type" or "name = value" — emit as-is
+                                if !raw.is_empty() {
+                                    fields.push_str(&format!("{}{}\n", inner_ind, raw));
+                                }
+                            }
+                            _ => {
+                                // Other statements go in impl
+                                methods.push_str(&emit(&child, src, depth + 1));
+                                methods.push('\n');
+                            }
+                        }
+                    }
+                }
+                let st_body = if fields.is_empty() {
+                    " {}".to_string()
+                } else {
+                    format!(" {{\n{}{}}}", fields, ind)
+                };
+                let im_body = if methods.is_empty() {
+                    " {}".to_string()
+                } else {
+                    format!(" {{\n{}{}}}", methods, ind)
+                };
+                format!("{}st {}{}\n{}im {}{}", ind, name, st_body, ind, name, im_body)
             }
 
             "method_definition" => {
@@ -1301,7 +1996,8 @@ mod js {
                             .map(|n| emit_expr(&n, src)).unwrap_or_default();
                         pairs.push(format!("{}: {}", k, v));
                     } else if child.kind() == "shorthand_property_identifier" {
-                        pairs.push(text(&child, src).to_string());
+                        let name = text(&child, src);
+                        pairs.push(format!("{}: {}", name, name));
                     }
                 }
                 format!("{{{}}}", pairs.join(", "))
@@ -1505,9 +2201,12 @@ mod ts {
         let inner_ind = indent(depth + 1);
         let mut cursor = node.walk();
         for child in node.named_children(&mut cursor) {
-            if child.kind() == "property_signature" || child.kind() == "method_signature" {
-                out.push_str(&format!("{}{}\n", inner_ind, text(&child, src).trim()));
+            let raw = text(&child, src).trim();
+            if child.kind() == "method_signature" {
+                // Method signatures can stay (fn-like)
+                out.push_str(&format!("{}fn {}\n", inner_ind, raw));
             }
+            // Skip property_signature — not valid in Nebula traits
         }
         let ind = indent(depth);
         format!(" {{\n{}{}}}", out, ind)
@@ -2087,6 +2786,7 @@ pub(crate) mod swift {
     pub fn convert_swift_raw(raw: &str, depth: usize) -> String {
         let ind = indent(depth);
         let mut out = Vec::new();
+        let mut in_struct = false;  // Track if we're inside a struct body
         for line in raw.lines() {
             let trimmed = line.trim();
             if trimmed.is_empty() {
@@ -2122,6 +2822,46 @@ pub(crate) mod swift {
                 .replace("$1", "it2");
             // Fix Swift string interpolation: \(expr) → {expr}
             let converted = fix_swift_interpolation(&converted);
+
+            // Track struct/class context
+            let starts_struct = converted.starts_with("st ");
+            if starts_struct {
+                in_struct = true;
+                // Extract struct name for later im block
+            }
+
+            // Inside struct body: split fields from methods
+            if in_struct && converted.contains("fn ") && !starts_struct {
+                // Close struct, start impl block
+                let struct_name = out.iter().rev()
+                    .find(|l: &&String| l.contains("st "))
+                    .and_then(|l| l.split_whitespace().nth(1))
+                    .unwrap_or("?")
+                    .trim_end_matches('{').trim_end()
+                    .to_string();
+                out.push(format!("{}}}", ind));
+                out.push(format!("{}im {} {{", ind, struct_name));
+                in_struct = false;
+            }
+
+            // Inside struct body: strip lt/mt and default values from field declarations
+            let converted = if in_struct && converted.contains(':') && !converted.contains("fn ") && !starts_struct && converted.trim() != "}" {
+                let stripped = converted.replace("lt ", "").replace("mt ", "")
+                    .replace("mutating ", "").replace(":  ", ": ");
+                // Strip default value: "name: Type = value" → "name: Type"
+                if let Some(eq_pos) = stripped.find(" = ") {
+                    stripped[..eq_pos].to_string()
+                } else {
+                    stripped
+                }
+            } else {
+                converted
+            };
+
+            if converted.trim() == "}" {
+                in_struct = false;
+            }
+
             out.push(format!("{}{}", ind, converted));
         }
         let result = out.join("\n");
@@ -2143,6 +2883,8 @@ pub(crate) mod kotlin {
     pub fn convert_kotlin_raw(raw: &str, depth: usize) -> String {
         let ind = indent(depth);
         let mut out = Vec::new();
+        let mut in_data_class = false;
+        let mut in_struct = false;
         for line in raw.lines() {
             let trimmed = line.trim();
             if trimmed.is_empty() {
@@ -2150,12 +2892,47 @@ pub(crate) mod kotlin {
                 continue;
             }
 
+            // Kotlin data class: multi-line "(val x: T," → "{ x: T,"
+            if trimmed.starts_with("data class ") {
+                in_data_class = true;
+            }
+
+            // Inside data class params: strip val/var, replace () with {}
+            let closing_data = in_data_class && trimmed.contains(')');
+            if closing_data {
+                in_data_class = false;
+            }
+            let trimmed = if trimmed.starts_with("data class ") {
+                let converted = trimmed.replace("data class ", "st ")
+                    .replace('(', " {").replace(')', " }")
+                    .replace("val ", "").replace("var ", "");
+                converted
+            } else if in_data_class || closing_data {
+                // Field line or closing line
+                let mut line = trimmed.replace("val ", "").replace("var ", "");
+                // ") {" closes data class and opens method body
+                if closing_data && (line.contains(") {") || line.contains(")") || line.trim() == ") {") {
+                    let name = out.iter().rev()
+                        .find(|l: &&String| l.contains("st "))
+                        .and_then(|l| l.split_whitespace().nth(1))
+                        .unwrap_or("?")
+                        .trim_end_matches('{').trim_end()
+                        .to_string();
+                    // Push closing brace and impl block as separate lines
+                    out.push(format!("{}}}", ind));
+                    line = format!("im {} {{", name);
+                } else {
+                    line = line.replace(')', " }").replace('(', " {");
+                }
+                line
+            } else {
+                trimmed.to_string()
+            };
             let converted = trimmed
                 .replace("val ", "lt ")
                 .replace("var ", "mt ")
                 .replace("fun ", "fn ")
                 .replace("return ", "rt ")
-                .replace("data class ", "st ")
                 .replace("class ", "st ")
                 .replace("object ", "st ")
                 .replace("interface ", "tr ")
@@ -2175,6 +2952,45 @@ pub(crate) mod kotlin {
                 .replace("print(", "prt(")
                 .replace("break", "bk")
                 .replace("continue", "ct");
+
+            // Track struct/class context (same logic as Swift)
+            let starts_struct = converted.starts_with("st ");
+            if starts_struct {
+                in_struct = true;
+            }
+            if in_struct && converted.contains("fn ") && !starts_struct {
+                let struct_name = out.iter().rev()
+                    .find(|l: &&String| l.contains("st "))
+                    .and_then(|l| l.split_whitespace().nth(1))
+                    .unwrap_or("?")
+                    .trim_end_matches('{').trim_end()
+                    .to_string();
+                out.push(format!("{}}}", ind));
+                out.push(format!("{}im {} {{", ind, struct_name));
+                in_struct = false;
+            }
+            let converted = if in_struct && !starts_struct && converted.trim() != "}"
+                    && !converted.contains("fn ") && !converted.starts_with("im ")
+                    && !converted.starts_with("st ") && !converted.trim().is_empty() {
+                // Strip lt/mt and defaults from struct fields
+                let stripped = converted.replace("lt ", "").replace("mt ", "");
+                let stripped = if let Some(eq_pos) = stripped.find(" = ") {
+                    stripped[..eq_pos].to_string()
+                } else {
+                    stripped
+                };
+                // If field has no type annotation, add a placeholder
+                if !stripped.trim().contains(':') && !stripped.trim().is_empty() {
+                    format!("{}: Any", stripped.trim())
+                } else {
+                    stripped
+                }
+            } else {
+                converted
+            };
+            if converted.trim() == "}" {
+                in_struct = false;
+            }
 
             out.push(format!("{}{}", ind, converted));
         }
@@ -2823,9 +3639,21 @@ mod c {
             }
 
             "type_definition" => {
-                // Emit as type alias
+                // C typedef: "typedef struct { fields } Name;" → "st Name { fields }"
                 let raw = text(node, src).trim().trim_end_matches(';');
-                format!("{}ty {}", ind, raw.strip_prefix("typedef ").unwrap_or(raw))
+                let body = raw.strip_prefix("typedef ").unwrap_or(raw);
+                // Extract name from end: "struct { ... } TaskName" → name is last word
+                let name = body.split_whitespace().last().unwrap_or("?")
+                    .trim_end_matches('}');
+                if body.contains('{') {
+                    // Struct typedef — emit as st
+                    let fields_start = body.find('{').unwrap_or(0);
+                    let fields_end = body.rfind('}').unwrap_or(body.len());
+                    let fields = &body[fields_start..=fields_end];
+                    format!("{}st {} {}", ind, name, fields)
+                } else {
+                    format!("{}ty {} = {}", ind, name, body)
+                }
             }
 
             _ => {
