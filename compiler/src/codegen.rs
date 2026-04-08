@@ -1367,6 +1367,14 @@ impl GoGen {
                 "Bool" => "bool".into(),
                 "String" | "Str" => "string".into(),
                 "Error" => "error".into(),
+                // Reverse qualified type merging: TimeTime → time.Time, SyncWaitGroup → sync.WaitGroup
+                "TimeTime" => "time.Time".into(),
+                "TimeDuration" => "time.Duration".into(),
+                "SyncMutex" => "sync.Mutex".into(),
+                "SyncRWMutex" => "sync.RWMutex".into(),
+                "SyncWaitGroup" => "sync.WaitGroup".into(),
+                "StringsBuilder" => "strings.Builder".into(),
+                "JsonMarshal" => "json.Marshal".into(),
                 other => other.to_string(),
             },
             TypeExpr::Generic(name, args) => {
@@ -1375,6 +1383,7 @@ impl GoGen {
                     "List" | "Array" => format!("[]{}", a.first().map(|s| s.as_str()).unwrap_or("interface{}")),
                     "Map" if a.len() == 2 => format!("map[{}]{}", a[0], a[1]),
                     "Channel" => format!("chan {}", a.first().map(|s| s.as_str()).unwrap_or("interface{}")),
+                    "Ptr" => format!("*{}", a.first().map(|s| s.as_str()).unwrap_or("interface{}")),
                     _ => format!("{}<{}>", name, a.join(", ")),
                 }
             }
@@ -1433,10 +1442,33 @@ impl GoGen {
                 }
             }
             Statement::Mut { name, value, type_ann, .. } => {
+                // Check for go_var("type") pattern in the AST before generating
+                if let Expr::Call { callee, args } = value {
+                    if let Expr::Ident(ref fn_name) = **callee {
+                        if fn_name == "go_var" {
+                            if let Some(arg) = args.first() {
+                                if let Expr::StringLit(s) = &arg.value {
+                                    let ty = s.parts.iter().map(|p| match p {
+                                        StringPart::Literal(t) => t.as_str(),
+                                        _ => "",
+                                    }).collect::<String>();
+                                    return format!("{}var {} {}", self.ind(), name, ty);
+                                }
+                            }
+                        }
+                    }
+                }
+                let val = self.gen_expr(value);
                 let ty = type_ann.as_ref().map(|t| self.gen_type(t));
                 match ty {
-                    Some(t) => format!("{}{} {} = {}", self.ind(), name, t, self.gen_expr(value)),
-                    None => format!("{}{} := {}", self.ind(), name, self.gen_expr(value)),
+                    Some(t) => format!("{}var {} {} = {}", self.ind(), name, t, val),
+                    None => {
+                        if val == "nil" {
+                            format!("{}var {} interface{{}}", self.ind(), name)
+                        } else {
+                            format!("{}{} := {}", self.ind(), name, val)
+                        }
+                    },
                 }
             }
             Statement::FnDecl { name, params, body, return_type, .. } => {
@@ -1459,7 +1491,8 @@ impl GoGen {
                 self.indent += 1;
                 for f in fields {
                     let ty = self.gen_type(&f.type_ann);
-                    out.push_str(&format!("{}{} {}\n", self.ind(), capitalize(&f.name), ty));
+                    // Preserve field names as-is (Go struct fields keep original casing)
+                    out.push_str(&format!("{}{} {}\n", self.ind(), f.name, ty));
                 }
                 self.indent -= 1;
                 out.push_str(&format!("{}}}\n", self.ind()));
@@ -1480,12 +1513,15 @@ impl GoGen {
                 out
             }
             Statement::ImplBlock { target, methods, .. } => {
-                let recv_char = target.chars().next()
-                    .map(|c| c.to_lowercase().to_string())
-                    .unwrap_or_else(|| "s".into());
+                // Use first lowercase letter of type as receiver name
+                // Use "sf" as receiver name — matches ingested Nebula convention
+                let recv_char = "sf";
                 let mut out = String::new();
                 for method in methods {
                     if let Statement::FnDecl { name, params, body, return_type, .. } = method {
+                        // Check if sf is mutable (pointer receiver) or not (value receiver)
+                        let is_mut_receiver = params.iter()
+                            .any(|p| p.name == "sf" && p.type_ann.is_some());
                         let ps: Vec<String> = params.iter()
                             .filter(|p| p.name != "sf")
                             .map(|p| format!("{} {}", p.name, self.gen_param_type(p)))
@@ -1493,8 +1529,10 @@ impl GoGen {
                         let ret = return_type.as_ref()
                             .map(|t| format!(" {}", self.gen_type(t)))
                             .unwrap_or_default();
-                        out.push_str(&format!("{}func ({} *{}) {}({}){} {{\n",
-                            self.ind(), recv_char, target, name, ps.join(", "), ret));
+                        let _ = is_mut_receiver;
+                        let recv = format!("{} {}", recv_char, target);
+                        out.push_str(&format!("{}func ({}) {}({}){} {{\n",
+                            self.ind(), recv, name, ps.join(", "), ret));
                         self.indent += 1;
                         out.push_str(&self.gen_block(body));
                         self.indent -= 1;
@@ -1546,7 +1584,18 @@ impl GoGen {
     fn gen_block(&mut self, block: &Block) -> String {
         let mut out = String::new();
         for s in &block.statements { out.push_str(&self.gen_stmt(s)); out.push('\n'); }
-        if let Some(e) = &block.expr { out.push_str(&format!("{}return {}\n", self.ind(), self.gen_expr(e))); }
+        if let Some(e) = &block.expr {
+            match e.as_ref() {
+                Expr::If { .. } | Expr::Match { .. } | Expr::For { .. }
+                | Expr::While { .. } | Expr::Loop { .. } | Expr::Block(_)
+                | Expr::MethodCall { .. } | Expr::Call { .. } => {
+                    out.push_str(&format!("{}{}\n", self.ind(), self.gen_expr(e)));
+                }
+                _ => {
+                    out.push_str(&format!("{}return {}\n", self.ind(), self.gen_expr(e)));
+                }
+            }
+        }
         out
     }
 
@@ -1560,7 +1609,7 @@ impl GoGen {
                 let mut args = Vec::new();
                 for part in &s.parts {
                     match part {
-                        StringPart::Literal(t) => out.push_str(t),
+                        StringPart::Literal(t) => out.push_str(&t.replace('\n', "\\n").replace('\t', "\\t")),
                         StringPart::Interpolation(tokens) => {
                             out.push_str("%v");
                             let a: String = tokens.iter().map(|t| {
@@ -1606,12 +1655,48 @@ impl GoGen {
                     "tsr" | "to_string" => format!("fmt.Sprint({})", a.join(", ")),
                     "toi" | "to_int" => format!("int({})", a.join(", ")),
                     "tof" | "to_float" => format!("float64({})", a.join(", ")),
+                    "ln" => format!("len({})", a.join(", ")),
+                    "psh" => format!("append({})", a.join(", ")),
+                    "defer" => format!("defer {}", a.join(", ")),
+                    "make" => {
+                        let ty = a.first().map(|s| s.trim_matches('"').to_string())
+                            .unwrap_or_else(|| "interface{}".into());
+                        format!("make({})", ty)
+                    }
+                    "go_var" => {
+                        let ty = a.first().map(|s| s.trim_matches('"').to_string())
+                            .unwrap_or_else(|| "interface{}".into());
+                        // Emit proper Go zero-value for the type
+                        if ty.starts_with("[]") || ty.starts_with("map[") {
+                            "nil".into()  // slices and maps default to nil
+                        } else {
+                            format!("{}{{}}", ty)  // struct types use Type{}
+                        }
+                    }
+                    "__spawn" => format!("go {}", a.join(", ")),
+                    "__addr" => format!("&{}", a.join(", ")),
+                    "__deref" => format!("*{}", a.join(", ")),
+                    "Channel" => {
+                        if a.len() >= 2 {
+                            format!("make(chan {}, {})", a[0], a[1])
+                        } else {
+                            format!("make(chan {})", a.first().unwrap_or(&"interface{}".to_string()))
+                        }
+                    }
                     _ => format!("{}({})", c, a.join(", ")),
                 }
             }
             Expr::MethodCall { object, method, args } => {
                 let a: Vec<String> = args.iter().map(|a| self.gen_expr(&a.value)).collect();
-                format!("{}.{}({})", self.gen_expr(object), method, a.join(", "))
+                let obj = self.gen_expr(object);
+                // Reverse Nebula method translations back to Go builtins
+                match method.as_str() {
+                    "remove" => format!("delete({}, {})", obj, a.join(", ")),
+                    "send" => format!("{} <- {}", obj, a.join(", ")),
+                    "recv" => format!("<-{}", obj),
+                    "close" => format!("close({})", obj),
+                    _ => format!("{}.{}({})", obj, method, a.join(", ")),
+                }
             }
             Expr::FieldAccess { object, field } => {
                 // Preserve field names as-is (Go struct fields keep original casing)
@@ -1619,11 +1704,37 @@ impl GoGen {
             }
             Expr::Index { object, index } => format!("{}[{}]", self.gen_expr(object), self.gen_expr(index)),
             Expr::Lambda { params, body } => {
-                let ps: Vec<String> = params.iter().map(|p| format!("{} interface{{}}", p.name)).collect();
-                format!("func({}) interface{{}} {{ return {} }}", ps.join(", "), self.gen_expr(body))
+                let ps: Vec<String> = params.iter().map(|p| format!("{} {}", p.name, self.gen_param_type(p))).collect();
+                match body.as_ref() {
+                    Expr::Block(block) => {
+                        // Check if the block returns a comparison → add bool return type
+                        let has_bool_return = block.expr.as_ref().map_or(false, |e| {
+                            matches!(e.as_ref(), Expr::BinaryOp { op, .. }
+                                if matches!(op, BinOp::Less | BinOp::Greater | BinOp::LessEq
+                                    | BinOp::GreaterEq | BinOp::Eq | BinOp::NotEq))
+                        }) || block.statements.iter().any(|s| {
+                            if let Statement::Return(Some(e)) = s {
+                                matches!(e, Expr::BinaryOp { op, .. }
+                                    if matches!(op, BinOp::Less | BinOp::Greater | BinOp::LessEq
+                                        | BinOp::GreaterEq | BinOp::Eq | BinOp::NotEq))
+                            } else { false }
+                        });
+                        let ret = if has_bool_return { " bool" } else { "" };
+                        let mut out = format!("func({}){} {{\n", ps.join(", "), ret);
+                        self.indent += 1;
+                        out.push_str(&self.gen_block(block));
+                        self.indent -= 1;
+                        out.push_str(&format!("{}}}", self.ind()));
+                        out
+                    }
+                    _ => {
+                        format!("func({}) interface{{}} {{ return {} }}", ps.join(", "), self.gen_expr(body))
+                    }
+                }
             }
             Expr::If { condition, then_block, else_block } => {
-                let mut out = format!("if {} {{\n", self.gen_expr(condition));
+                let cond = self.gen_expr(condition);
+                let mut out = format!("if {} {{\n", cond);
                 self.indent += 1; out.push_str(&self.gen_block(then_block)); self.indent -= 1;
                 out.push_str(&format!("{}}}", self.ind()));
                 if let Some(eb) = else_block {
@@ -1633,8 +1744,12 @@ impl GoGen {
                 }
                 out
             }
-            Expr::For { binding, iterable, body, .. } => {
-                let mut out = format!("for _, {} := range {} {{\n", binding, self.gen_expr(iterable));
+            Expr::For { binding, index_binding, iterable, body, .. } => {
+                let range_var = match index_binding {
+                    Some(idx) => format!("{}, {}", idx, binding),
+                    None => binding.clone(),
+                };
+                let mut out = format!("for {} := range {} {{\n", range_var, self.gen_expr(iterable));
                 self.indent += 1; out.push_str(&self.gen_block(body)); self.indent -= 1;
                 out.push_str(&format!("{}}}", self.ind()));
                 out
@@ -1653,9 +1768,19 @@ impl GoGen {
             }
             Expr::List(items) => {
                 let i: Vec<String> = items.iter().map(|e| self.gen_expr(e)).collect();
-                format!("[]interface{{}}{{{}}}", i.join(", "))
+                // Infer list element type from items
+                let elem_type = if items.iter().all(|e| matches!(e, Expr::StringLit(_))) {
+                    "string"
+                } else if items.iter().all(|e| matches!(e, Expr::IntLit(_))) {
+                    "int"
+                } else if items.iter().all(|e| matches!(e, Expr::FloatLit(_))) {
+                    "float64"
+                } else {
+                    "interface{}"
+                };
+                format!("[]{}{{{}}}", elem_type, i.join(", "))
             }
-            Expr::Range { start, end, .. } => format!("/* range({}, {}) */", self.gen_expr(start), self.gen_expr(end)),
+            Expr::Range { start, end, .. } => format!("{}:{}", self.gen_expr(start), self.gen_expr(end)),
             Expr::Pipe { left, right } => {
                 if let Expr::Ident(n) = right.as_ref() { format!("{}({})", n, self.gen_expr(left)) }
                 else { format!("/* pipe */ {}", self.gen_expr(right)) }
@@ -1666,30 +1791,56 @@ impl GoGen {
             }
             Expr::Match { subject, arms } => {
                 let subj = self.gen_expr(subject);
-                let mut out = format!("{}switch {} {{\n", self.ind(), subj);
+                let mut out = format!("switch {} {{\n", subj);
                 self.indent += 1;
                 for arm in arms {
                     match &arm.pattern {
                         Pattern::Wildcard | Pattern::Binding(_) => {
                             out.push_str(&format!("{}default:\n", self.ind()));
-                            self.indent += 1;
-                            out.push_str(&format!("{}return {}\n", self.ind(), self.gen_expr(&arm.body)));
-                            self.indent -= 1;
                         }
                         Pattern::Literal(lit) => {
                             out.push_str(&format!("{}case {}:\n", self.ind(), self.gen_expr(lit)));
-                            self.indent += 1;
-                            out.push_str(&format!("{}return {}\n", self.ind(), self.gen_expr(&arm.body)));
-                            self.indent -= 1;
+                        }
+                        Pattern::Variant(name, _) => {
+                            out.push_str(&format!("{}case {}:\n", self.ind(), name));
                         }
                         _ => {
-                            out.push_str(&format!("{}// pattern TODO\n", self.ind()));
+                            out.push_str(&format!("{}default: // pattern\n", self.ind()));
                         }
                     }
+                    self.indent += 1;
+                    // Emit body — if it's a block, emit statements; otherwise return
+                    match &arm.body {
+                        Expr::Block(block) => {
+                            out.push_str(&self.gen_block(block));
+                        }
+                        other => {
+                            out.push_str(&format!("{}return {}\n", self.ind(), self.gen_expr(other)));
+                        }
+                    }
+                    self.indent -= 1;
                 }
                 self.indent -= 1;
                 out.push_str(&format!("{}}}", self.ind()));
                 out
+            }
+            Expr::StructLit { name, fields, .. } => {
+                let fs: Vec<String> = fields.iter()
+                    .map(|(k, v)| format!("{}: {}", k, self.gen_expr(v)))
+                    .collect();
+                format!("{}{{{}}}", name, fs.join(", "))
+            }
+            Expr::Block(block) => {
+                let mut out = "{\n".to_string();
+                self.indent += 1;
+                out.push_str(&self.gen_block(block));
+                self.indent -= 1;
+                out.push_str(&format!("{}}}", self.ind()));
+                out
+            }
+            Expr::Tuple(items) => {
+                let i: Vec<String> = items.iter().map(|e| self.gen_expr(e)).collect();
+                i.join(", ")
             }
             _ => "/* TODO */".into(),
         }
@@ -1778,7 +1929,18 @@ impl SwiftGen {
     fn gen_block(&mut self, block: &Block) -> String {
         let mut out = String::new();
         for s in &block.statements { out.push_str(&self.gen_stmt(s)); out.push('\n'); }
-        if let Some(e) = &block.expr { out.push_str(&format!("{}return {}\n", self.ind(), self.gen_expr(e))); }
+        if let Some(e) = &block.expr {
+            match e.as_ref() {
+                Expr::If { .. } | Expr::Match { .. } | Expr::For { .. }
+                | Expr::While { .. } | Expr::Loop { .. } | Expr::Block(_)
+                | Expr::MethodCall { .. } | Expr::Call { .. } => {
+                    out.push_str(&format!("{}{}\n", self.ind(), self.gen_expr(e)));
+                }
+                _ => {
+                    out.push_str(&format!("{}return {}\n", self.ind(), self.gen_expr(e)));
+                }
+            }
+        }
         out
     }
 
@@ -1793,7 +1955,7 @@ impl SwiftGen {
                 out.push('"');
                 for part in &s.parts {
                     match part {
-                        StringPart::Literal(t) => out.push_str(t),
+                        StringPart::Literal(t) => out.push_str(&t.replace('\n', "\\n").replace('\t', "\\t")),
                         StringPart::Interpolation(tokens) => {
                             out.push_str("\\(");
                             for t in tokens {
@@ -2002,7 +2164,18 @@ impl KotlinGen {
     fn gen_block(&mut self, block: &Block) -> String {
         let mut out = String::new();
         for s in &block.statements { out.push_str(&self.gen_stmt(s)); out.push('\n'); }
-        if let Some(e) = &block.expr { out.push_str(&format!("{}return {}\n", self.ind(), self.gen_expr(e))); }
+        if let Some(e) = &block.expr {
+            match e.as_ref() {
+                Expr::If { .. } | Expr::Match { .. } | Expr::For { .. }
+                | Expr::While { .. } | Expr::Loop { .. } | Expr::Block(_)
+                | Expr::MethodCall { .. } | Expr::Call { .. } => {
+                    out.push_str(&format!("{}{}\n", self.ind(), self.gen_expr(e)));
+                }
+                _ => {
+                    out.push_str(&format!("{}return {}\n", self.ind(), self.gen_expr(e)));
+                }
+            }
+        }
         out
     }
 
@@ -2015,7 +2188,7 @@ impl KotlinGen {
                 let mut out = String::from("\"");
                 for part in &s.parts {
                     match part {
-                        StringPart::Literal(t) => out.push_str(t),
+                        StringPart::Literal(t) => out.push_str(&t.replace('\n', "\\n").replace('\t', "\\t")),
                         StringPart::Interpolation(tokens) => {
                             out.push_str("${");
                             for t in tokens {
@@ -2344,7 +2517,7 @@ impl TsGen {
                 let mut out = if has_interp { String::from("`") } else { String::from("\"") };
                 for part in &s.parts {
                     match part {
-                        StringPart::Literal(t) => out.push_str(t),
+                        StringPart::Literal(t) => out.push_str(&t.replace('\n', "\\n").replace('\t', "\\t")),
                         StringPart::Interpolation(tokens) => {
                             out.push_str("${");
                             for tok in tokens { out.push_str(&interpolation_token_to_target(tok, "this")); }
@@ -2723,7 +2896,7 @@ impl RustGen {
                 let mut args = Vec::new();
                 for part in &s.parts {
                     match part {
-                        StringPart::Literal(t) => out.push_str(t),
+                        StringPart::Literal(t) => out.push_str(&t.replace('\n', "\\n").replace('\t', "\\t")),
                         StringPart::Interpolation(tokens) => {
                             out.push_str("{}");
                             let a: String = tokens.iter().map(|t| interpolation_token_to_target(t, "self")).collect();
@@ -3088,6 +3261,7 @@ impl CGen {
     }
 }
 
+#[allow(dead_code)]
 fn capitalize(s: &str) -> String {
     let mut c = s.chars();
     match c.next() {
@@ -3313,7 +3487,7 @@ mod tests {
     #[test]
     fn test_go_for() {
         let go = translate_go("fo x in items { print(x) }");
-        assert!(go.contains("for _, x := range items"));
+        assert!(go.contains("for x := range items"));
     }
 
     #[test]

@@ -121,17 +121,11 @@ fn postprocess_go(source: &str) -> String {
         // Post-increment/decrement
         .replace("++", " += 1")
         .replace("--", " -= 1")
-        // Go pointer types in expressions
+        // Go pointer types
         .replace("-> *", "-> ")
-        .replace("&{", "{")
-        .replace("rt &", "rt ")
-        .replace("= &", "= ")  // strip address-of before struct literals
-        .replace("(&", "(")    // strip address-of in function args
-        // Strip pointer dereference * before identifiers in expressions
+        // Strip * dereference before identifiers (Nebula doesn't have explicit deref)
         .replace("!= *", "!= ")
-        .replace("== *", "== ")
-        .replace(", *", ", ")
-        .replace("= *", "= ");
+        .replace("== *", "== ");
     s
 }
 
@@ -2286,26 +2280,71 @@ mod go {
                     .map(|n| text(&n, src)).unwrap_or("?");
                 let params = node.child_by_field_name("parameters")
                     .map(|n| emit_params(&n, src)).unwrap_or_default();
-                let ret = node.child_by_field_name("result")
-                    .map(|n| emit_return_type(&n, src));
-                let body = node.child_by_field_name("body")
+                let result_node = node.child_by_field_name("result");
+                let ret = result_node.as_ref().map(|n| emit_return_type(n, src));
+                let named_returns = result_node.as_ref()
+                    .map(|n| extract_named_returns(n, src, depth + 1))
+                    .unwrap_or_default();
+                let mut body = node.child_by_field_name("body")
                     .map(|n| emit_block(&n, src, depth))
                     .unwrap_or_else(|| format!(" {{\n{}}}", ind));
+                // Inject named return declarations at top of body
+                if !named_returns.is_empty() {
+                    body = body.replacen("{\n", &format!("{{\n{}", named_returns), 1);
+                }
                 format!("{}fn {}({}){}{}", ind, name, params,
                         ret.unwrap_or_default(), body)
             }
 
             "method_declaration" => {
-                let _receiver = node.child_by_field_name("receiver");
+                let receiver_node = node.child_by_field_name("receiver");
                 let name = node.child_by_field_name("name")
                     .map(|n| text(&n, src)).unwrap_or("?");
                 let params = node.child_by_field_name("parameters")
                     .map(|n| emit_params(&n, src)).unwrap_or_default();
-                let ret = node.child_by_field_name("result")
-                    .map(|n| emit_return_type(&n, src));
-                let body = node.child_by_field_name("body")
+                let result_node = node.child_by_field_name("result");
+                let ret = result_node.as_ref().map(|n| emit_return_type(n, src));
+                let named_returns = result_node.as_ref()
+                    .map(|n| extract_named_returns(n, src, depth + 1))
+                    .unwrap_or_default();
+                let mut body = node.child_by_field_name("body")
                     .map(|n| emit_block(&n, src, depth))
                     .unwrap_or_else(|| format!(" {{\n{}}}", ind));
+                // Inject named return declarations
+                if !named_returns.is_empty() {
+                    body = body.replacen("{\n", &format!("{{\n{}", named_returns), 1);
+                }
+
+                // Extract receiver variable name and replace with sf in body
+                if let Some(recv) = &receiver_node {
+                    let recv_text = text(recv, src);
+                    let recv_name = recv_text.trim_matches(|c: char| c == '(' || c == ')')
+                        .split_whitespace().next().unwrap_or("s");
+                    if recv_name != "sf" && !recv_name.is_empty() {
+                        // Word-boundary replacement: replace recv_name with sf
+                        // when followed by '.', ' ', ',', ')', '[', '{' or at end
+                        let mut new_body = String::with_capacity(body.len());
+                        let chars: Vec<char> = body.chars().collect();
+                        let rn: Vec<char> = recv_name.chars().collect();
+                        let rn_len = rn.len();
+                        let mut i = 0;
+                        while i < chars.len() {
+                            if i + rn_len <= chars.len()
+                                && &chars[i..i+rn_len] == rn.as_slice()
+                                && (i == 0 || !chars[i-1].is_alphanumeric() && chars[i-1] != '_')
+                                && (i + rn_len >= chars.len() ||
+                                    matches!(chars[i+rn_len], '.' | ' ' | ',' | ')' | '[' | '{' | '\n'))
+                            {
+                                new_body.push_str("sf");
+                                i += rn_len;
+                            } else {
+                                new_body.push(chars[i]);
+                                i += 1;
+                            }
+                        }
+                        body = new_body;
+                    }
+                }
 
                 let param_str = if params.is_empty() {
                     "sf".to_string()
@@ -2359,12 +2398,16 @@ mod go {
                             .map(|n| text(&n, src)).unwrap_or("?");
                         let value = child.child_by_field_name("value")
                             .map(|n| emit_expr(&n, src));
-                        let ty = child.child_by_field_name("type")
-                            .map(|n| go_type_to_nebula(&text(&n, src)));
-                        // If no value but has type, use zero-value init
+                        let raw_ty = child.child_by_field_name("type")
+                            .map(|n| text(&n, src).to_string());
+                        // If no value but has type, use the raw Go type for var declaration
                         let value = match value {
                             Some(v) => Some(v),
-                            None => Some("nil".to_string()),
+                            None => match &raw_ty {
+                                // Preserve raw Go type as a "go_var:type" marker
+                                Some(t) => Some(format!("go_var(\"{}\")", t)),
+                                None => Some("nil".to_string()),
+                            },
                         };
                         specs.push((name.to_string(), value));
                     }
@@ -2729,47 +2772,17 @@ mod go {
 
                 // Handle make() specially — convert to type constructors
                 if func == "make" {
-                    // Parse the raw arguments to determine the type
                     let raw_args = args_node.map(|n| text(&n, src)).unwrap_or_default();
-                    // Strip only outer parens (not inner ones from nested calls)
                     let raw_args = raw_args.strip_prefix('(').unwrap_or(raw_args);
                     let raw_args = raw_args.strip_suffix(')').unwrap_or(raw_args);
-                    if raw_args.starts_with("map[") {
-                        // make(map[K]V) → {K: V}{}
-                        // Extract K and V from map[K]V
-                        if let Some(rest) = raw_args.strip_prefix("map[") {
-                            let mut depth = 1;
-                            let mut split = 0;
-                            for (i, ch) in rest.char_indices() {
-                                match ch {
-                                    '[' => depth += 1,
-                                    ']' => { depth -= 1; if depth == 0 { split = i; break; } }
-                                    _ => {}
-                                }
-                            }
-                            if split > 0 {
-                                let key = go_type_to_nebula(&rest[..split]);
-                                let val_and_rest = &rest[split + 1..];
-                                // val_and_rest might have ", size" after the type
-                                let val = val_and_rest.split(',').next().unwrap_or(val_and_rest).trim();
-                                let val = go_type_to_nebula(val);
-                                return format!("new_map()", );
-                            }
-                        }
-                    } else if raw_args.starts_with("[]") {
-                        // make([]Type, len, cap) → List<Type>{}
-                        let type_part = raw_args.split(',').next().unwrap_or(raw_args).trim();
-                        let inner = type_part.strip_prefix("[]").unwrap_or(type_part);
-                        return format!("new_list()");
-                    } else if raw_args.starts_with("chan ") {
-                        // make(chan Type, size) → Channel(Type, size)
+                    if raw_args.starts_with("chan ") {
                         let parts: Vec<&str> = raw_args.splitn(2, ',').collect();
                         let ty = parts[0].strip_prefix("chan ").unwrap_or(parts[0]).trim();
                         let size = parts.get(1).map(|s| s.trim()).unwrap_or("0");
                         return format!("Channel({}, {})", go_type_to_nebula(ty), size);
                     }
-                    // Fallback
-                    return format!("make({})", args);
+                    // Encode type as a string argument so the parser accepts it
+                    return format!("make(\"{}\")", raw_args.replace('"', "'"));
                 }
 
                 // Handle delete() → map.remove(key)
@@ -2845,6 +2858,9 @@ mod go {
                 // Type{fields} — struct, map, or slice literal
                 let type_node = node.child_by_field_name("type");
                 let body_node = node.child_by_field_name("body");
+                let raw_type = type_node.as_ref()
+                    .map(|n| text(n, src).to_string())
+                    .unwrap_or_default();
                 let type_str = type_node.as_ref()
                     .map(|n| go_type_to_nebula(&text(n, src)))
                     .unwrap_or_default();
@@ -2892,11 +2908,11 @@ mod go {
                 if type_str.is_empty() {
                     format!("{{{}}}", body_str)
                 } else if body_str.is_empty() {
-                    // Empty composite literal: Type{} → constructor call
-                    if type_str.starts_with("List<") || type_str.starts_with("Map<") {
-                        // Generic type empty literal → [] or {}
-                        if type_str.starts_with("List") { "[]".to_string() }
-                        else { "{}".to_string() }
+                    // Empty composite literal
+                    if raw_type.starts_with("[]") {
+                        format!("go_var(\"{}\")", raw_type) // preserve Go slice type
+                    } else if raw_type.starts_with("map[") {
+                        format!("make(\"{}\")", raw_type)  // empty map → make("mapType")
                     } else {
                         format!("{}{{}}", type_str)
                     }
@@ -2999,6 +3015,26 @@ mod go {
         params.join(", ")
     }
 
+    /// Extract named return variables as "mt name = go_var("type")" declarations
+    fn extract_named_returns(node: &Node, src: &[u8], depth: usize) -> String {
+        let inner_ind = indent(depth);
+        if node.kind() != "parameter_list" { return String::new(); }
+        let mut decls = Vec::new();
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            if child.kind() == "parameter_declaration" {
+                let name_node = child.child_by_field_name("name");
+                let type_node = child.child_by_field_name("type");
+                if let (Some(n), Some(t)) = (name_node, type_node) {
+                    let name = text(&n, src);
+                    let ty = text(&t, src);
+                    decls.push(format!("{}mt {} = go_var(\"{}\")\n", inner_ind, name, ty));
+                }
+            }
+        }
+        decls.join("")
+    }
+
     /// Emit a Go return type, converting Go types to Nebula
     fn emit_return_type(node: &Node, src: &[u8]) -> String {
         let raw = text(node, src).trim();
@@ -3065,11 +3101,23 @@ mod go {
         }
 
         // Group consecutive methods by receiver type into im blocks
+        // Filter out "ty X = int" that precede "en X {" (iota enum duplicate)
         let mut out = String::new();
         let mut i = 0;
         while i < decls.len() {
             match &decls[i] {
                 Decl::Other(code) => {
+                    // Skip "ty X = int" if next decl starts with "en X {"
+                    if code.trim().starts_with("ty ") && code.trim().ends_with("= int") {
+                        if let Some(Decl::Other(next_code)) = decls.get(i + 1) {
+                            let ty_name = code.trim().strip_prefix("ty ").unwrap_or("")
+                                .split(" =").next().unwrap_or("").trim();
+                            if next_code.trim().starts_with(&format!("en {} {{", ty_name)) {
+                                i += 1;
+                                continue;
+                            }
+                        }
+                    }
                     out.push_str(code);
                     out.push('\n');
                     i += 1;
@@ -3143,9 +3191,9 @@ mod go {
     /// Convert a Go type string to Nebula type syntax
     fn go_type_to_nebula(ty: &str) -> String {
         let ty = ty.trim();
-        // Pointer types: *Type → Type
+        // Pointer types: *Type → Ptr<Type>
         if let Some(inner) = ty.strip_prefix('*') {
-            return go_type_to_nebula(inner);
+            return format!("Ptr<{}>", go_type_to_nebula(inner));
         }
         // Slice types: []Type → List<Type>
         if let Some(inner) = ty.strip_prefix("[]") {

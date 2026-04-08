@@ -199,17 +199,25 @@ impl Parser {
             Token::Trait => self.parse_trait_decl(is_pub),
             Token::Impl => self.parse_impl_block(),
             Token::Return => self.parse_return(),
-            Token::Spawn => {
-                // sp expr → treat as expression statement (spawn/go)
+            // defer expr → Statement::Expr with defer prefix (Go interop)
+            Token::Ident(ref n) if n == "defer" => {
                 self.advance();
-                // sp fn() { ... }() → parse fn as a lambda
+                let expr = self.parse_expr()?;
+                // Wrap in a special way the codegen can detect
+                // We'll use Expr::Call with "defer" as callee
+                Ok(Statement::Expr(Expr::Call {
+                    callee: Box::new(Expr::Ident("defer".to_string())),
+                    args: vec![crate::ast::CallArg { name: None, value: expr }],
+                }))
+            }
+            Token::Spawn => {
+                // sp expr → go expr (Go goroutine)
+                self.advance();
                 if matches!(self.peek(), Token::Fn) {
-                    self.advance(); // consume fn
-                    // Parse as zero-param lambda
+                    self.advance();
                     self.expect(&Token::LeftParen)?;
                     self.expect(&Token::RightParen)?;
                     let body = self.parse_block()?;
-                    // Check for () call
                     if matches!(self.peek(), Token::LeftParen) {
                         self.advance();
                         self.expect(&Token::RightParen)?;
@@ -218,10 +226,22 @@ impl Parser {
                         params: vec![],
                         body: Box::new(Expr::Block(body)),
                     };
-                    Ok(Statement::Expr(lambda))
+                    // Call the lambda: func() { ... }()
+                    let call = Expr::Call {
+                        callee: Box::new(lambda),
+                        args: vec![],
+                    };
+                    // Wrap in __spawn marker so codegen emits "go"
+                    Ok(Statement::Expr(Expr::Call {
+                        callee: Box::new(Expr::Ident("__spawn".to_string())),
+                        args: vec![crate::ast::CallArg { name: None, value: call }],
+                    }))
                 } else {
                     let expr = self.parse_expr()?;
-                    Ok(Statement::Expr(expr))
+                    Ok(Statement::Expr(Expr::Call {
+                        callee: Box::new(Expr::Ident("__spawn".to_string())),
+                        args: vec![crate::ast::CallArg { name: None, value: expr }],
+                    }))
                 }
             }
             Token::Break => self.parse_break(),
@@ -1141,6 +1161,25 @@ impl Parser {
                     operand: Box::new(operand),
                 })
             }
+            // & (address-of) — Go interop, treated as identity in Nebula
+            Token::Ampersand => {
+                self.advance();
+                let operand = self.parse_unary()?;
+                // Wrap in a special call so codegen can emit &
+                Ok(Expr::Call {
+                    callee: Box::new(Expr::Ident("__addr".to_string())),
+                    args: vec![crate::ast::CallArg { name: None, value: operand }],
+                })
+            }
+            // * (dereference) — Go interop
+            Token::Star => {
+                self.advance();
+                let operand = self.parse_unary()?;
+                Ok(Expr::Call {
+                    callee: Box::new(Expr::Ident("__deref".to_string())),
+                    args: vec![crate::ast::CallArg { name: None, value: operand }],
+                })
+            }
             _ => self.parse_postfix(),
         }
     }
@@ -1677,6 +1716,9 @@ impl Parser {
                     }
                     self.expect(&Token::RightParen)?;
                     Ok(Pattern::Variant(name, sub))
+                } else if name.chars().next().map_or(false, |c| c.is_uppercase()) {
+                    // Uppercase identifier → treat as value/enum variant pattern
+                    Ok(Pattern::Literal(Expr::Ident(name)))
                 } else {
                     Ok(Pattern::Binding(name))
                 }
