@@ -1,0 +1,496 @@
+ty Priority = int
+en Priority {
+  Low
+  Medium
+  High
+  Critical
+}
+fn String(sf) -> string {
+  mc p {
+  Low => rt "low"
+  Medium => rt "medium"
+  High => rt "high"
+  Critical => rt "critical"
+  _ => rt "unknown"
+  }
+}
+ty Status = int
+en Status {
+  Open
+  InProgress
+  Blocked
+  Done
+}
+fn String(sf) -> string {
+  mc s {
+  Open => rt "open"
+  InProgress => rt "in_progress"
+  Blocked => rt "blocked"
+  Done => rt "done"
+  _ => rt "unknown"
+  }
+}
+st Task {
+  ID: int
+  Title: string
+  Priority: Priority
+  Status: Status
+  Tags: List
+  CreatedAt: time.Time
+  DueDate: time.Time
+  Subtasks: List
+  Assignee: string
+}
+st TaskStore {
+  mu: sync.RWMutex
+  tasks: {int: Task}
+  nextID: int
+}
+fn NewTaskStore() -> TaskStore {
+  rt TaskStore{
+  tasks: make(map[int]*Task),
+  nextID: 1,
+  }
+}
+fn Add(sf, title: string, priority: Priority) -> Task {
+  s.mu.Lock()
+  defer s.mu.Unlock()
+  mt t = Task{
+  ID:    s.nextID,
+  Title:  title,
+  Priority: priority,
+  Status:  Open,
+  Tags:   [],
+  CreatedAt: time.Now(),
+  }
+  s.tasks[s.nextID] = t
+  s.nextID += 1
+  rt t
+}
+fn Get(sf, id: int) -> (Task, bool) {
+  s.mu.RLock()
+  defer s.mu.RUnlock()
+  lt (mt t, ok) = (s.tasks[id])
+  rt t, ok
+}
+fn Remove(sf, id: int) -> bool {
+  s.mu.Lock()
+  defer s.mu.Unlock()
+  if not ok {
+  rt ff
+  }
+  delete(s.tasks, id)
+  rt tt
+}
+fn All(sf) -> List*Task {
+  s.mu.RLock()
+  defer s.mu.RUnlock()
+  mt result = make([]*Task, 0, ln(s.tasks))
+  fo _, t in s.tasks {
+  result = psh(result, t)
+  }
+  sort.Slice(result, func(i, j int) bool {
+  rt result[i].ID < result[j].ID
+  }
+  rt result
+}
+st Filter {
+  Priority: Priority
+  Status: Status
+  Tag: string
+  Assignee: string
+  Overdue: bool
+}
+fn Search(sf, f: Filter) -> List*Task {
+  mt all = s.All()
+  mt results
+  mt now = time.Now()
+  fo _, t in all {
+  if f.Priority != nil and t.Priority != *f.Priority {
+    ct
+  }
+  if f.Status != nil and t.Status != *f.Status {
+    ct
+  }
+  if f.Tag != "" and not hasTag(t, f.Tag) {
+    ct
+  }
+  if f.Assignee != "" and t.Assignee != f.Assignee {
+    ct
+  }
+  if f.Overdue and (t.DueDate == nil or t.DueDate.After(now) or t.Status == Done) {
+    ct
+  }
+  results = psh(results, t)
+  }
+  rt results
+}
+fn hasTag(t: Task, tag: string) -> bool {
+  fo _, tg in t.Tags {
+  if tg == tag {
+    rt tt
+  }
+  }
+  rt ff
+}
+st Stats {
+  Total: int
+  ByStatus: {Status: int}
+  ByPriority: {Priority: int}
+  AvgAge: time.Duration
+  OverdueCount: int
+  Unassigned: int
+}
+fn ComputeStats(sf) -> Stats {
+  mt all = s.All()
+  mt now = time.Now()
+  mt stats = Stats{
+  Total:   len(all),
+  ByStatus: make(map[Status]int),
+  ByPriority: make(map[Priority]int),
+  }
+  mt totalAge
+  fo _, t in all {
+  stats.ByStatus[t.Status] += 1
+  stats.ByPriority[t.Priority] += 1
+  totalAge = now.Sub(t.CreatedAt)
+  if t.DueDate != nil and t.DueDate.Before(now) and t.Status != Done {
+    stats.OverdueCount += 1
+  }
+  if t.Assignee == "" {
+    stats.Unassigned += 1
+  }
+  }
+  if ln(all) > 0 {
+  stats.AvgAge = totalAge / time.Duration(ln(all))
+  }
+  rt stats
+}
+fn HasCycle(sf, taskID: int) -> bool {
+  mt visited = make(map[int]bool)
+  rt s.detectCycle(taskID, visited)
+}
+fn detectCycle(sf, id: int, visited: map[int]bool) -> bool {
+  if visited[id] {
+  rt tt
+  }
+  visited[id] = tt
+  lt (mt t, ok) = (s.Get(id))
+  if not ok {
+  rt ff
+  }
+  fo _, sub in t.Subtasks {
+  if s.detectCycle(sub, visited) {
+    rt tt
+  }
+  }
+  visited[id] = ff
+  rt ff
+}
+fn BulkUpdateStatus(sf, ids: Listint, status: Status) -> (updated int, failed []int) {
+  fo _, id in ids {
+  s.mu.Lock()
+  lt (mt t, ok) = (s.tasks[id])
+  if ok {
+    t.Status = status
+    updated += 1
+  } el {
+    failed = psh(failed, id)
+  }
+  s.mu.Unlock()
+  }
+  rt
+}
+fn AutoAssign(sf, assignees: Liststring) {
+  if ln(assignees) == 0 {
+  rt
+  }
+  mt all = s.All()
+  mt idx = 0
+  fo _, t in all {
+  if t.Assignee == "" and t.Status != Done {
+    s.mu.Lock()
+    t.Assignee = assignees[idx % ln(assignees)]
+    s.mu.Unlock()
+    idx += 1
+  }
+  }
+}
+st PriorityQueue {
+  items: List
+}
+fn NewPriorityQueue() -> PriorityQueue {
+  rt PriorityQueue{}
+}
+fn Push(sf, t: Task) {
+  pq.items = psh(pq.items, t)
+  pq.siftUp(ln(pq.items) - 1)
+}
+fn Pop(sf) -> Task {
+  if ln(pq.items) == 0 {
+  rt nil
+  }
+  mt top = pq.items[0]
+  mt last = ln(pq.items) - 1
+  pq.items[0] = pq.items[last]
+  pq.items = pq.items[:last]
+  if ln(pq.items) > 0 {
+  pq.siftDown(0)
+  }
+  rt top
+}
+fn Len(sf) -> int {
+  rt ln(pq.items)
+}
+fn siftUp(sf, i: int) {
+  fo i > 0 {
+  parent = (i - 1) / 2
+  if pq.items[i].Priority <= pq.items[parent].Priority {
+  break
+  }
+  lt (pq.items[i], pq.items[parent]) = (pq.items[parent], pq.items[i])
+  i = parent
+  }
+}
+fn siftDown(sf, i: int) {
+  mt n = ln(pq.items)
+  lp {
+  mt left = 2 * i + 1
+  mt right = 2 * i + 2
+  mt largest = i
+  if left < n and pq.items[left].Priority > pq.items[largest].Priority {
+    largest = left
+  }
+  if right < n and pq.items[right].Priority > pq.items[largest].Priority {
+    largest = right
+  }
+  if largest == i {
+    bk
+  }
+  lt (pq.items[i], pq.items[largest]) = (pq.items[largest], pq.items[i])
+  i = largest
+  }
+}
+fn GenerateReport(store: TaskStore) -> string {
+  mt stats = store.ComputeStats()
+  mt b
+  b.WriteString("=== Task Report ===")
+  fmt.Fprintf(b, "Total: %d", stats.Total)
+  fmt.Fprintf(b, "Overdue: %d", stats.OverdueCount)
+  fmt.Fprintf(b, "Unassigned: %d", stats.Unassigned)
+  fmt.Fprintf(b, "Avg Age: %s", stats.AvgAge.Round(time.Second))
+  b.WriteString("By Status:")
+  fo _, st in []Status{Open, InProgress, Blocked, Done} {
+  fmt.Fprintf(b, " %-12s %d", st, stats.ByStatus[st])
+  }
+  b.WriteString("By Priority:")
+  fo _, p in []Priority{Critical, High, Medium, Low} {
+  fmt.Fprintf(b, " %-12s %d", p, stats.ByPriority[p])
+  }
+  b.WriteString("Top 5 (by priority):")
+  mt pq = NewPriorityQueue()
+  fo _, t in store.All() {
+  if t.Status != Done {
+    pq.Push(t)
+  }
+  }
+  wl i < 5 and pq.Len() > 0 {
+  t = pq.Pop()
+  fmt.Fprintf(b, " [%d] %s (%s, %s)", t.ID, t.Title, t.Priority, t.Status)
+  }
+  rt b.String()
+}
+fn LevenshteinDistance(a: string) -> int {
+  lt (mt la, lb) = (ln(a), ln(b))
+  if la == 0 {
+  rt lb
+  }
+  if lb == 0 {
+  rt la
+  }
+  mt matrix = make([][]int, la + 1)
+  fo i in matrix {
+  matrix[i] = make([]int, lb + 1)
+  matrix[i][0] = i
+  }
+  wl j <= lb {
+  matrix[0][j] = j
+  }
+  wl i <= la {
+  wl j <= lb {
+  cost = 1
+  if a[i-1] == b[j-1] {
+  cost = 0
+  }
+  matrix[i][j] = min3(
+  matrix[i-1][j]+1,
+  matrix[i][j-1]+1,
+  matrix[i-1][j-1]+cost,
+  }
+  }
+  rt matrix[la][lb]
+}
+fn min3(a: int) -> int {
+  mt m = a
+  if b < m {
+  m = b
+  }
+  if c < m {
+  m = c
+  }
+  rt m
+}
+fn FuzzySearch(store: TaskStore, query: string, maxDist: int) -> List*Task {
+  query = strings.ToLower(query)
+  mt results
+  fo _, t in store.All() {
+  mt title = strings.ToLower(t.Title)
+  if strings.Contains(title, query) or LevenshteinDistance(title, query) <= maxDist {
+    results = psh(results, t)
+  }
+  }
+  rt results
+}
+st WorkResult {
+  TaskID: int
+  Success: bool
+  Error: string
+}
+fn ProcessTasksConcurrently(store: TaskStore, ids: Listint, workers: int, process: func(Task) error) -> ListWorkResult {
+  mt jobs = make(chan int, ln(ids))
+  mt results = make(chan WorkResult, ln(ids))
+  mt wg
+  wl w < workers {
+  wg.Add(1)
+  go func() {
+  defer wg.Done()
+  fo id in jobs {
+  lt (t, ok) = (store.Get(id))
+  if not ok {
+    results <- WorkResult{TaskID: id, Error: "not found"}
+    continue
+  }
+  if process(t); err != nil != nil {
+    results <- WorkResult{TaskID: id, Error: err.Error()}
+  } el {
+    results <- WorkResult{TaskID: id, Success: true}
+  }
+  }
+  }()
+  }
+  fo _, id in ids {
+  <- id: jobs
+  }
+  close(jobs)
+  sp func() {
+  wg.Wait()
+  close(results)
+  }()
+  mt out
+  fo r in results {
+  out = psh(out, r)
+  }
+  sort.Slice(out, func(i, j int) bool {
+  rt out[i].TaskID < out[j].TaskID
+  }
+  rt out
+}
+fn ScoreTask(t: Task) -> float64 {
+  mt now = time.Now()
+  mt score = float64(t.Priority) * 10.0
+  mt age = now.Sub(t.CreatedAt).Hours() / 24.0
+  score = math.Log2(age + 1) * 3.0
+  if t.DueDate != nil {
+  mt daysUntilDue = t.DueDate.Sub(now).Hours() / 24.0
+  if daysUntilDue < 0 {
+    score = 50.0
+  } el if daysUntilDue < 3 {
+    score = 30.0
+  } el if daysUntilDue < 7 {
+    score = 15.0
+  }
+  }
+  if t.Status == Blocked {
+  score = 0.5
+  }
+  score = float64(ln(t.Subtasks)) * 2.0
+  rt math.Round(score * 100) / 100
+}
+fn RankTasks(store: TaskStore) -> List*Task {
+  mt tasks = store.All()
+  mt active = make([]*Task, 0)
+  fo _, t in tasks {
+  if t.Status != Done {
+    active = psh(active, t)
+  }
+  }
+  sort.Slice(active, func(i, j int) bool {
+  rt ScoreTask(active[i]) > ScoreTask(active[j])
+  }
+  rt active
+}
+fn BuildTagIndex(sf) -> map[string][]*Task {
+  panic("CHALLENGE: implement BuildTagIndex")
+}
+st StatusChange {
+  FromStatus: Status
+  ToStatus: Status
+  Timestamp: time.Time
+}
+fn TopologicalSort(sf) -> ([]*Task, error) {
+  panic("CHALLENGE: implement TopologicalSort")
+}
+fn UpdateStatus(sf, id: int, status: Status) {
+  panic("CHALLENGE: implement UpdateStatus")
+}
+fn GetHistory(sf, id: int) -> ListStatusChange {
+  panic("CHALLENGE: implement GetHistory")
+}
+fn MarshalJSON(sf) -> ([]byte, error) {
+  panic("CHALLENGE: implement MarshalJSON")
+}
+fn UnmarshalJSON(sf, data: Listbyte) -> error {
+  panic("CHALLENGE: implement UnmarshalJSON")
+}
+fn main() {
+  mt store = NewTaskStore()
+  store.Add("Design database schema", Critical)
+  store.Add("Implement user auth", High)
+  store.Add("Write unit tests", Medium)
+  store.Add("Setup CI pipeline", Medium)
+  store.Add("Create API docs", Low)
+  store.Add("Performance profiling", High)
+  store.Add("Security audit", Critical)
+  store.Add("Refactor middleware", Medium)
+  store.Add("Add logging", Low)
+  store.Add("Deploy to staging", High)
+  if ok {
+  t.Assignee = "alice"
+  t.Tags = ["backend", "database"]
+  }
+  if ok {
+  t.Assignee = "bob"
+  t.Status = InProgress
+  t.Tags = ["backend", "security"]
+  }
+  if ok {
+  mt due = time.Now().Add(-48 * time.Hour)
+  t.DueDate = due
+  t.Tags = ["security", "compliance"]
+  }
+  if ok {
+  t.Subtasks = [3, 4]
+  }
+  store.BulkUpdateStatus([4, 9], Done)
+  store.AutoAssign(["alice", "bob", "charlie"])
+  prt(GenerateReport(store))
+  prt("=== Ranked Tasks ===")
+  fo i, t in RankTasks(store) {
+  prt(" %d. [%d] %s (score: %.2f, assignee: %s)", i + 1, t.ID, t.Title, ScoreTask(t), t.Assignee)
+  }
+  prt("=== Fuzzy Search: 'auth' ===")
+  fo _, t in FuzzySearch(store, "auth", 3) {
+  prt(" [%d] %s", t.ID, t.Title)
+  }
+  prt("Cycle detection (task 1): %v", store.HasCycle(1))
+}

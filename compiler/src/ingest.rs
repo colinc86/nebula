@@ -21,7 +21,18 @@ pub fn from_typescript(source: &str) -> String {
 }
 
 pub fn from_go(source: &str) -> String {
-    convert_with_language(source, tree_sitter_go::LANGUAGE.into(), go::emit)
+    let mut parser = Parser::new();
+    parser.set_language(&tree_sitter_go::LANGUAGE.into()).expect("Failed to set Go language");
+    let tree = match parser.parse(source, None) {
+        Some(t) => t,
+        None => return source.to_string(),
+    };
+    let root = tree.root_node();
+    let nebula = go::emit(&root, source.as_bytes(), 0);
+    // Go-specific postprocess: skip fix_generics (Go emitter handles types properly)
+    let nebula = postprocess_go(&nebula);
+    let nebula = strip_semicolons(&nebula);
+    minify(&nebula)
 }
 
 pub fn from_swift(source: &str) -> String {
@@ -93,6 +104,35 @@ fn convert_with_language(
     } else {
         nebula.to_string()
     }
+}
+
+/// Go-specific postprocess: minimal cleanup, no generic conversion
+fn postprocess_go(source: &str) -> String {
+    let s = source
+        // Logical operators
+        .replace("&&", "and")
+        .replace("||", "or")
+        // Go raw syntax
+        .replace(":=", "=")
+        // else → el
+        .replace(" else {", " el {")
+        .replace(" else\n", " el\n")
+        .replace("} else ", "} el ")
+        // Post-increment/decrement
+        .replace("++", " += 1")
+        .replace("--", " -= 1")
+        // Go pointer types in expressions
+        .replace("-> *", "-> ")
+        .replace("&{", "{")
+        .replace("rt &", "rt ")
+        .replace("= &", "= ")  // strip address-of before struct literals
+        .replace("(&", "(")    // strip address-of in function args
+        // Strip pointer dereference * before identifiers in expressions
+        .replace("!= *", "!= ")
+        .replace("== *", "== ")
+        .replace(", *", ", ")
+        .replace("= *", "= ");
+    s
 }
 
 /// Post-process Nebula output to catch patterns the tree-sitter emitters miss.
@@ -873,8 +913,8 @@ fn minify(source: &str) -> String {
     source.lines()
         .filter(|line| {
             let trimmed = line.trim();
-            // Remove comment-only lines and blank lines
-            !trimmed.is_empty() && !trimmed.starts_with("//")
+            // Remove comment-only lines and blank lines (preserve @-annotations)
+            !trimmed.is_empty() && (!trimmed.starts_with("//") || trimmed.starts_with("// @"))
         })
         .map(|line| {
             // Compact indentation: 4-space → 2-space
@@ -2234,7 +2274,7 @@ mod go {
         let ind = indent(depth);
 
         match node.kind() {
-            "source_file" => emit_children_as_statements(node, src, depth, emit),
+            "source_file" => emit_source_file(node, src, depth),
 
             "comment" => {
                 let t = text(node, src).trim();
@@ -2247,7 +2287,7 @@ mod go {
                 let params = node.child_by_field_name("parameters")
                     .map(|n| emit_params(&n, src)).unwrap_or_default();
                 let ret = node.child_by_field_name("result")
-                    .map(|n| format!(" -> {}", text(&n, src)));
+                    .map(|n| emit_return_type(&n, src));
                 let body = node.child_by_field_name("body")
                     .map(|n| emit_block(&n, src, depth))
                     .unwrap_or_else(|| format!(" {{\n{}}}", ind));
@@ -2256,25 +2296,24 @@ mod go {
             }
 
             "method_declaration" => {
-                let receiver = node.child_by_field_name("receiver")
-                    .map(|n| text(&n, src)).unwrap_or("");
+                let _receiver = node.child_by_field_name("receiver");
                 let name = node.child_by_field_name("name")
                     .map(|n| text(&n, src)).unwrap_or("?");
                 let params = node.child_by_field_name("parameters")
                     .map(|n| emit_params(&n, src)).unwrap_or_default();
                 let ret = node.child_by_field_name("result")
-                    .map(|n| format!(" -> {}", text(&n, src)));
+                    .map(|n| emit_return_type(&n, src));
                 let body = node.child_by_field_name("body")
                     .map(|n| emit_block(&n, src, depth))
                     .unwrap_or_else(|| format!(" {{\n{}}}", ind));
 
-                // Extract receiver type for impl context
-                let _recv_type = receiver.trim_matches(|c: char| c == '(' || c == ')')
-                    .split_whitespace().last().unwrap_or("?")
-                    .trim_start_matches('*');
-
-                format!("{}fn {}(sf, {}){}{}", ind,
-                        name, params, ret.unwrap_or_default(), body)
+                let param_str = if params.is_empty() {
+                    "sf".to_string()
+                } else {
+                    format!("sf, {}", params)
+                };
+                format!("{}fn {}({}){}{}", ind,
+                        name, param_str, ret.unwrap_or_default(), body)
             }
 
             "type_declaration" => {
@@ -2289,31 +2328,91 @@ mod go {
             }
 
             "short_var_declaration" => {
-                let left = node.child_by_field_name("left")
-                    .map(|n| text(&n, src)).unwrap_or("?");
+                let left_node = node.child_by_field_name("left");
                 let right = node.child_by_field_name("right")
                     .map(|n| emit_expr(&n, src)).unwrap_or_default();
-                format!("{}mt {} = {}", ind, left, right)
+                // Check if multi-assign: t, ok := expr
+                let left = left_node.as_ref()
+                    .map(|n| text(n, src)).unwrap_or("?");
+                if left.contains(',') {
+                    // Multi-return: mt (a, b) = (expr1, expr2)
+                    let names: Vec<&str> = left.split(',').map(|s| s.trim()).collect();
+                    let rhs = if right.contains(", ") && !right.starts_with('(') {
+                        format!("({})", right)
+                    } else {
+                        right
+                    };
+                    format!("{}mt ({}) = {}", ind, names.join(", "), rhs)
+                } else {
+                    format!("{}mt {} = {}", ind, left, right)
+                }
             }
 
             "var_declaration" | "const_declaration" => {
                 let kind = node.kind();
                 let binding = if kind == "const_declaration" { "lt" } else { "mt" };
                 let mut cursor = node.walk();
-                let mut out = Vec::new();
+                let mut specs: Vec<(String, Option<String>)> = Vec::new();
                 for child in node.named_children(&mut cursor) {
                     if child.kind() == "var_spec" || child.kind() == "const_spec" {
                         let name = child.child_by_field_name("name")
                             .map(|n| text(&n, src)).unwrap_or("?");
                         let value = child.child_by_field_name("value")
                             .map(|n| emit_expr(&n, src));
+                        let ty = child.child_by_field_name("type")
+                            .map(|n| go_type_to_nebula(&text(&n, src)));
+                        // If no value but has type, use zero-value init
+                        let value = match value {
+                            Some(v) => Some(v),
+                            None => Some("nil".to_string()),
+                        };
+                        specs.push((name.to_string(), value));
+                    }
+                }
+
+                // Detect Go iota enum: const block where first value is "iota"
+                if kind == "const_declaration" && specs.len() > 1
+                    && specs.first().map(|(_, v)| v.as_deref() == Some("iota")).unwrap_or(false)
+                {
+                    // Emit as Nebula enum
+                    let inner_ind = indent(depth + 1);
+                    let variants = specs.iter()
+                        .map(|(name, _)| format!("{}{}", inner_ind, name))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    // Use the type name from the const spec if available
+                    let type_name = {
+                        let mut found = None;
+                        let mut cursor2 = node.walk();
+                        for child in node.named_children(&mut cursor2) {
+                            if child.kind() == "const_spec" {
+                                if let Some(ty) = child.child_by_field_name("type") {
+                                    found = Some(text(&ty, src).to_string());
+                                }
+                                break;
+                            }
+                        }
+                        found
+                    };
+                    match type_name {
+                        Some(tn) => format!("{}en {} {{\n{}\n{}}}", ind, tn, variants, ind),
+                        None => {
+                            // Fallback: emit as individual lt bindings
+                            specs.iter().enumerate().map(|(i, (name, _))| {
+                                format!("{}{} {} = {}", ind, binding, name, i)
+                            }).collect::<Vec<_>>().join("\n")
+                        }
+                    }
+                } else {
+                    let mut out = Vec::new();
+                    for (name, value) in &specs {
                         match value {
                             Some(v) => out.push(format!("{}{} {} = {}", ind, binding, name, v)),
                             None => out.push(format!("{}{} {}", ind, binding, name)),
                         }
                     }
+                    out.join("\n")
                 }
-                out.join("\n")
             }
 
             "assignment_statement" => {
@@ -2321,17 +2420,39 @@ mod go {
                     .map(|n| emit_expr(&n, src)).unwrap_or_default();
                 let right = node.child_by_field_name("right")
                     .map(|n| emit_expr(&n, src)).unwrap_or_default();
+                // Multi-target assignment: a, b = b, a → use temp swap
+                if left.contains(", ") {
+                    let lefts: Vec<&str> = left.split(", ").collect();
+                    let rights: Vec<&str> = right.split(", ").collect();
+                    if lefts.len() == rights.len() && lefts.len() == 2 {
+                        // Emit as temp-based swap
+                        let mut out = String::new();
+                        out.push_str(&format!("{}mt __tmp = {}\n", ind, rights[0].trim()));
+                        out.push_str(&format!("{}{} = {}\n", ind, lefts[0].trim(), rights[1].trim()));
+                        out.push_str(&format!("{}{} = __tmp", ind, lefts[1].trim()));
+                        return out;
+                    }
+                }
                 format!("{}{} = {}", ind, left, right)
             }
 
             "if_statement" => {
+                // Handle Go's if-init pattern: if init; cond { ... }
+                let init = node.child_by_field_name("initializer")
+                    .map(|n| emit(&n, src, depth));
                 let cond = node.child_by_field_name("condition")
                     .map(|n| emit_expr(&n, src)).unwrap_or_default();
                 let body = node.child_by_field_name("consequence")
                     .map(|n| emit_block(&n, src, depth))
                     .unwrap_or_else(|| format!(" {{\n{}}}", ind));
 
-                let mut result = format!("{}if {}{}", ind, cond, body);
+                let mut result = String::new();
+                // Emit init as separate statement before the if
+                if let Some(init_stmt) = init {
+                    result.push_str(init_stmt.trim());
+                    result.push('\n');
+                }
+                result.push_str(&format!("{}if {}{}", ind, cond, body));
 
                 if let Some(alt) = node.child_by_field_name("alternative") {
                     if alt.kind() == "if_statement" {
@@ -2349,8 +2470,16 @@ mod go {
 
             "for_statement" => {
                 // Go for can be: for {}, for cond {}, for init; cond; post {}, for range {}
-                let raw = text(node, src);
-                if raw.contains("range") {
+                // Check for range clause by looking at direct children, not full text
+                let has_range = {
+                    let mut found = false;
+                    let mut c = node.walk();
+                    for ch in node.children(&mut c) {
+                        if ch.kind() == "range_clause" { found = true; break; }
+                    }
+                    found
+                };
+                if has_range {
                     // for k, v := range x { → fo k, v in x {
                     emit_range_for(node, src, depth)
                 } else if node.named_child_count() == 1 {
@@ -2361,16 +2490,55 @@ mod go {
                     format!("{}lp{}", ind, body)
                 } else {
                     // C-style for or while-like for
-                    let cond_text = node.child_by_field_name("condition")
-                        .map(|n| emit_expr(&n, src));
-                    match cond_text {
-                        Some(c) => {
-                            let body = node.child_by_field_name("body")
-                                .map(|n| emit_block(&n, src, depth))
-                                .unwrap_or_else(|| format!(" {{\n{}}}", ind));
-                            format!("{}wl {}{}", ind, c, body)
+                    // Find for_clause (C-style) or condition and block
+                    let mut for_clause = None;
+                    let mut cond_node = None;
+                    let mut body_node = None;
+                    let mut fc = node.walk();
+                    for child in node.named_children(&mut fc) {
+                        match child.kind() {
+                            "for_clause" => for_clause = Some(child),
+                            "block" => body_node = Some(child),
+                            _ => {
+                                if cond_node.is_none() && body_node.is_none() {
+                                    cond_node = Some(child);
+                                }
+                            }
                         }
-                        None => format!("{}{}", ind, raw.trim()),
+                    }
+
+                    let body = body_node.as_ref()
+                        .map(|n| emit_block(n, src, depth))
+                        .unwrap_or_else(|| format!(" {{\n{}}}", ind));
+
+                    if let Some(fc) = for_clause {
+                        // C-style: for init; cond; update { body }
+                        let init = fc.child_by_field_name("initializer")
+                            .map(|n| emit(&n, src, depth));
+                        let cond = fc.child_by_field_name("condition")
+                            .map(|n| emit_expr(&n, src));
+                        let update = fc.child_by_field_name("update")
+                            .map(|n| emit(&n, src, depth));
+
+                        let mut result = String::new();
+                        if let Some(init_stmt) = init {
+                            result.push_str(init_stmt.trim());
+                            result.push('\n');
+                        }
+                        let c = cond.unwrap_or_default();
+                        if let Some(upd) = update {
+                            let inner_ind = indent(depth + 1);
+                            let body_trimmed = body.trim_end().trim_end_matches('}');
+                            result.push_str(&format!("{}wl {}{}\n{}{}\n{}}}", ind, c, body_trimmed, inner_ind, upd.trim(), ind));
+                        } else {
+                            result.push_str(&format!("{}wl {}{}", ind, c, body));
+                        }
+                        result
+                    } else if let Some(cn) = cond_node {
+                        let c = emit_expr(&cn, src);
+                        format!("{}wl {}{}", ind, c, body)
+                    } else {
+                        format!("{}{}", ind, text(node, src).trim())
                     }
                 }
             }
@@ -2382,8 +2550,12 @@ mod go {
                     .collect();
                 if exprs.is_empty() {
                     format!("{}rt", ind)
+                } else if exprs.len() == 1 && !exprs[0].contains(", ") {
+                    format!("{}rt {}", ind, exprs[0])
                 } else {
-                    format!("{}rt {}", ind, exprs.join(", "))
+                    // Multi-return: wrap in tuple
+                    let joined = exprs.join(", ");
+                    format!("{}rt ({})", ind, joined)
                 }
             }
 
@@ -2393,6 +2565,87 @@ mod go {
                 } else {
                     String::new()
                 }
+            }
+
+            "expression_switch_statement" => {
+                let value = node.child_by_field_name("value")
+                    .map(|n| emit_expr(&n, src)).unwrap_or_default();
+                let inner_ind = indent(depth + 1);
+                let arm_ind = indent(depth + 2);
+                let mut arms = Vec::new();
+                let mut cursor = node.walk();
+                for child in node.named_children(&mut cursor) {
+                    match child.kind() {
+                        "expression_case" => {
+                            // case val1, val2: body
+                            let mut case_cursor = child.walk();
+                            let case_children: Vec<_> = child.named_children(&mut case_cursor).collect();
+                            // First child(ren) before the body are the case values
+                            // Find the ":" position to separate values from body
+                            let mut values = Vec::new();
+                            let mut body_stmts = Vec::new();
+                            for cc in &case_children {
+                                // expression_list holds case values, or individual expressions
+                                if cc.kind() == "expression_list" {
+                                    let mut ec = cc.walk();
+                                    for expr in cc.named_children(&mut ec) {
+                                        values.push(emit_expr(&expr, src));
+                                    }
+                                } else if values.is_empty() && body_stmts.is_empty()
+                                    && !matches!(cc.kind(), "return_statement" | "expression_statement"
+                                        | "short_var_declaration" | "assignment_statement"
+                                        | "if_statement" | "for_statement" | "block"
+                                        | "inc_statement" | "dec_statement" | "call_expression")
+                                {
+                                    values.push(emit_expr(cc, src));
+                                } else {
+                                    body_stmts.push(emit(cc, src, depth + 2));
+                                }
+                            }
+                            let val_str = values.join(", ");
+                            if body_stmts.len() == 1 {
+                                // Strip "rt " prefix — match arms are expressions
+                                let body = body_stmts[0].trim();
+                                let body = body.strip_prefix("rt ").unwrap_or(body);
+                                arms.push(format!("{}{} => {}", inner_ind, val_str, body));
+                            } else {
+                                let body = body_stmts.iter()
+                                    .map(|s| format!("{}{}", arm_ind, s.trim()))
+                                    .collect::<Vec<_>>().join("\n");
+                                arms.push(format!("{}{} => {{\n{}\n{}}}", inner_ind, val_str,
+                                    body, inner_ind));
+                            }
+                        }
+                        "default_case" => {
+                            let mut dc = child.walk();
+                            let body_stmts: Vec<_> = child.named_children(&mut dc)
+                                .map(|c| emit(&c, src, depth + 2))
+                                .collect();
+                            if body_stmts.len() == 1 {
+                                let body = body_stmts[0].trim();
+                                let body = body.strip_prefix("rt ").unwrap_or(body);
+                                arms.push(format!("{}_ => {}", inner_ind, body));
+                            } else {
+                                let body = body_stmts.iter()
+                                    .map(|s| format!("{}{}", arm_ind, s.trim()))
+                                    .collect::<Vec<_>>().join("\n");
+                                arms.push(format!("{}_ => {{\n{}\n{}}}", inner_ind,
+                                    body, inner_ind));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                format!("{}mc {} {{\n{}\n{}}}", ind, value, arms.join("\n"), ind)
+            }
+
+            "send_statement" => {
+                // ch <- value → ch.send(value)
+                let channel = node.child_by_field_name("channel")
+                    .map(|n| emit_expr(&n, src)).unwrap_or_default();
+                let value = node.child_by_field_name("value")
+                    .map(|n| emit_expr(&n, src)).unwrap_or_default();
+                format!("{}{}.send({})", ind, channel, value)
             }
 
             "go_statement" => {
@@ -2405,9 +2658,9 @@ mod go {
 
             "defer_statement" => {
                 if let Some(expr) = node.named_child(0) {
-                    format!("{}// defer {}", ind, emit_expr(&expr, src))
+                    format!("{}defer {}", ind, emit_expr(&expr, src))
                 } else {
-                    format!("{}// defer", ind)
+                    format!("{}defer", ind)
                 }
             }
 
@@ -2422,6 +2675,11 @@ mod go {
             "break_statement" => format!("{}bk", ind),
             "continue_statement" => format!("{}ct", ind),
 
+            // statement_list wraps statements inside case clauses etc.
+            "statement_list" => {
+                emit_children_as_statements(node, src, depth, emit)
+            }
+
             _ => {
                 let raw = text(node, src).trim();
                 if raw.is_empty() { String::new() }
@@ -2430,10 +2688,21 @@ mod go {
         }
     }
 
+    /// Escape Go identifiers that conflict with Nebula keywords
+    fn escape_ident(name: &str) -> String {
+        match name {
+            "st" | "en" | "tr" | "im" | "mc" | "fo" | "wl" | "lp" |
+            "lt" | "mt" | "cn" | "rt" | "bk" | "ct" | "sf" | "pb" |
+            "md" | "ty" | "tt" | "ff" | "el" | "sp" | "ac" | "aw" |
+            "ln" | "prt" | "psh" => format!("{}_", name),
+            _ => name.to_string(),
+        }
+    }
+
     fn emit_expr(node: &Node, src: &[u8]) -> String {
         match node.kind() {
             "identifier" | "field_identifier" | "package_identifier" | "type_identifier" =>
-                text(node, src).to_string(),
+                escape_ident(text(node, src)),
 
             "true" => "tt".to_string(),
             "false" => "ff".to_string(),
@@ -2454,8 +2723,67 @@ mod go {
             "call_expression" => {
                 let func = node.child_by_field_name("function")
                     .map(|n| emit_expr(&n, src)).unwrap_or_default();
-                let args = node.child_by_field_name("arguments")
-                    .map(|n| emit_call_args(&n, src)).unwrap_or_default();
+                let args_node = node.child_by_field_name("arguments");
+                let args = args_node.as_ref()
+                    .map(|n| emit_call_args(n, src)).unwrap_or_default();
+
+                // Handle make() specially — convert to type constructors
+                if func == "make" {
+                    // Parse the raw arguments to determine the type
+                    let raw_args = args_node.map(|n| text(&n, src)).unwrap_or_default();
+                    // Strip only outer parens (not inner ones from nested calls)
+                    let raw_args = raw_args.strip_prefix('(').unwrap_or(raw_args);
+                    let raw_args = raw_args.strip_suffix(')').unwrap_or(raw_args);
+                    if raw_args.starts_with("map[") {
+                        // make(map[K]V) → {K: V}{}
+                        // Extract K and V from map[K]V
+                        if let Some(rest) = raw_args.strip_prefix("map[") {
+                            let mut depth = 1;
+                            let mut split = 0;
+                            for (i, ch) in rest.char_indices() {
+                                match ch {
+                                    '[' => depth += 1,
+                                    ']' => { depth -= 1; if depth == 0 { split = i; break; } }
+                                    _ => {}
+                                }
+                            }
+                            if split > 0 {
+                                let key = go_type_to_nebula(&rest[..split]);
+                                let val_and_rest = &rest[split + 1..];
+                                // val_and_rest might have ", size" after the type
+                                let val = val_and_rest.split(',').next().unwrap_or(val_and_rest).trim();
+                                let val = go_type_to_nebula(val);
+                                return format!("new_map()", );
+                            }
+                        }
+                    } else if raw_args.starts_with("[]") {
+                        // make([]Type, len, cap) → List<Type>{}
+                        let type_part = raw_args.split(',').next().unwrap_or(raw_args).trim();
+                        let inner = type_part.strip_prefix("[]").unwrap_or(type_part);
+                        return format!("new_list()");
+                    } else if raw_args.starts_with("chan ") {
+                        // make(chan Type, size) → Channel(Type, size)
+                        let parts: Vec<&str> = raw_args.splitn(2, ',').collect();
+                        let ty = parts[0].strip_prefix("chan ").unwrap_or(parts[0]).trim();
+                        let size = parts.get(1).map(|s| s.trim()).unwrap_or("0");
+                        return format!("Channel({}, {})", go_type_to_nebula(ty), size);
+                    }
+                    // Fallback
+                    return format!("make({})", args);
+                }
+
+                // Handle delete() → map.remove(key)
+                if func == "delete" {
+                    let arg_list: Vec<_> = args.splitn(2, ", ").collect();
+                    if arg_list.len() == 2 {
+                        return format!("{}.remove({})", arg_list[0], arg_list[1]);
+                    }
+                }
+
+                // Handle close() → ch.close()
+                if func == "close" && !args.contains(',') {
+                    return format!("{}.close()", args);
+                }
 
                 // Map Go builtins
                 let func = match func.as_str() {
@@ -2505,20 +2833,117 @@ mod go {
                     .map(|n| text(&n, src)).unwrap_or("!");
                 let arg = node.child_by_field_name("operand")
                     .map(|n| emit_expr(&n, src)).unwrap_or_default();
+                // <-ch → ch.recv()
+                if op == "<-" {
+                    return format!("{}.recv()", arg);
+                }
                 let op = if op == "!" { "not " } else { op };
                 format!("{}{}", op, arg)
             }
 
             "composite_literal" => {
-                // Type{fields} — could be struct, map, or slice literal
-                text(node, src).to_string()
+                // Type{fields} — struct, map, or slice literal
+                let type_node = node.child_by_field_name("type");
+                let body_node = node.child_by_field_name("body");
+                let type_str = type_node.as_ref()
+                    .map(|n| go_type_to_nebula(&text(n, src)))
+                    .unwrap_or_default();
+                let body_str = body_node.as_ref()
+                    .map(|n| {
+                        let mut items = Vec::new();
+                        let mut cursor = n.walk();
+                        for child in n.named_children(&mut cursor) {
+                            match child.kind() {
+                                "keyed_element" | "literal_element" => {
+                                    // keyed_element: literal_element ":" literal_element
+                                    // Each literal_element wraps an expression
+                                    let mut parts = Vec::new();
+                                    let mut inner = child.walk();
+                                    for c in child.children(&mut inner) {
+                                        let k = c.kind();
+                                        if k == ":" || k == "," || k == "{" || k == "}" { continue; }
+                                        // literal_element wraps an expression — unwrap it
+                                        if k == "literal_element" {
+                                            if let Some(inner_expr) = c.named_child(0) {
+                                                parts.push(inner_expr);
+                                            } else {
+                                                parts.push(c);
+                                            }
+                                        } else {
+                                            parts.push(c);
+                                        }
+                                    }
+                                    if parts.len() >= 2 {
+                                        let key = text(&parts[0], src);
+                                        let val = emit_expr(&parts[1], src);
+                                        items.push(format!("{}: {}", key, val));
+                                    } else if parts.len() == 1 {
+                                        items.push(emit_expr(&parts[0], src));
+                                    }
+                                }
+                                _ => {
+                                    items.push(emit_expr(&child, src));
+                                }
+                            }
+                        }
+                        items.join(", ")
+                    })
+                    .unwrap_or_default();
+                if type_str.is_empty() {
+                    format!("{{{}}}", body_str)
+                } else if body_str.is_empty() {
+                    // Empty composite literal: Type{} → constructor call
+                    if type_str.starts_with("List<") || type_str.starts_with("Map<") {
+                        // Generic type empty literal → [] or {}
+                        if type_str.starts_with("List") { "[]".to_string() }
+                        else { "{}".to_string() }
+                    } else {
+                        format!("{}{{}}", type_str)
+                    }
+                } else if type_str.starts_with("List<") || type_str.starts_with("[") {
+                    // Slice/array literal: [item1, item2, ...]
+                    format!("[{}]", body_str)
+                } else {
+                    format!("{} {{ {} }}", type_str, body_str)
+                }
             }
 
-            "slice_expression" => text(node, src).to_string(),
-            "type_assertion_expression" => text(node, src).to_string(),
+            "slice_expression" => {
+                let obj = node.child_by_field_name("operand")
+                    .map(|n| emit_expr(&n, src)).unwrap_or_default();
+                let start = node.child_by_field_name("start")
+                    .map(|n| emit_expr(&n, src));
+                let end = node.child_by_field_name("end")
+                    .map(|n| emit_expr(&n, src));
+                match (start, end) {
+                    (Some(s), Some(e)) => format!("{}[{}..{}]", obj, s, e),
+                    (Some(s), None) => format!("{}[{}..]", obj, s),
+                    (None, Some(e)) => format!("{}[0..{}]", obj, e),
+                    (None, None) => format!("{}[0..]", obj),
+                }
+            }
+
+            "type_assertion_expression" => {
+                let obj = node.child_by_field_name("operand")
+                    .map(|n| emit_expr(&n, src)).unwrap_or_default();
+                let ty = node.child_by_field_name("type")
+                    .map(|n| go_type_to_nebula(&text(&n, src))).unwrap_or_default();
+                format!("{}.({}))", obj, ty)
+            }
+
             "func_literal" => {
                 // func(params) rettype { body } → |params| { body }
-                text(node, src).to_string()
+                let params = node.child_by_field_name("parameters")
+                    .map(|n| emit_params(&n, src)).unwrap_or_default();
+                let body = node.child_by_field_name("body")
+                    .map(|n| emit_block(&n, src, 0))
+                    .unwrap_or_else(|| " {}".to_string());
+                if params.is_empty() {
+                    // Zero-param lambda: use fn() syntax to avoid || → or postprocess
+                    format!("fn(){}", body)
+                } else {
+                    format!("|{}|{}", params, body)
+                }
             }
 
             "parenthesized_expression" => {
@@ -2547,14 +2972,131 @@ mod go {
         let mut cursor = node.walk();
         for child in node.named_children(&mut cursor) {
             if child.kind() == "parameter_declaration" {
-                let name = child.child_by_field_name("name")
-                    .map(|n| text(&n, src)).unwrap_or("_");
-                let ty = child.child_by_field_name("type")
-                    .map(|n| format!(": {}", text(&n, src)));
-                params.push(format!("{}{}", name, ty.unwrap_or_default()));
+                // Go allows multiple names per type: (a, b string)
+                // Collect all identifier children as names
+                let mut names = Vec::new();
+                let mut ty_str = String::new();
+                let mut inner = child.walk();
+                for c in child.named_children(&mut inner) {
+                    match c.kind() {
+                        "identifier" => names.push(text(&c, src).to_string()),
+                        _ => {
+                            // Assume this is the type node
+                            ty_str = go_type_to_nebula(&text(&c, src));
+                        }
+                    }
+                }
+                if names.is_empty() {
+                    names.push("_".to_string());
+                }
+                let ty_ann = if ty_str.is_empty() { String::new() }
+                    else { format!(": {}", ty_str) };
+                for name in &names {
+                    params.push(format!("{}{}", name, ty_ann));
+                }
             }
         }
         params.join(", ")
+    }
+
+    /// Emit a Go return type, converting Go types to Nebula
+    fn emit_return_type(node: &Node, src: &[u8]) -> String {
+        let raw = text(node, src).trim();
+        // Multi-return: the node is a parameter_list
+        if node.kind() == "parameter_list" {
+            let mut types = Vec::new();
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                if child.kind() == "parameter_declaration" {
+                    let name_node = child.child_by_field_name("name");
+                    let type_node = child.child_by_field_name("type");
+                    match (name_node, type_node) {
+                        (_, Some(t)) => {
+                            // Named or unnamed return — only emit the type
+                            types.push(go_type_to_nebula(&text(&t, src)));
+                        }
+                        (Some(n), None) => {
+                            // Unnamed return: parsed as "name" but is actually a type
+                            types.push(go_type_to_nebula(&text(&n, src)));
+                        }
+                        _ => {
+                            types.push(go_type_to_nebula(&text(&child, src)));
+                        }
+                    }
+                }
+            }
+            if types.len() == 1 {
+                format!(" -> {}", types[0])
+            } else {
+                format!(" -> ({})", types.join(", "))
+            }
+        } else {
+            format!(" -> {}", go_type_to_nebula(raw))
+        }
+    }
+
+    /// Emit source file with methods grouped into im blocks
+    fn emit_source_file(node: &Node, src: &[u8], depth: usize) -> String {
+        let ind = indent(depth);
+
+        enum Decl {
+            Method { recv_type: String, code: String },
+            Other(String),
+        }
+
+        let mut decls = Vec::new();
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            if child.kind() == "method_declaration" {
+                let receiver = child.child_by_field_name("receiver")
+                    .map(|n| text(&n, src)).unwrap_or("");
+                let recv_type = receiver.trim_matches(|c: char| c == '(' || c == ')')
+                    .split_whitespace().last().unwrap_or("?")
+                    .trim_start_matches('*')
+                    .to_string();
+                let code = emit(&child, src, depth + 1);
+                decls.push(Decl::Method { recv_type, code });
+            } else {
+                let code = emit(&child, src, depth);
+                if !code.trim().is_empty() {
+                    decls.push(Decl::Other(code));
+                }
+            }
+        }
+
+        // Group consecutive methods by receiver type into im blocks
+        let mut out = String::new();
+        let mut i = 0;
+        while i < decls.len() {
+            match &decls[i] {
+                Decl::Other(code) => {
+                    out.push_str(code);
+                    out.push('\n');
+                    i += 1;
+                }
+                Decl::Method { recv_type, .. } => {
+                    let rt = recv_type.clone();
+                    let mut methods = Vec::new();
+                    while i < decls.len() {
+                        if let Decl::Method { recv_type: r, code } = &decls[i] {
+                            if r == &rt {
+                                methods.push(code.clone());
+                                i += 1;
+                                continue;
+                            }
+                        }
+                        break;
+                    }
+                    out.push_str(&format!("{}im {} {{\n", ind, rt));
+                    for method in &methods {
+                        out.push_str(method);
+                        out.push('\n');
+                    }
+                    out.push_str(&format!("{}}}\n", ind));
+                }
+            }
+        }
+        out
     }
 
     fn emit_call_args(node: &Node, src: &[u8]) -> String {
@@ -2598,17 +3140,99 @@ mod go {
         }
     }
 
+    /// Convert a Go type string to Nebula type syntax
+    fn go_type_to_nebula(ty: &str) -> String {
+        let ty = ty.trim();
+        // Pointer types: *Type → Type
+        if let Some(inner) = ty.strip_prefix('*') {
+            return go_type_to_nebula(inner);
+        }
+        // Slice types: []Type → List<Type>
+        if let Some(inner) = ty.strip_prefix("[]") {
+            return format!("List<{}>", go_type_to_nebula(inner));
+        }
+        // Map types: map[K]V → Map<K, V>
+        if let Some(rest) = ty.strip_prefix("map[") {
+            // Find matching ] for key type
+            let mut depth = 1;
+            let mut split = 0;
+            for (i, ch) in rest.char_indices() {
+                match ch {
+                    '[' => depth += 1,
+                    ']' => { depth -= 1; if depth == 0 { split = i; break; } }
+                    _ => {}
+                }
+            }
+            if split > 0 {
+                let key = &rest[..split];
+                let val = &rest[split + 1..];
+                return format!("Map<{}, {}>", go_type_to_nebula(key), go_type_to_nebula(val));
+            }
+        }
+        // Qualified types: pkg.Type → PkgType (camelCase merge)
+        if ty.contains('.') && !ty.starts_with("map[") && !ty.starts_with("func(") {
+            let parts: Vec<&str> = ty.split('.').collect();
+            if parts.len() == 2 {
+                let pkg = parts[0];
+                let name = parts[1];
+                // Capitalize package name and concatenate
+                let mut result = String::new();
+                for c in pkg.chars().take(1) { result.push(c.to_uppercase().next().unwrap_or(c)); }
+                result.push_str(&pkg[1..]);
+                result.push_str(name);
+                return result;
+            }
+        }
+        // Function types: func(T) R → Fn(T) -> R
+        if let Some(rest) = ty.strip_prefix("func(") {
+            if let Some(paren_end) = rest.find(')') {
+                let params = &rest[..paren_end];
+                let ret = rest[paren_end + 1..].trim();
+                let neb_params = params.split(',')
+                    .map(|p| go_type_to_nebula(p.trim()))
+                    .collect::<Vec<_>>().join(", ");
+                if ret.is_empty() {
+                    return format!("Fn({})", neb_params);
+                } else {
+                    return format!("Fn({}) -> {}", neb_params, go_type_to_nebula(ret));
+                }
+            }
+        }
+        // Channel types: chan T → Channel(T)
+        if let Some(inner) = ty.strip_prefix("chan ") {
+            return format!("Channel({})", go_type_to_nebula(inner));
+        }
+        ty.to_string()
+    }
+
     fn emit_struct_body(node: &Node, src: &[u8], depth: usize) -> String {
         let mut fields = String::new();
         let inner_ind = indent(depth + 1);
-        let mut cursor = node.walk();
-        for child in node.named_children(&mut cursor) {
+        // The struct_type node contains a field_declaration_list
+        // which contains field_declaration nodes
+        let field_list = node.named_children(&mut node.walk())
+            .find(|c| c.kind() == "field_declaration_list");
+
+        let emit_field = |child: &Node, fields: &mut String, inner_ind: &str| {
             if child.kind() == "field_declaration" {
                 let name = child.child_by_field_name("name")
                     .map(|n| text(&n, src)).unwrap_or("?");
                 let ty = child.child_by_field_name("type")
-                    .map(|n| text(&n, src)).unwrap_or("?");
+                    .map(|n| go_type_to_nebula(&text(&n, src)))
+                    .unwrap_or_else(|| "?".to_string());
                 fields.push_str(&format!("{}{}: {}\n", inner_ind, name, ty));
+            }
+        };
+
+        if let Some(fl) = field_list {
+            let mut cursor = fl.walk();
+            for child in fl.named_children(&mut cursor) {
+                emit_field(&child, &mut fields, &inner_ind);
+            }
+        } else {
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                emit_field(&child, &mut fields, &inner_ind);
             }
         }
         let ind = indent(depth);
@@ -2636,11 +3260,24 @@ mod go {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             if child.kind() == "range_clause" {
-                let left = child.child_by_field_name("left")
+                let left_raw = child.child_by_field_name("left")
                     .map(|n| text(&n, src)).unwrap_or("_");
+                // Escape any identifiers that conflict with Nebula keywords
+                let left = left_raw.split(", ")
+                    .map(|s| escape_ident(s.trim()))
+                    .collect::<Vec<_>>().join(", ");
                 let right = child.child_by_field_name("right")
                     .map(|n| emit_expr(&n, src)).unwrap_or_default();
-                let body = node.child_by_field_name("body")
+                // Find body
+                let body_node = node.child_by_field_name("body").or_else(|| {
+                    let mut c2 = node.walk();
+                    let mut found = None;
+                    for ch in node.named_children(&mut c2) {
+                        if ch.kind() == "block" { found = Some(ch); break; }
+                    }
+                    found
+                });
+                let body = body_node
                     .map(|n| emit_block(&n, src, depth))
                     .unwrap_or_else(|| format!(" {{\n{}}}", ind));
                 return format!("{}fo {} in {}{}", ind, left, right, body);

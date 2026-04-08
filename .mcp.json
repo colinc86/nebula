@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "nebula": {
+      "command": "/Users/colin/Local Documents/Programming/nebula/compiler/target/debug/nebula",
+      "args": ["mcp"]
+    }
+  }
+}

@@ -1,65 +1,60 @@
 # Nebula Benchmark Challenge
 
-A standardized test for measuring Nebula's value as an LLM coding medium.
+Measures whether compact code representation reduces LLM token usage during coding tasks.
 
 ## What's Here
 
-- `main.go` — A ~450-line Go task management system with concurrency, algorithms, and data structures
-- `main_test.go` — 16 passing tests + **4 skipped challenge tests** defining features to implement
-- `run_challenge.sh` — Automated verification: runs tests, measures token compression
-- `go.mod` — Go module file
+```
+main.go          Go task manager (~450 lines) — the code to modify
+main_test.go     16 passing tests + 4 skipped challenge tests
+main.neb         Compact Nebula representation of main.go (created by setup.sh)
+main_test.neb    Compact Nebula representation of main_test.go
+setup.sh         Creates .neb files from Go source
+run_challenge.sh Verification: runs tests + measures compression
+go.mod           Go module
+```
 
 ## The Challenge
 
-**Make all 4 challenge tests pass** without breaking the 16 existing tests.
+Implement 4 features in `main.go` to make all 4 skipped tests pass, without breaking the 16 existing tests.
 
-### The 4 Features to Implement
+| # | Feature | What to Build |
+|---|---------|---------------|
+| 1 | TagIndex | `BuildTagIndex()` — inverted index: tag → tasks |
+| 2 | TopologicalSort | `TopologicalSort()` — dependency order + cycle detection |
+| 3 | TaskHistory | `UpdateStatus()` + `GetHistory()` — status change tracking |
+| 4 | Serialization | `MarshalJSON()` + `UnmarshalJSON()` — full JSON round-trip |
 
-| # | Feature | Difficulty | What to Build |
-|---|---------|-----------|---------------|
-| 1 | **TagIndex** | Easy | `BuildTagIndex()` — inverted index mapping tags to tasks |
-| 2 | **TopologicalSort** | Medium | `TopologicalSort()` — dependency-order traversal with cycle detection |
-| 3 | **TaskHistory** | Medium | `UpdateStatus()` + `GetHistory()` — status change tracking with timestamps |
-| 4 | **Serialization** | Medium | `MarshalJSON()` + `UnmarshalJSON()` — full round-trip including NextID |
-
-### Rules
-1. Remove the `t.Skip(...)` line from each test you implement
-2. All 20 tests must pass: `go test -v -count=1 ./...`
-3. Do not modify the test file
-4. All new code goes in `main.go`
+**Rules:** Remove each `t.Skip()`, don't modify the test file, all 20 tests must pass.
 
 ---
 
-## How to Run the Benchmark
+## Benchmark Protocol
+
+Run the challenge **twice** — once normally (control), once with Nebula compact files — and compare token usage.
 
 ### Prerequisites
 
 ```sh
-# 1. Build the Nebula compiler
-cd compiler && cargo build
-
-# 2. Install tiktoken for token counting (optional but recommended)
-pip install tiktoken
+cd compiler && cargo build         # Build Nebula compiler
+pip install tiktoken               # Optional: token counting
 ```
 
-### Step-by-step Protocol
+### Run A: Control (vanilla Go)
 
-You will run this challenge **twice** — once with vanilla Claude Code, once through Nebula — and compare results.
-
-#### Run A: Control (vanilla Claude Code)
-
-1. **Reset to clean state:**
+1. **Ensure clean state** — no `.neb` files present:
    ```sh
    cd bench/challenge
    git checkout -- main.go main_test.go
+   ./setup.sh clean
    ```
 
-2. **Open a fresh Claude Code session** (no Nebula MCP server configured)
+2. **Open a fresh Claude Code session**
 
-3. **Start a timer**, then paste this exact prompt:
+3. **Start timer**, paste this prompt:
    ```
-   I have a Go project in bench/challenge/. The file main_test.go has 4 skipped
-   challenge tests (TagIndex, TopologicalSort, TaskHistory, Serialization).
+   In this directory there is a Go project. main_test.go has 4 skipped challenge
+   tests (TagIndex, TopologicalSort, TaskHistory, Serialization).
 
    Implement all 4 features in main.go to make the tests pass. Remove each
    t.Skip() line as you implement the feature. Do not modify main_test.go.
@@ -68,107 +63,73 @@ You will run this challenge **twice** — once with vanilla Claude Code, once th
    All 20 tests must pass.
    ```
 
-4. **Stop the timer** when Claude says it's done
+4. **Stop timer** when done. Record: time, tokens (`/cost`), correctness.
 
-5. **Record results:**
-   - Time (wall clock from Enter to completion)
-   - Tokens used (from Claude Code session summary / `/cost`)
-   - Run `./run_challenge.sh` to get correctness + compression metrics
+5. **Save result:** `cp main.go main_control.go`
 
-6. **Save the modified main.go** as `main_control.go` for comparison:
-   ```sh
-   cp main.go main_control.go
-   ```
+### Run B: Nebula (compact reading)
 
-#### Run B: Nebula MCP
-
-1. **Reset to clean state:**
+1. **Reset and generate .neb files:**
    ```sh
    git checkout -- main.go main_test.go
+   ./setup.sh
    ```
 
-2. **Configure the Nebula MCP server** in Claude Code settings:
-   ```json
-   {
-     "mcpServers": {
-       "nebula": {
-         "command": "/absolute/path/to/compiler/target/debug/nebula",
-         "args": ["mcp"]
-       }
-     }
-   }
+2. **Open a fresh Claude Code session**
+
+3. **Start timer**, paste this prompt:
    ```
+   In this directory there is a Go project. The .neb files are compact
+   representations of the Go source — read those to understand the codebase
+   (they use short keywords: fn=func, rt=return, st=struct, mc=switch, sf=self,
+   fo=for, el=else, lt=let, mt=mut, tt=true, ff=false).
 
-3. **Open a fresh Claude Code session**
+   main_test.neb has 4 skipped challenge tests (TagIndex, TopologicalSort,
+   TaskHistory, Serialization).
 
-4. **Start a timer**, then paste this exact prompt:
-   ```
-   I have a Go project in bench/challenge/. The file main_test.go has 4 skipped
-   challenge tests (TagIndex, TopologicalSort, TaskHistory, Serialization).
-
-   Implement all 4 features in main.go to make the tests pass. Remove each
-   t.Skip() line as you implement the feature. Do not modify main_test.go.
-
-   Use the nebula MCP tools (read_code, write_code, search_code) for all file
-   operations instead of the built-in Read/Write tools.
+   Implement all 4 features by writing Go code to main.go. Remove each
+   t.Skip() line from main_test.go. Do not change the test logic.
 
    When done, run: go test -v -count=1 ./...
    All 20 tests must pass.
    ```
 
-5. **Stop the timer** and record the same metrics
+4. **Stop timer**. Record same metrics.
 
-6. **Save:** `cp main.go main_nebula.go`
+5. **Save result:** `cp main.go main_nebula.go`
 
-### Verification
+### Verify
 
-After each run:
 ```sh
 ./run_challenge.sh
 ```
 
-This automatically checks:
-- All 16 existing tests still pass (no regressions)
-- How many of the 4 challenge features were implemented
-- Line/byte/token compression ratios (Go vs Nebula representation)
+---
+
+## Results Table
+
+```
+| Metric               | Control (Go) | Nebula (.neb) |
+|----------------------|--------------|---------------|
+| Time (seconds)       |              |               |
+| Input tokens         |              |               |
+| Output tokens        |              |               |
+| Total tokens         |              |               |
+| Cost ($)             |              |               |
+| Existing tests (/16) |              |               |
+| Challenge tests (/4) |              |               |
+| Correctness (0-3)    |              |               |
+```
+
+**Correctness:** 3 = all pass + clean code, 2 = all pass + minor issues, 1 = some fail, 0 = doesn't compile
 
 ---
 
-## What to Report
+## Why This Works
 
-Fill in this table after both runs:
+The model **reads** Nebula (compact, fewer input tokens) but **writes** Go (which it already knows). This isolates the variable: does reading compressed code reduce total token cost?
 
-```
-| Metric               | Control (vanilla) | Nebula MCP |
-|----------------------|-------------------|------------|
-| Time (seconds)       |                   |            |
-| Input tokens         |                   |            |
-| Output tokens        |                   |            |
-| Total tokens         |                   |            |
-| Cost ($)             |                   |            |
-| Existing tests (/16) |                   |            |
-| Challenge tests (/4) |                   |            |
-| Correctness (0-3)    |                   |            |
-```
-
-**Correctness scoring:**
-| Score | Meaning |
-|-------|---------|
-| 3     | All 20 tests pass, code is clean |
-| 2     | All tests pass but code has minor issues (style, unnecessary complexity) |
-| 1     | Some tests fail or code has logic errors |
-| 0     | Doesn't compile or couldn't complete |
-
-**Bonus metrics** (from `run_challenge.sh`):
-- Line compression %
-- Byte compression %
-- Token compression % (requires tiktoken)
-
----
-
-## Tips
-
-- Use the **same model** for both runs (e.g., both Sonnet, or both Opus)
-- Run control first so you know what "normal" looks like
-- If Claude gets stuck in either mode, note how many back-and-forths it took
-- The challenge is designed to take 2-5 minutes for Claude — complex enough to be meaningful but not so hard it's random
+- No new language to learn — just short keywords to decode
+- No MCP tools — standard Read/Write/Edit
+- No round-trip issues — Go in, Go out
+- The CLAUDE.md provides a one-line keyword legend, nothing more

@@ -24,11 +24,13 @@ impl fmt::Display for ParseError {
 struct Parser {
     tokens: Vec<SpannedToken>,
     pos: usize,
+    /// When true, suppress struct literal parsing (inside if/for/while conditions)
+    no_struct_literal: bool,
 }
 
 impl Parser {
     fn new(tokens: Vec<SpannedToken>) -> Self {
-        Parser { tokens, pos: 0 }
+        Parser { tokens, pos: 0, no_struct_literal: false }
     }
 
     fn parse_program(&mut self) -> Result<Program, ParseError> {
@@ -197,6 +199,31 @@ impl Parser {
             Token::Trait => self.parse_trait_decl(is_pub),
             Token::Impl => self.parse_impl_block(),
             Token::Return => self.parse_return(),
+            Token::Spawn => {
+                // sp expr → treat as expression statement (spawn/go)
+                self.advance();
+                // sp fn() { ... }() → parse fn as a lambda
+                if matches!(self.peek(), Token::Fn) {
+                    self.advance(); // consume fn
+                    // Parse as zero-param lambda
+                    self.expect(&Token::LeftParen)?;
+                    self.expect(&Token::RightParen)?;
+                    let body = self.parse_block()?;
+                    // Check for () call
+                    if matches!(self.peek(), Token::LeftParen) {
+                        self.advance();
+                        self.expect(&Token::RightParen)?;
+                    }
+                    let lambda = Expr::Lambda {
+                        params: vec![],
+                        body: Box::new(Expr::Block(body)),
+                    };
+                    Ok(Statement::Expr(lambda))
+                } else {
+                    let expr = self.parse_expr()?;
+                    Ok(Statement::Expr(expr))
+                }
+            }
             Token::Break => self.parse_break(),
             Token::Continue => {
                 self.advance();
@@ -783,8 +810,8 @@ impl Parser {
     // --- Types ---
 
     fn parse_type(&mut self) -> Result<TypeExpr, ParseError> {
-        // Fn(A, B) -> C
-        if matches!(self.peek(), Token::Fn) {
+        // Fn(A, B) -> C  (Token::Fn or Ident("Fn"))
+        if matches!(self.peek(), Token::Fn) || matches!(self.peek(), Token::Ident(ref n) if n == "Fn") {
             self.advance();
             self.expect(&Token::LeftParen)?;
             let mut params = Vec::new();
@@ -800,17 +827,39 @@ impl Parser {
             return Ok(TypeExpr::Function(params, Box::new(ret)));
         }
 
+        // Tuple type: (A, B, C)
+        if matches!(self.peek(), Token::LeftParen) {
+            self.advance();
+            let mut types = Vec::new();
+            while !matches!(self.peek(), Token::RightParen) {
+                if !types.is_empty() {
+                    self.expect(&Token::Comma)?;
+                }
+                types.push(self.parse_type()?);
+            }
+            self.expect(&Token::RightParen)?;
+            return Ok(TypeExpr::Tuple(types));
+        }
+
         let name = self.expect_ident()?;
         if matches!(self.peek(), Token::Less) {
             self.advance();
             let mut args = Vec::new();
-            while !matches!(self.peek(), Token::Greater) {
+            while !matches!(self.peek(), Token::Greater | Token::ShiftRight) {
                 if !args.is_empty() {
                     self.expect(&Token::Comma)?;
                 }
                 args.push(self.parse_type()?);
             }
-            self.expect(&Token::Greater)?;
+            // Handle >> (shift right) as two > tokens for nested generics
+            if matches!(self.peek(), Token::ShiftRight) {
+                // Consume >> but logically only eat one >
+                // Replace >> with > in the token stream
+                let span = self.tokens[self.pos].clone();
+                self.tokens[self.pos] = SpannedToken { token: Token::Greater, line: span.line, col: span.col + 1 };
+            } else {
+                self.advance(); // consume >
+            }
             Ok(TypeExpr::Generic(name, args))
         } else {
             Ok(TypeExpr::Named(name))
@@ -1235,7 +1284,8 @@ impl Parser {
             Token::Ident(name) => {
                 self.advance();
                 // Check for struct literal: Name { ... }
-                if matches!(self.peek(), Token::LeftBrace) {
+                // Suppressed in condition contexts (if/for/while) to avoid ambiguity with blocks
+                if !self.no_struct_literal && matches!(self.peek(), Token::LeftBrace) {
                     // Only if the name starts with uppercase (convention for types)
                     if name.chars().next().map_or(false, |c| c.is_uppercase()) {
                         return self.parse_struct_literal(name);
@@ -1336,7 +1386,9 @@ impl Parser {
             // If expression
             Token::If => {
                 self.advance();
+                self.no_struct_literal = true;
                 let condition = self.parse_expr()?;
+                self.no_struct_literal = false;
                 self.skip_newlines();
                 let then_block = self.parse_block()?;
                 self.skip_newlines();
@@ -1409,7 +1461,9 @@ impl Parser {
                     (None, first_binding)
                 };
                 self.expect(&Token::In)?;
+                self.no_struct_literal = true;
                 let iterable = self.parse_expr()?;
+                self.no_struct_literal = false;
                 self.skip_newlines();
                 let body = self.parse_block()?;
                 Ok(Expr::For {
@@ -1423,7 +1477,9 @@ impl Parser {
             // While expression
             Token::While => {
                 self.advance();
+                self.no_struct_literal = true;
                 let condition = self.parse_expr()?;
+                self.no_struct_literal = false;
                 self.skip_newlines();
                 let body = self.parse_block()?;
                 Ok(Expr::While {

@@ -95,9 +95,11 @@ echo "  Line delta:   ${LINE_DELTA}%"
 echo "  Byte delta:   ${BYTE_DELTA}%"
 
 # Token count if tiktoken available
-if python3 -c "import tiktoken" 2>/dev/null; then
+PYTHON="${CHALLENGE_DIR}/../../.venv/bin/python3"
+[ -x "$PYTHON" ] || PYTHON="python3"
+if "$PYTHON" -c "import tiktoken" 2>/dev/null; then
     echo ""
-    python3 - "$CHALLENGE_DIR/main.go" "$NEB_FILE" <<'PYEOF'
+    "$PYTHON" - "$CHALLENGE_DIR/main.go" "$NEB_FILE" <<'PYEOF'
 import sys, tiktoken
 enc = tiktoken.get_encoding("cl100k_base")
 

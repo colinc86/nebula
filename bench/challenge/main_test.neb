@@ -1,0 +1,344 @@
+fn seedStore() -> TaskStore {
+  mt s = NewTaskStore()
+  s.Add("Design database schema", Critical)
+  s.Add("Implement user auth", High)
+  s.Add("Write unit tests", Medium)
+  s.Add("Setup CI pipeline", Medium)
+  s.Add("Create API docs", Low)
+  rt s
+}
+fn TestAddAndGet(t: testing.T) {
+  mt s = NewTaskStore()
+  mt task = s.Add("Test task", High)
+  if task.ID != 1 {
+  t.Fatalf("expected ID 1, got %d", task.ID)
+  }
+  lt (mt got, ok) = (s.Get(1))
+  if not ok or got.Title != "Test task" {
+  t.Fatal("Get failed")
+  }
+}
+fn TestRemove(t: testing.T) {
+  mt s = seedStore()
+  if not s.Remove(3) {
+  t.Fatal("Remove returned false for existing task")
+  }
+  if s.Remove(99) {
+  t.Fatal("Remove returned true for non-existent task")
+  }
+  if ok {
+  t.Fatal("Task still exists after remove")
+  }
+}
+fn TestAllSorted(t: testing.T) {
+  mt s = seedStore()
+  mt all = s.All()
+  wl i < len(all) {
+  if all[i].ID < all[i-1].ID {
+  t.Fatal("All() not sorted by ID")
+  }
+  }
+}
+fn TestSearch(t: testing.T) {
+  mt s = seedStore()
+  if ok {
+  t2.Tags = ["backend"]
+  t2.Assignee = "alice"
+  }
+  mt p = Critical
+  mt results = s.Search(Filter{Priority: p})
+  if ln(results) != 1 or results[0].ID != 1 {
+  t.Fatalf("Priority filter: expected 1 result, got %d", ln(results))
+  }
+  results = s.Search(Filter{Tag: "backend"})
+  if ln(results) != 1 {
+  t.Fatalf("Tag filter: expected 1 result, got %d", ln(results))
+  }
+  results = s.Search(Filter{Assignee: "alice"})
+  if ln(results) != 1 {
+  t.Fatalf("Assignee filter: expected 1 result, got %d", ln(results))
+  }
+}
+fn TestOverdueFilter(t: testing.T) {
+  mt s = NewTaskStore()
+  mt task = s.Add("Overdue task", High)
+  mt past = time.Now().Add(-24 * time.Hour)
+  task.DueDate = past
+  mt results = s.Search(Filter{Overdue: true})
+  if ln(results) != 1 {
+  t.Fatalf("expected 1 overdue, got %d", ln(results))
+  }
+  task.Status = Done
+  results = s.Search(Filter{Overdue: true})
+  if ln(results) != 0 {
+  t.Fatalf("done task should not be overdue, got %d", ln(results))
+  }
+}
+fn TestComputeStats(t: testing.T) {
+  mt s = seedStore()
+  mt stats = s.ComputeStats()
+  if stats.Total != 5 {
+  t.Fatalf("expected 5 total, got %d", stats.Total)
+  }
+  if stats.ByStatus[Open] != 5 {
+  t.Fatalf("expected 5 open, got %d", stats.ByStatus[Open])
+  }
+  if stats.Unassigned != 5 {
+  t.Fatalf("expected 5 unassigned, got %d", stats.Unassigned)
+  }
+}
+fn TestBulkUpdateStatus(t: testing.T) {
+  mt s = seedStore()
+  lt (mt updated, failed) = (s.BulkUpdateStatus([1, 2, 99], Done))
+  if updated != 2 {
+  t.Fatalf("expected 2 updated, got %d", updated)
+  }
+  if ln(failed) != 1 or failed[0] != 99 {
+  t.Fatalf("expected [99] failed, got %v", failed)
+  }
+}
+fn TestAutoAssign(t: testing.T) {
+  mt s = seedStore()
+  s.AutoAssign(["alice", "bob"])
+  fo _, task in s.All() {
+  if task.Assignee == "" {
+    t.Fatalf("task %d still unassigned", task.ID)
+  }
+  }
+}
+fn TestPriorityQueue(t: testing.T) {
+  mt pq = NewPriorityQueue()
+  mt s = seedStore()
+  fo _, task in s.All() {
+  pq.Push(task)
+  }
+  mt prev = Critical + 1
+  fo pq.Len() > 0 {
+  task = pq.Pop()
+  if task.Priority > prev {
+  t.Fatal("priority queue order violated")
+  }
+  prev = task.Priority
+  }
+}
+fn TestPriorityQueueEmpty(t: testing.T) {
+  mt pq = NewPriorityQueue()
+  if pq.Pop() != nil {
+  t.Fatal("Pop on empty queue should return nil")
+  }
+}
+fn TestLevenshtein(t: testing.T) {
+  mt cases = []struct{ a, b string; want int }{
+  {"", "", 0},
+  {"abc", "", 3},
+  {"", "abc", 3},
+  {"kitten", "sitting", 3},
+  {"same", "same", 0},
+  }
+  fo _, c in cases {
+  mt got = LevenshteinDistance(c.a, c.b)
+  if got != c.want {
+    t.Errorf("Levenshtein(%q, %q) = %d, want %d", c.a, c.b, got, c.want)
+  }
+  }
+}
+fn TestFuzzySearch(t: testing.T) {
+  mt s = seedStore()
+  mt results = FuzzySearch(s, "auth", 3)
+  if ln(results) != 1 or results[0].ID != 2 {
+  t.Fatalf("expected to find 'Implement user auth', got %d results", ln(results))
+  }
+}
+fn TestCycleDetection(t: testing.T) {
+  mt s = NewTaskStore()
+  s.Add("A", Low)
+  s.Add("B", Low)
+  s.Add("C", Low)
+  if ok {
+  a.Subtasks = [2]
+  }
+  if ok {
+  b.Subtasks = [3]
+  }
+  if s.HasCycle(1) {
+  t.Fatal("false positive cycle")
+  }
+  if ok {
+  c.Subtasks = [1]
+  }
+  if not s.HasCycle(1) {
+  t.Fatal("missed cycle")
+  }
+}
+fn TestConcurrentProcessing(t: testing.T) {
+  mt s = seedStore()
+  mt ids = [1, 2, 3, 4, 5]
+  mt results = ProcessTasksConcurrently(s, ids, 3, func(task *Task) error {
+  rt nil
+  }
+  if ln(results) != 5 {
+  t.Fatalf("expected 5 results, got %d", ln(results))
+  }
+  fo _, r in results {
+  if not r.Success {
+    t.Fatalf("task %d failed: %s", r.TaskID, r.Error)
+  }
+  }
+}
+fn TestScoreTask(t: testing.T) {
+  mt task = Task{
+  Priority: Critical,
+  Status:  Open,
+  CreatedAt: time.Now().Add(-48 * time.Hour),
+  }
+  mt score = ScoreTask(task)
+  if score <= 0 {
+  t.Fatalf("expected positive score, got %.2f", score)
+  }
+  task.Status = Blocked
+  mt blockedScore = ScoreTask(task)
+  if blockedScore >= score {
+  t.Fatalf("blocked score %.2f should be less than open score %.2f", blockedScore, score)
+  }
+}
+fn TestGenerateReport(t: testing.T) {
+  mt s = seedStore()
+  mt report = GenerateReport(s)
+  if not strings.Contains(report, "Task Report") {
+  t.Fatal("report missing header")
+  }
+  if not strings.Contains(report, "Total: 5") {
+  t.Fatal("report missing total")
+  }
+}
+fn TestChallenge_TagIndex(t: testing.T) {
+  t.Skip("CHALLENGE: Implement TagIndex — remove this Skip to activate")
+  mt s = NewTaskStore()
+  mt a = s.Add("Backend work", High)
+  a.Tags = ["backend", "api"]
+  mt b = s.Add("Frontend work", Medium)
+  b.Tags = ["frontend", "api"]
+  mt c = s.Add("Database migration", Critical)
+  c.Tags = ["backend", "database"]
+  mt idx = s.BuildTagIndex()
+  if ln(idx["backend"]) != 2 {
+  t.Fatalf("expected 2 backend tasks, got %d", ln(idx["backend"]))
+  }
+  if ln(idx["api"]) != 2 {
+  t.Fatalf("expected 2 api tasks, got %d", ln(idx["api"]))
+  }
+  if ln(idx["database"]) != 1 {
+  t.Fatalf("expected 1 database task, got %d", ln(idx["database"]))
+  }
+  if ln(idx["frontend"]) != 1 {
+  t.Fatalf("expected 1 frontend task, got %d", ln(idx["frontend"]))
+  }
+}
+fn TestChallenge_DependencyOrder(t: testing.T) {
+  t.Skip("CHALLENGE: Implement TopologicalSort — remove this Skip to activate")
+  mt s = NewTaskStore()
+  s.Add("Foundation", Low)
+  s.Add("Walls", Low)
+  s.Add("Roof", Low)
+  s.Add("Paint", Low)
+  if ok {
+  t2.Subtasks = [2]
+  }
+  if ok {
+  t2.Subtasks = [1]
+  }
+  if ok {
+  t2.Subtasks = [3]
+  }
+  lt (mt order, err) = (s.TopologicalSort())
+  if err != nil {
+  t.Fatalf("unexpected error: %v", err)
+  }
+  mt pos = make(map[int]int)
+  fo i, task in order {
+  pos[task.ID] = i
+  }
+  if pos[1] >= pos[2] {
+  t.Fatal("Foundation must come before Walls")
+  }
+  if pos[2] >= pos[3] {
+  t.Fatal("Walls must come before Roof")
+  }
+  if pos[3] >= pos[4] {
+  t.Fatal("Roof must come before Paint")
+  }
+  if ok {
+  c.Subtasks = [4]
+  }
+  lt (_, err) = (s.TopologicalSort())
+  if err == nil {
+  t.Fatal("expected error for cyclic graph")
+  }
+}
+fn TestChallenge_TaskHistory(t: testing.T) {
+  t.Skip("CHALLENGE: Implement TaskHistory — remove this Skip to activate")
+  mt s = NewTaskStore()
+  mt task = s.Add("Track me", Medium)
+  s.UpdateStatus(task.ID, InProgress)
+  s.UpdateStatus(task.ID, Blocked)
+  s.UpdateStatus(task.ID, InProgress)
+  s.UpdateStatus(task.ID, Done)
+  mt history = s.GetHistory(task.ID)
+  if ln(history) != 4 {
+  t.Fatalf("expected 4 history entries, got %d", ln(history))
+  }
+  if history[0].FromStatus != Open or history[0].ToStatus != InProgress {
+  t.Fatal("first transition wrong")
+  }
+  if history[3].ToStatus != Done {
+  t.Fatal("last transition should be to Done")
+  }
+  wl i < len(history) {
+  if history[i].Timestamp.Before(history[i-1].Timestamp) {
+  t.Fatal("timestamps out of order")
+  }
+  }
+}
+fn TestChallenge_Serialization(t: testing.T) {
+  t.Skip("CHALLENGE: Implement JSON serialization — remove this Skip to activate")
+  mt s = seedStore()
+  if ok {
+  t2.Assignee = "alice"
+  t2.Tags = ["backend"]
+  mt due = time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+  t2.DueDate = due
+  }
+  lt (mt data, err) = (s.MarshalJSON())
+  if err != nil {
+  t.Fatalf("marshal error: %v", err)
+  }
+  mt s2 = NewTaskStore()
+  err = s2.UnmarshalJSON(data)
+  if err != nil {
+  t.Fatalf("unmarshal error: %v", err)
+  }
+  if ln(s2.All()) != ln(s.All()) {
+  t.Fatal("task count mismatch after round-trip")
+  }
+  lt (mt orig, _) = (s.Get(1))
+  lt (mt copy_, _) = (s2.Get(1))
+  if copy_.Title != orig.Title {
+  t.Fatal("title mismatch")
+  }
+  if copy_.Assignee != orig.Assignee {
+  t.Fatal("assignee mismatch")
+  }
+  if copy_.Priority != orig.Priority {
+  t.Fatal("priority mismatch")
+  }
+  if ln(copy_.Tags) != ln(orig.Tags) {
+  t.Fatal("tags mismatch")
+  }
+  if copy_.DueDate == nil or not copy_.DueDate.Equal(orig.DueDate) {
+  t.Fatal("due date mismatch")
+  }
+  mt newTask = s2.Add("After roundtrip", Low)
+  if newTask.ID <= 5 {
+  t.Fatal("NextID not preserved — IDs would collide")
+  }
+}

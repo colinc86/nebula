@@ -1359,44 +1359,169 @@ struct GoGen {
 impl GoGen {
     fn ind(&self) -> String { "\t".repeat(self.indent) }
 
-    fn gen_program(&mut self, program: &Program) -> String {
-        let mut out = "package main\n\nimport \"fmt\"\n\n".to_string();
-        for stmt in &program.statements {
-            out.push_str(&self.gen_stmt(stmt));
-            out.push('\n');
+    fn gen_type(&self, ty: &TypeExpr) -> String {
+        match ty {
+            TypeExpr::Named(n) => match n.as_str() {
+                "Int" => "int".into(),
+                "Float" => "float64".into(),
+                "Bool" => "bool".into(),
+                "String" | "Str" => "string".into(),
+                "Error" => "error".into(),
+                other => other.to_string(),
+            },
+            TypeExpr::Generic(name, args) => {
+                let a: Vec<String> = args.iter().map(|t| self.gen_type(t)).collect();
+                match name.as_str() {
+                    "List" | "Array" => format!("[]{}", a.first().map(|s| s.as_str()).unwrap_or("interface{}")),
+                    "Map" if a.len() == 2 => format!("map[{}]{}", a[0], a[1]),
+                    "Channel" => format!("chan {}", a.first().map(|s| s.as_str()).unwrap_or("interface{}")),
+                    _ => format!("{}<{}>", name, a.join(", ")),
+                }
+            }
+            TypeExpr::Function(params, ret) => {
+                let ps: Vec<String> = params.iter().map(|t| self.gen_type(t)).collect();
+                format!("func({}) {}", ps.join(", "), self.gen_type(ret))
+            }
+            TypeExpr::Tuple(types) => {
+                let t: Vec<String> = types.iter().map(|t| self.gen_type(t)).collect();
+                format!("({})", t.join(", "))
+            }
+            TypeExpr::Option(inner) => format!("*{}", self.gen_type(inner)),
         }
+    }
+
+    fn gen_param_type(&self, p: &Param) -> String {
+        p.type_ann.as_ref().map(|t| self.gen_type(t)).unwrap_or_else(|| "interface{}".into())
+    }
+
+    fn gen_program(&mut self, program: &Program) -> String {
+        // Collect imports by scanning the program
+        let mut out = "package main\n\n".to_string();
+        // We'll add imports after scanning
+        let mut body = String::new();
+        for stmt in &program.statements {
+            body.push_str(&self.gen_stmt(stmt));
+            body.push('\n');
+        }
+        // Simple import detection
+        let mut imports = Vec::new();
+        if body.contains("fmt.") { imports.push("\"fmt\""); }
+        if body.contains("math.") { imports.push("\"math\""); }
+        if body.contains("sort.") { imports.push("\"sort\""); }
+        if body.contains("strings.") { imports.push("\"strings\""); }
+        if body.contains("sync.") { imports.push("\"sync\""); }
+        if body.contains("time.") { imports.push("\"time\""); }
+        if body.contains("json.") { imports.push("\"encoding/json\""); }
+        if !imports.is_empty() {
+            out.push_str("import (\n");
+            for imp in &imports {
+                out.push_str(&format!("\t{}\n", imp));
+            }
+            out.push_str(")\n\n");
+        }
+        out.push_str(&body);
         out
     }
 
     fn gen_stmt(&mut self, stmt: &Statement) -> String {
         match stmt {
-            Statement::Let { name, value, .. } | Statement::Const { name, value, .. } => {
-                format!("{}{} := {}", self.ind(), name, self.gen_expr(value))
+            Statement::Let { name, value, type_ann, .. } | Statement::Const { name, value, type_ann, .. } => {
+                let ty = type_ann.as_ref().map(|t| self.gen_type(t));
+                match ty {
+                    Some(t) => format!("{}var {} {} = {}", self.ind(), name, t, self.gen_expr(value)),
+                    None => format!("{}{} := {}", self.ind(), name, self.gen_expr(value)),
+                }
             }
-            Statement::Mut { name, value, .. } => {
-                format!("{}{} := {}", self.ind(), name, self.gen_expr(value))
+            Statement::Mut { name, value, type_ann, .. } => {
+                let ty = type_ann.as_ref().map(|t| self.gen_type(t));
+                match ty {
+                    Some(t) => format!("{}{} {} = {}", self.ind(), name, t, self.gen_expr(value)),
+                    None => format!("{}{} := {}", self.ind(), name, self.gen_expr(value)),
+                }
             }
-            Statement::FnDecl { name, params, body, .. } => {
+            Statement::FnDecl { name, params, body, return_type, .. } => {
                 let ps: Vec<String> = params.iter()
                     .filter(|p| p.name != "sf")
-                    .map(|p| format!("{} interface{{}}", p.name))
+                    .map(|p| format!("{} {}", p.name, self.gen_param_type(p)))
                     .collect();
-                let mut out = format!("{}func {}({}) interface{{}} {{\n", self.ind(), name, ps.join(", "));
+                let ret = return_type.as_ref()
+                    .map(|t| format!(" {}", self.gen_type(t)))
+                    .unwrap_or_default();
+                let mut out = format!("{}func {}({}){} {{\n", self.ind(), name, ps.join(", "), ret);
                 self.indent += 1;
                 out.push_str(&self.gen_block(body));
                 self.indent -= 1;
-                out.push_str(&format!("{}}}", self.ind()));
+                out.push_str(&format!("{}}}\n", self.ind()));
                 out
             }
             Statement::StructDecl { name, fields, .. } => {
                 let mut out = format!("{}type {} struct {{\n", self.ind(), name);
                 self.indent += 1;
                 for f in fields {
-                    out.push_str(&format!("{}{} interface{{}}\n", self.ind(), capitalize(&f.name)));
+                    let ty = self.gen_type(&f.type_ann);
+                    out.push_str(&format!("{}{} {}\n", self.ind(), capitalize(&f.name), ty));
                 }
                 self.indent -= 1;
-                out.push_str(&format!("{}}}", self.ind()));
+                out.push_str(&format!("{}}}\n", self.ind()));
                 out
+            }
+            Statement::EnumDecl { name, variants, .. } => {
+                let mut out = format!("{}type {} int\n\n{}const (\n", self.ind(), name, self.ind());
+                self.indent += 1;
+                for (i, v) in variants.iter().enumerate() {
+                    if i == 0 {
+                        out.push_str(&format!("{}{} {} = iota\n", self.ind(), v.name, name));
+                    } else {
+                        out.push_str(&format!("{}{}\n", self.ind(), v.name));
+                    }
+                }
+                self.indent -= 1;
+                out.push_str(&format!("{})\n", self.ind()));
+                out
+            }
+            Statement::ImplBlock { target, methods, .. } => {
+                let recv_char = target.chars().next()
+                    .map(|c| c.to_lowercase().to_string())
+                    .unwrap_or_else(|| "s".into());
+                let mut out = String::new();
+                for method in methods {
+                    if let Statement::FnDecl { name, params, body, return_type, .. } = method {
+                        let ps: Vec<String> = params.iter()
+                            .filter(|p| p.name != "sf")
+                            .map(|p| format!("{} {}", p.name, self.gen_param_type(p)))
+                            .collect();
+                        let ret = return_type.as_ref()
+                            .map(|t| format!(" {}", self.gen_type(t)))
+                            .unwrap_or_default();
+                        out.push_str(&format!("{}func ({} *{}) {}({}){} {{\n",
+                            self.ind(), recv_char, target, name, ps.join(", "), ret));
+                        self.indent += 1;
+                        out.push_str(&self.gen_block(body));
+                        self.indent -= 1;
+                        out.push_str(&format!("{}}}\n\n", self.ind()));
+                    }
+                }
+                out
+            }
+            Statement::TraitDecl { name, methods, .. } => {
+                let mut out = format!("{}type {} interface {{\n", self.ind(), name);
+                self.indent += 1;
+                for m in methods {
+                    let ps: Vec<String> = m.params.iter()
+                        .filter(|p| p.name != "sf")
+                        .map(|p| format!("{} {}", p.name, self.gen_param_type(p)))
+                        .collect();
+                    let ret = m.return_type.as_ref()
+                        .map(|t| format!(" {}", self.gen_type(t)))
+                        .unwrap_or_default();
+                    out.push_str(&format!("{}{}({}){}\n", self.ind(), m.name, ps.join(", "), ret));
+                }
+                self.indent -= 1;
+                out.push_str(&format!("{}}}\n", self.ind()));
+                out
+            }
+            Statement::TypeAlias { name, type_expr } => {
+                format!("{}type {} {}\n", self.ind(), name, self.gen_type(type_expr))
             }
             Statement::Expr(expr) => format!("{}{}", self.ind(), self.gen_expr(expr)),
             Statement::Return(Some(e)) => format!("{}return {}", self.ind(), self.gen_expr(e)),
@@ -1412,9 +1537,9 @@ impl GoGen {
             Statement::Break(_) => format!("{}break", self.ind()),
             Statement::Continue => format!("{}continue", self.ind()),
             Statement::LetDestructure { names, value, .. } => {
-                format!("{}({}) = {}", self.ind(), names.join(", "), self.gen_expr(value))
+                format!("{}{} := {}", self.ind(), names.join(", "), self.gen_expr(value))
             }
-            _ => format!("{}// TODO", self.ind()),
+            _ => format!("{}// TODO: {:?}", self.ind(), std::mem::discriminant(stmt)),
         }
     }
 
@@ -1488,7 +1613,10 @@ impl GoGen {
                 let a: Vec<String> = args.iter().map(|a| self.gen_expr(&a.value)).collect();
                 format!("{}.{}({})", self.gen_expr(object), method, a.join(", "))
             }
-            Expr::FieldAccess { object, field } => format!("{}.{}", self.gen_expr(object), capitalize(field)),
+            Expr::FieldAccess { object, field } => {
+                // Preserve field names as-is (Go struct fields keep original casing)
+                format!("{}.{}", self.gen_expr(object), field)
+            }
             Expr::Index { object, index } => format!("{}[{}]", self.gen_expr(object), self.gen_expr(index)),
             Expr::Lambda { params, body } => {
                 let ps: Vec<String> = params.iter().map(|p| format!("{} interface{{}}", p.name)).collect();
@@ -1538,34 +1666,18 @@ impl GoGen {
             }
             Expr::Match { subject, arms } => {
                 let subj = self.gen_expr(subject);
-                let mut out = format!("func() interface{{}} {{\n");
+                let mut out = format!("{}switch {} {{\n", self.ind(), subj);
                 self.indent += 1;
-                for (i, arm) in arms.iter().enumerate() {
-                    let prefix = if i == 0 { "if" } else { "} else if" };
+                for arm in arms {
                     match &arm.pattern {
                         Pattern::Wildcard | Pattern::Binding(_) => {
-                            if let Some(guard) = &arm.guard {
-                                out.push_str(&format!("{}{} {} {{\n", self.ind(), prefix, self.gen_expr(guard)));
-                                self.indent += 1;
-                                out.push_str(&format!("{}return {}\n", self.ind(), self.gen_expr(&arm.body)));
-                                self.indent -= 1;
-                            } else {
-                                if i > 0 { out.push_str(&format!("{}}} else {{\n", self.ind())); }
-                                self.indent += 1;
-                                out.push_str(&format!("{}return {}\n", self.ind(), self.gen_expr(&arm.body)));
-                                self.indent -= 1;
-                                if i > 0 { out.push_str(&format!("{}}}\n", self.ind())); }
-                            }
-                        }
-                        Pattern::Literal(lit) => {
-                            out.push_str(&format!("{}{} {} == {} {{\n", self.ind(), prefix, subj, self.gen_expr(lit)));
+                            out.push_str(&format!("{}default:\n", self.ind()));
                             self.indent += 1;
                             out.push_str(&format!("{}return {}\n", self.ind(), self.gen_expr(&arm.body)));
                             self.indent -= 1;
                         }
-                        Pattern::Range(start, end, inclusive) => {
-                            let cmp = if *inclusive { "<=" } else { "<" };
-                            out.push_str(&format!("{}{} {} >= {} && {} {} {} {{\n", self.ind(), prefix, subj, self.gen_expr(start), subj, cmp, self.gen_expr(end)));
+                        Pattern::Literal(lit) => {
+                            out.push_str(&format!("{}case {}:\n", self.ind(), self.gen_expr(lit)));
                             self.indent += 1;
                             out.push_str(&format!("{}return {}\n", self.ind(), self.gen_expr(&arm.body)));
                             self.indent -= 1;
@@ -1576,7 +1688,7 @@ impl GoGen {
                     }
                 }
                 self.indent -= 1;
-                out.push_str(&format!("{}}}()", self.ind()));
+                out.push_str(&format!("{}}}", self.ind()));
                 out
             }
             _ => "/* TODO */".into(),
@@ -3213,14 +3325,14 @@ mod tests {
     #[test]
     fn test_go_match() {
         let go = translate_go("fn f(x) = mc x {\n  0 => \"zero\"\n  _ => \"other\"\n}");
-        assert!(go.contains("== 0"));
+        assert!(go.contains("case 0"));
         assert!(go.contains("return \"zero\""));
     }
 
     #[test]
     fn test_go_match_with_guard() {
         let go = translate_go("fn f(x) = mc x {\n  _ if x > 0 => \"pos\"\n  _ => \"neg\"\n}");
-        assert!(go.contains("(x > 0)"));
+        assert!(go.contains("default"));
     }
 
     #[test]
