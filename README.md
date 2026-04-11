@@ -6,14 +6,24 @@ Nebula normalizes code from 8 programming languages into a single canonical form
 
 Nebula extends the grammar-redesign approach of SimPy (ISSTA 2024) and Token Sugar (ASE 2025) to multiple source languages, validated by a comprehensive tokenizer audit against cl100k_base.
 
+```sh
+cargo build --manifest-path compiler/Cargo.toml     # Build
+nebula examples/hello.neb                            # Run a program
+nebula from-rust lib.rs                              # Rust → Nebula
+nebula translate --from go --to python main.go       # Go → Python (neural)
+nebula mcp                                           # Start MCP server
+```
+
+**Documentation:** [Language Spec](spec/LANGUAGE.md) | [Results](bench/results.md) | [Experiments](bench/experiments.md) | [Training Guide](TRAINING.md)
+
 ## Results Summary
 
 | What We Measured | Result |
 |---|---|
 | Token compression (8 languages) | **16.2%** mean reduction |
 | Best compression (Rust, Swift, Kotlin) | **20.6-20.7%** |
-| Fine-tuned 7B Pass@1 (Nebula→Python) | **68.9%** raw, **89.6%** with error correction |
-| Fine-tuned 1.5B Pass@1 (Nebula→Python) | **48.8%** raw, **78.7%** with error correction |
+| Fine-tuned 7B Pass@1 (Nebula→Python, 8 langs) | **67.7%** raw, **88.4%** with error correction |
+| Fine-tuned 1.5B Pass@1 (Nebula→Python, 8 langs) | **45.1%** raw, **79.3%** with error correction |
 | Fine-tuned 7B Pass@1 (MBPP, 500 problems) | **55.4%** — matches base model on raw Python |
 | Base model on Nebula (no fine-tuning) | **1.2%** — can't parse Nebula at all |
 | InterTrans (Nebula-mediated translation) | **+17.6pp** on Go→Python, **+17.6pp** on JS→Python |

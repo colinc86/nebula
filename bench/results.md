@@ -40,30 +40,30 @@ All 8 languages compress. Mean: 15.8%. Best: Rust (20.7%). Least: Python (3.2%).
 |---|---|---|---|---|
 | Base Qwen-2.5-1.5B on Nebula | 1.5B | — | 2/164 | **1.2%** |
 | Single-target (3-epoch) | 1.5B | Python | 80/164 | **48.8%** |
-| Multi-target (3-epoch) | 1.5B | 6 langs | 70/164 | **42.7%** |
-| **Multi-target (3-epoch)** | **7B** | **6 langs** | **113/164** | **68.9%** |
+| **8-lang (production)** | **1.5B** | **8 langs** | **74/164** | **45.1%** |
+| **8-lang (production)** | **7B** | **8 langs** | **111/164** | **67.7%** |
 
-The 7B multi-target model achieves 68.9% Pass@1 on Nebula→Python — matching published Qwen-2.5-7B results on raw Python (~60-70%) while also handling 5 additional languages.
+The 7B 8-language model achieves 67.7% Pass@1 on Nebula→Python — matching published Qwen-2.5-7B results on raw Python (~60-70%) while also handling 7 additional languages.
 
 ## Phase 6: Error Correction Pipeline
 
 **Benchmark:** HumanEval (164 problems) | **Max retries:** 3 | **Fallback:** rule-based `nebula to-python`
 
-### 7B multi-target (best):
+### 7B 8-language (production):
 
 | Condition | Passed | Pass@1 |
 |---|---|---|
 | No correction | 111/164 | **67.7%** |
-| + Error correction retries | 124/164 | **75.6%** |
-| + Rule-based fallback | 147/164 | **89.6%** |
+| + Error correction retries | — | — |
+| + Rule-based fallback | 145/164 | **88.4%** |
 
-### 1.5B single-target 3-epoch:
+### 1.5B 8-language (production):
 
 | Condition | Passed | Pass@1 |
 |---|---|---|
-| No correction | 76/164 | **46.3%** |
-| + Error correction retries | 86/164 | **52.4%** |
-| + Rule-based fallback | 129/164 | **78.7%** |
+| No correction | 74/164 | **45.1%** |
+| + Error correction retries | — | — |
+| + Rule-based fallback | 130/164 | **79.3%** |
 
 ## InterTrans Scale-Up (10 Directed Pairs)
 

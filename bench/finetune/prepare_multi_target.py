@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare multi-target training data: Nebula -> {Python, JS, TS, Go, Rust, C}.
+"""Prepare multi-target training data: Nebula -> {Python, JS, TS, Go, Swift, Kotlin, Rust, C}.
 
 Downloads functions from StarCoderData (HuggingFace bigcode/starcoderdata) for
 each language, converts to Nebula via the compiler, and produces SFT training
@@ -36,6 +36,8 @@ LANG_CONFIG = {
     "javascript": ("javascript", ".js", "from-js"),
     "typescript": ("typescript", ".ts", "from-ts"),
     "go": ("go", ".go", "from-go"),
+    "swift": ("swift", ".swift", "from-swift"),
+    "kotlin": ("kotlin", ".kt", "from-kotlin"),
     "rust": ("rust", ".rs", "from-rs"),
     "c": ("c", ".c", "from-c"),
 }
@@ -46,6 +48,8 @@ LANG_DISPLAY = {
     "javascript": "JavaScript",
     "typescript": "TypeScript",
     "go": "Go",
+    "swift": "Swift",
+    "kotlin": "Kotlin",
     "rust": "Rust",
     "c": "C",
 }
@@ -252,11 +256,62 @@ def extract_c_functions(source):
     return functions
 
 
+def extract_swift_functions(source):
+    """Extract function definitions from Swift source (looks for 'func ')."""
+    functions = []
+    lines = source.split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.lstrip()
+
+        if (stripped.startswith("func ") or stripped.startswith("public func ") or
+                stripped.startswith("private func ") or stripped.startswith("internal func ") or
+                stripped.startswith("static func ") or stripped.startswith("override func ") or
+                stripped.startswith("mutating func ")) and "{" in line:
+            block = _extract_brace_block(lines, i)
+            if block:
+                functions.append(block)
+                block_lines = block.count("\n") + 1
+                i += block_lines
+                continue
+
+        i += 1
+
+    return functions
+
+
+def extract_kotlin_functions(source):
+    """Extract function definitions from Kotlin source (looks for 'fun ')."""
+    functions = []
+    lines = source.split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.lstrip()
+
+        if (stripped.startswith("fun ") or stripped.startswith("private fun ") or
+                stripped.startswith("public fun ") or stripped.startswith("internal fun ") or
+                stripped.startswith("override fun ") or stripped.startswith("suspend fun ")) and "{" in line:
+            block = _extract_brace_block(lines, i)
+            if block:
+                functions.append(block)
+                block_lines = block.count("\n") + 1
+                i += block_lines
+                continue
+
+        i += 1
+
+    return functions
+
+
 EXTRACTORS = {
     "python": extract_python_functions,
     "javascript": extract_js_functions,
     "typescript": extract_js_functions,  # Reuse JS extractor for TS
     "go": extract_go_functions,
+    "swift": extract_swift_functions,
+    "kotlin": extract_kotlin_functions,
     "rust": extract_rust_functions,
     "c": extract_c_functions,
 }
@@ -348,6 +403,40 @@ def download_functions(lang, output_path, count=10000):
             print(f"    {hf_count} functions from StarCoderData")
         except Exception as e:
             print(f"    StarCoderData unavailable: {e}")
+
+        # Fallback: The Stack (for languages not in StarCoderData, e.g. Swift)
+        if collected < count and lang in ("swift",):
+            remaining = count - collected
+            print(f"  [{lang}] Fallback: The Stack (need {remaining} more)...")
+            try:
+                from datasets import load_dataset
+                ds = load_dataset(
+                    "bigcode/the-stack",
+                    data_dir=f"data/{lang}",
+                    split="train",
+                    streaming=True,
+                    token=hf_token,
+                )
+                stack_count = 0
+                for sample in ds:
+                    if collected >= count:
+                        break
+                    content = sample.get("content", "")
+                    if not content or len(content) < MIN_FUNC_SIZE:
+                        continue
+                    functions = extractor(content)
+                    for func in functions:
+                        if MIN_FUNC_SIZE <= len(func) <= MAX_FUNC_SIZE:
+                            f.write(json.dumps({"code": func, "lang": lang}) + "\n")
+                            collected += 1
+                            stack_count += 1
+                            if collected >= count:
+                                break
+                    if stack_count > 0 and stack_count % 1000 == 0:
+                        print(f"    {stack_count} from The Stack ({collected} total)...")
+                print(f"    {stack_count} functions from The Stack")
+            except Exception as e:
+                print(f"    The Stack unavailable: {e}")
 
         # Fallback: CodeSearchNet (supports python, javascript, go)
         if collected < count and lang in ("python", "javascript", "go"):

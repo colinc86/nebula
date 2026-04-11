@@ -232,12 +232,22 @@ fn tool_write_code(args: &Value) -> Result<String, String> {
         .ok_or("Missing required parameter: code")?;
 
     let lang = lang_detect::detect(path);
-    let output = lang_detect::from_nebula(code, lang)?;
+    let lang_name = lang.name();
+
+    // Try neural translation first (produces more idiomatic output)
+    let output = if neural::is_available() {
+        match neural::generate(code, lang_name, None) {
+            Ok(neural_output) if !neural_output.is_empty() => neural_output,
+            _ => lang_detect::from_nebula(code, lang)?,
+        }
+    } else {
+        lang_detect::from_nebula(code, lang)?
+    };
 
     fs::write(path, &output)
         .map_err(|e| format!("Failed to write '{}': {}", path, e))?;
 
-    Ok(format!("Wrote {} bytes to {} ({})", output.len(), path, lang.name()))
+    Ok(format!("Wrote {} bytes to {} ({})", output.len(), path, lang_name))
 }
 
 fn tool_search_code(args: &Value) -> Result<String, String> {

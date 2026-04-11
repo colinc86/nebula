@@ -1075,6 +1075,35 @@ Training job `ft-d2de31f0-7f76` launched on Together AI (Qwen-2.5-7B, same ~51K 
 
 ---
 
+## Experiment 26: 8-Language Models (Production)
+
+**Date:** 2026-04-11
+**Type:** Full-coverage model validation
+**Models:** Qwen-2.5-1.5B and Qwen-2.5-7B trained on ~68K pairs across all 8 languages
+**Training:** Together AI, 3 epochs, LoRA rank 16
+**Benchmark:** HumanEval (164 problems), Python target
+
+### Results
+
+| Model | Languages | Pass@1 (raw) | Pass@1 (corrected) |
+|---|---|---|---|
+| 6-lang 1.5B | 6 | 42.7% | — |
+| **8-lang 1.5B** | **8** | **45.1%** | **79.3%** |
+| 6-lang 7B | 6 | 68.9% | 89.6% |
+| **8-lang 7B** | **8** | **67.7%** | **88.4%** |
+
+### Analysis
+
+Adding Swift and Kotlin (8 vs 6 languages) caused **no meaningful quality loss**. The 1.5B actually improved by +2.4pp, likely from cross-language transfer learning. The 7B lost only 1.2pp — within noise.
+
+These are the **production models**: full 8-language coverage matching the compiler's capabilities.
+
+Together AI job IDs:
+- 1.5B: `ft-1f6f55cf-6d80` → `colinc86_4aa1/Qwen2.5-1.5B-nebula-8lang-1.5b-4eaf384e`
+- 7B: `ft-7f0e30f3-03bb` → `colinc86_4aa1/Qwen2.5-7B-nebula-8lang-7b-73a17cae`
+
+---
+
 ## Experiment 24: 7B Multi-Target Model (WS7)
 
 **Date:** 2026-04-10

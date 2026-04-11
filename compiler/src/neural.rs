@@ -6,7 +6,7 @@
 use serde_json::{json, Value};
 
 const OLLAMA_URL: &str = "http://localhost:11434";
-const DEFAULT_MODEL: &str = "nebula-multi-7b";
+const DEFAULT_MODEL: &str = "nebula-8lang-7b";
 
 /// Check if Ollama is running and reachable.
 pub fn is_available() -> bool {
