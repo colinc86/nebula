@@ -1,0 +1,306 @@
+HumanEval/25	parsed=True	rt=True	tests=False
+    test timeout
+HumanEval/32	parsed=True	rt=False	tests=False
+    to-py empty: [1;31merror[0m: Expected identifier, got Comma
+      [1;34m-->[0m /tmp/claude/tmp2hm3wdwj.neb:21:27
+         [1;34m|[0m
+      21 [1;34m|[0m     lt (__t0, __t1) = (-1., 1.)
+         [1;34m|[0m               
+HumanEval/33	parsed=True	rt=True	tests=False
+    Traceback (most recent call last):
+      File "<string>", line 24, in <module>
+        check(sort_third)
+        ~~~~~^^^^^^^^^^^^
+      File "<string>", line 17, in check
+        assert tuple(candidate([5, 6, 3, 4, 8, 9, 2])) == tuple([2, 6, 3, 4, 8, 9, 5])
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+HumanEval/37	parsed=True	rt=True	tests=False
+    Traceback (most recent call last):
+      File "<string>", line 28, in <module>
+        check(sort_even)
+        ~~~~~^^^^^^^^^^^
+      File "<string>", line 22, in check
+        assert tuple(candidate([1, 2, 3])) == tuple([1, 2, 3])
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    AssertionError
+
+HumanEval/38	parsed=True	rt=False	tests=False
+    to-py empty: [1;31merror[0m: Expected Comma, got Newline
+      [1;34m-->[0m /tmp/claude/tmpenm65lqt.neb:6:86
+        [1;34m|[0m
+      6 [1;34m|[0m     lt groups = rng((ln(s) + 2) // 3).mp(|i| s.slc((3 * i), min((3 * i
+HumanEval/41	parsed=True	rt=True	tests=False
+    Traceback (most recent call last):
+      File "<string>", line 20, in <module>
+        check(car_race_collision)
+        ~~~~~^^^^^^^^^^^^^^^^^^^^
+      File "<string>", line 12, in check
+        assert candidate(2) == 4
+               ^^^^^^^^^^^^^^^^^
+    AssertionError
+
+HumanEval/44	parsed=True	rt=True	tests=False
+    test timeout
+HumanEval/47	parsed=True	rt=False	tests=False
+    to-py empty: [1;31merror[0m: Expected RightBracket, got Newline
+      [1;34m-->[0m /tmp/claude/tmpgy1htxbs.neb:10:25
+         [1;34m|[0m
+      10 [1;34m|[0m         rt l[ln(l) // 2]
+         [1;34m|[0m                  
+HumanEval/50	parsed=True	rt=False	tests=False
+    to-py empty: [1;31merror[0m: Expected identifier, got Catch
+      [1;34m-->[0m /tmp/claude/tmp0jxktdjm.neb:5:20
+        [1;34m|[0m
+      5 [1;34m|[0m     rt "".jn(s.mp(|ch| chr(((ord(ch) + 5 - ord("a")) % 26) + ord("a
+HumanEval/62	parsed=True	rt=True	tests=False
+    Traceback (most recent call last):
+      File "<string>", line 20, in <module>
+        check(derivative)
+        ~~~~~^^^^^^^^^^^^
+      File "<string>", line 12, in check
+        assert candidate([3, 1, 2, 4, 5]) == [1, 4, 12, 20]
+               ~~~~~~~~~^^^^^^^^^^^^^^^^^
+      File "<string>", line 2, in derivative
+        retur
+HumanEval/64	parsed=True	rt=True	tests=False
+      File "<string>", line 1
+        FIX = "
+              ^
+    SyntaxError: unterminated string literal (detected at line 1)
+
+HumanEval/71	parsed=True	rt=True	tests=False
+    Traceback (most recent call last):
+      File "<string>", line 29, in <module>
+        check(triangle_area)
+        ~~~~~^^^^^^^^^^^^^^^
+      File "<string>", line 15, in check
+        assert candidate(3, 4, 5) == 6.00, "This prints if this assert fails 1 (good for debugging!)"
+               ~~~~~~~~~^^^^^^^^^
+      File "<s
+HumanEval/73	parsed=True	rt=False	tests=False
+    to-py empty: [1;31merror[0m: Expected Comma, got Newline
+      [1;34m-->[0m /tmp/claude/tmpf4x2lrdc.neb:13:32
+         [1;34m|[0m
+      13 [1;34m|[0m     fo i in rng(ln(arr) // 2) {
+         [1;34m|[0m                  
+HumanEval/74	parsed=True	rt=False	tests=False
+    to-py empty: [1;31merror[0m: Expected identifier, got Struct
+      [1;34m-->[0m /tmp/claude/tmpck6cqvvq.neb:16:8
+         [1;34m|[0m
+      16 [1;34m|[0m     fo st in lst1 {
+         [1;34m|[0m        [1;31m^[0m
+
+HumanEval/77	parsed=True	rt=False	tests=False
+    to-py empty: [1;31merror[0m: Expected identifier, got Slash
+      [1;34m-->[0m /tmp/claude/tmpavczx1z2.neb:15:26
+         [1;34m|[0m
+      15 [1;34m|[0m     rt toi(round(a ^ (1. / 3))) ^ 3 == a
+         [1;34m|[0m      
+HumanEval/83	parsed=True	rt=True	tests=False
+    Traceback (most recent call last):
+      File "<string>", line 24, in <module>
+        check(starts_one_ends)
+        ~~~~~^^^^^^^^^^^^^^^^^
+      File "<string>", line 14, in check
+        assert candidate(2) == 18
+               ^^^^^^^^^^^^^^^^^^
+    AssertionError
+
+HumanEval/87	parsed=True	rt=True	tests=False
+    Traceback (most recent call last):
+      File "<string>", line 41, in <module>
+        check(get_row)
+        ~~~~~^^^^^^^^^
+      File "<string>", line 10, in check
+        assert candidate([
+               ~~~~~~~~~^^
+            [1,2,3,4,5,6],
+            ^^^^^^^^^^^^^^
+            [1,2,3,4,1,6],
+            ^^^^^^^^^^^^^^
+            [1,2
+HumanEval/91	parsed=True	rt=False	tests=False
+    to-py empty: [1;31merror[0m: Unterminated character literal
+      [1;34m-->[0m /tmp/claude/tmpfgnegc4d.neb:14:32
+         [1;34m|[0m
+      14 [1;34m|[0m     lt sentences = re.split(r'[.?!]\s*', S)
+         [1;34m|[0m   
+HumanEval/94	parsed=True	rt=True	tests=False
+    Traceback (most recent call last):
+      File "<string>", line 47, in <module>
+        check(skjkasdkd)
+        ~~~~~^^^^^^^^^^^
+      File "<string>", line 25, in check
+        assert candidate([0,3,2,1,3,5,7,4,5,5,5,2,181,32,4,32,3,2,32,324,4,3]) == 10, "This prints if this assert fails 1 (good for debugging!)"
+     
+HumanEval/95	parsed=True	rt=True	tests=False
+      File "<string>", line 11
+        (if key.isupper():
+         ^^
+    SyntaxError: invalid syntax
+
+HumanEval/99	parsed=True	rt=True	tests=False
+      File "<string>", line 8
+        (if (num > 0):
+         ^^
+    SyntaxError: invalid syntax
+
+HumanEval/105	parsed=True	rt=True	tests=False
+      File "<string>", line 7
+        new_arr.append(dic[var])
+                                ^
+    IndentationError: unindent does not match any outer indentation level
+
+HumanEval/111	parsed=True	rt=True	tests=False
+    Traceback (most recent call last):
+      File "<string>", line 35, in <module>
+        check(histogram)
+        ~~~~~^^^^^^^^^^^
+      File "<string>", line 21, in check
+        assert candidate('a b b a') == {'a':2,'b': 2}, "This prints if this assert fails 1 (good for debugging!)"
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+HumanEval/116	parsed=True	rt=True	tests=False
+    Traceback (most recent call last):
+      File "<string>", line 24, in <module>
+        check(sort_array)
+        ~~~~~^^^^^^^^^^^^
+      File "<string>", line 10, in check
+        assert candidate([1,5,2,3,4]) == [1, 2, 4, 3, 5]
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    AssertionError
+
+HumanEval/118	parsed=True	rt=False	tests=False
+    to-py empty: [1;31merror[0m: Unexpected token: Comma
+      [1;34m-->[0m /tmp/claude/tmpvc_ohk59.neb:19:21
+         [1;34m|[0m
+      19 [1;34m|[0m     lt vowels = {"a", "e", "i", "o", "u", "A", "E", 'O', 'U', 'I'}
+    
+HumanEval/120	parsed=True	rt=True	tests=False
+    Traceback (most recent call last):
+      File "<string>", line 30, in <module>
+        check(maximum)
+        ~~~~~^^^^^^^^^
+      File "<string>", line 14, in check
+        assert candidate([-3, -4, 5], 3) == [-4, -3, 5]
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    AssertionError
+
+HumanEval/121	parsed=True	rt=True	tests=False
+    Traceback (most recent call last):
+      File "<string>", line 21, in <module>
+        check(solution)
+        ~~~~~^^^^^^^^^^
+      File "<string>", line 9, in check
+        assert candidate([5, 8, 7, 1])    == 12
+               ~~~~~~~~~^^^^^^^^^^^^^^
+      File "<string>", line 2, in solution
+        return sum([x for idx, x in
+HumanEval/124	parsed=True	rt=True	tests=False
+      File "<string>", line 3
+        date = date.strip()
+        ^^^^
+    IndentationError: expected an indented block after 'try' statement on line 2
+
+HumanEval/128	parsed=True	rt=True	tests=False
+    Traceback (most recent call last):
+      File "<string>", line 28, in <module>
+        check(prod_signs)
+        ~~~~~^^^^^^^^^^^^
+      File "<string>", line 14, in check
+        assert candidate([1, 2, 2, -4]) == -9
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    AssertionError
+
+HumanEval/132	parsed=True	rt=True	tests=False
+    Traceback (most recent call last):
+      File "<string>", line 42, in <module>
+        check(is_nested)
+        ~~~~~^^^^^^^^^^^
+      File "<string>", line 25, in check
+        assert candidate('[][]') == False
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    AssertionError
+
+HumanEval/133	parsed=True	rt=True	tests=False
+    Traceback (most recent call last):
+      File "<string>", line 33, in <module>
+        check(sum_squares)
+        ~~~~~^^^^^^^^^^^^^
+      File "<string>", line 14, in check
+        assert candidate([1,2,3])==14, "This prints if this assert fails 1 (good for debugging!)"
+               ^^^^^^^^^^^^^^^^^^^^^^
+    AssertionError
+HumanEval/134	parsed=True	rt=True	tests=False
+    Traceback (most recent call last):
+      File "<string>", line 26, in <module>
+        check(check_if_last_char_is_a_letter)
+        ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "<string>", line 15, in check
+        assert candidate("Pumpkin pie 1") == False
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    AssertionE
+HumanEval/142	parsed=True	rt=True	tests=False
+    Traceback (most recent call last):
+      File "<string>", line 30, in <module>
+        check(sum_squares)
+        ~~~~~^^^^^^^^^^^^^
+      File "<string>", line 14, in check
+        assert candidate([1,2,3]) == 6
+               ^^^^^^^^^^^^^^^^^^^^^^^
+    AssertionError
+
+HumanEval/149	parsed=True	rt=True	tests=False
+    Traceback (most recent call last):
+      File "<string>", line 27, in <module>
+        check(sorted_list_sum)
+        ~~~~~^^^^^^^^^^^^^^^^^
+      File "<string>", line 18, in check
+        assert candidate(["d", "dcba", "abcd", "a"]) == ["abcd", "dcba"]
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+HumanEval/150	parsed=True	rt=True	tests=False
+    Traceback (most recent call last):
+      File "<string>", line 31, in <module>
+        check(x_or_y)
+        ~~~~~^^^^^^^^
+      File "<string>", line 15, in check
+        assert candidate(7, 34, 12) == 34
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    AssertionError
+
+HumanEval/151	parsed=True	rt=True	tests=False
+    Traceback (most recent call last):
+      File "<string>", line 24, in <module>
+        check(double_the_difference)
+        ~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+      File "<string>", line 10, in check
+        assert candidate([5, 4]) == 25 , "This prints if this assert fails 2 (good for debugging!)"
+               ^^^^^^^^^^^^^^^
+HumanEval/156	parsed=True	rt=True	tests=False
+    Traceback (most recent call last):
+      File "<string>", line 42, in <module>
+        check(int_to_mini_roman)
+        ~~~~~^^^^^^^^^^^^^^^^^^^
+      File "<string>", line 22, in check
+        assert candidate(19) == 'xix'
+               ^^^^^^^^^^^^^^^^^^^^^^
+    AssertionError
+
+HumanEval/160	parsed=True	rt=True	tests=False
+    Traceback (most recent call last):
+      File "<string>", line 22, in <module>
+        check(do_algebra)
+        ~~~~~^^^^^^^^^^^^
+      File "<string>", line 13, in check
+        assert candidate(['**', '*', '+'], [2, 3, 4, 5]) == 37
+               ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "<string>", line 4, in do
+HumanEval/161	parsed=True	rt=True	tests=False
+    Traceback (most recent call last):
+      File "<string>", line 40, in <module>
+        check(solve)
+        ~~~~~^^^^^^^
+      File "<string>", line 27, in check
+        assert candidate("1234") == "4321"
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    AssertionError
+

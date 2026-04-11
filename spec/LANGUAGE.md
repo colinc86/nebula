@@ -1,4 +1,8 @@
-# Nebula Language Specification v0.2
+# Nebula Language Specification v1.0
+
+## Relation to Prior Work
+
+Nebula extends the grammar-redesign approach pioneered by **SimPy** (Sun et al., ISSTA 2024, [arXiv:2404.16333](https://arxiv.org/abs/2404.16333)) and **Token Sugar** (Sun et al., ASE 2025, [arXiv:2512.08266](https://arxiv.org/abs/2512.08266)). Where SimPy preserves Python's AST and replaces only its terminal notations with single-token placeholders, Nebula introduces a universal code IL that maps cleanly across 8 source languages (Python, Go, JS, TS, Rust, Swift, Kotlin, C). Every syntax choice is validated by cl100k_base tokenizer audit — the canonical form always uses the cheapest token representation.
 
 ## Design Philosophy
 
@@ -32,24 +36,30 @@ Nebula is designed to be the most LLM-friendly programming language possible. Ev
 |----------|------------------------------|---------------------------------|
 | `Int`    | 64-bit signed integer        | `42`, `-7`, `1_000_000`        |
 | `Float`  | 64-bit floating point        | `3.14`, `-0.5`, `1.0e10`      |
-| `Bool`   | Boolean                      | `tt`, `ff`                      |
+| `Bool`   | Boolean                      | `True`, `False` (or `tt`, `ff`) |
 | `String` | UTF-8 string                 | `"hello"`, `"line\n"`          |
 | `Char`   | Single Unicode character     | `'a'`, `'\n'`                  |
-| `Nil`    | Absence of value             | `nil`                           |
+| `Nil`    | Absence of value             | `None` (or `nil`)               |
 
 ## Variables
 
 ```nebula
-// Immutable binding (default)
-lt x = 42
-lt name: String = "Nebula"
+// Immutable binding (walrus operator — saves 1 token vs `let`)
+x := 42
+name: String := "Nebula"
 
-// Mutable binding
-mt count = 0
+// Mutable binding (bare assignment — saves 1 token vs `mut`)
+count = 0
 count = count + 1
 
-// Constants (compile-time)
-cn MAX_SIZE = 1024
+// Tuple unpacking
+a, b = 0, 1
+a, b = b, a + b
+
+// Long forms also accepted (all keywords are 1 token in cl100k_base)
+let x = 42       // same as x := 42
+mut count = 0    // same as count = 0
+const MAX = 1024 // same as MAX := 1024
 ```
 
 ## Type Inference
@@ -57,21 +67,21 @@ cn MAX_SIZE = 1024
 Types are inferred wherever possible. Annotations are optional but always allowed:
 
 ```nebula
-lt x = 42          // inferred as Int
-lt y: Float = 42   // explicit Float
-lt z = 42.0        // inferred as Float
+x := 42          // inferred as Int
+y: Float := 42   // explicit Float
+z := 42.0        // inferred as Float
 ```
 
 ## Strings
 
 ```nebula
-lt name = "world"
-lt greeting = "Hello, {name}!"          // interpolation with {}
-lt multi = """
+name := "world"
+greeting := "Hello, {name}!"          // interpolation with {}
+multi := """
     This is a multi-line
     string with {name} interpolation
 """
-lt raw = r"no \escapes \here"           // raw string
+raw := r"no \escapes \here"           // raw string
 ```
 
 ## Operators
@@ -89,7 +99,7 @@ lt raw = r"no \escapes \here"           // raw string
 `&`, `|`, `^`, `~`, `<<`, `>>`
 
 ### Assignment
-`=`, `+=`, `-=`, `*=`, `/=`, `%=`
+`=` (mutable binding / reassignment), `:=` (immutable binding), `+=`, `-=`, `*=`, `/=`, `%=`
 
 ### Pipe
 `|>` — Passes the left-hand value as the first argument to the right-hand function:
@@ -107,30 +117,41 @@ lt raw = r"no \escapes \here"           // raw string
 ### Nil Coalescing
 `??` — Returns left if not nil, otherwise right:
 ```nebula
-lt value = maybe_nil() ?? "default"
+value := maybe_nil() ?? "default"
 ```
 
 ## Control Flow
 
 ### If / Else
 
+Both indent and brace forms are valid:
+
 ```nebula
+// Indent form (canonical)
+if x > 0:
+    print("positive")
+elif x == 0:
+    print("zero")
+else:
+    print("negative")
+
+// Brace form (also valid)
 if x > 0 {
     print("positive")
-} el if x == 0 {
+} else if x == 0 {
     print("zero")
-} el {
+} else {
     print("negative")
 }
 
-// If as expression
-lt abs = if x >= 0 { x } el { -x }
+// If as expression (braces required for inline)
+abs := if x >= 0 { x } else { -x }
 ```
 
 ### Match (Pattern Matching)
 
 ```nebula
-mc value {
+match value {
     0 => print("zero")
     1..=9 => print("single digit")
     n if n > 100 => print("big: {n}")
@@ -138,7 +159,7 @@ mc value {
 }
 
 // Match as expression
-lt label = mc status {
+label := match status {
     Status.Ok => "success"
     Status.Error(msg) => "failed: {msg}"
     _ => "unknown"
@@ -148,65 +169,62 @@ lt label = mc status {
 ### Loops
 
 ```nebula
-// Infinite loop
-lp {
-    if done { bk }
-}
-
-// While loop
-wl condition {
-    do_something()
-}
-
-// For loop (iterates over any Iterable)
-fo item in collection {
+// For loop (indent form)
+for item in collection:
     process(item)
-}
 
 // For with index
-fo i, item in collection {
+for i, item in collection:
     print("{i}: {item}")
-}
+
+// While loop
+while condition:
+    do_something()
+
+// Infinite loop
+loop:
+    if done:
+        break
 
 // Loop as expression (breaks with a value)
-lt result = lp {
-    lt attempt = try_something()
-    if attempt.is_ok() { bk attempt.unwrap() }
+result := loop {
+    attempt := try_something()
+    if attempt.is_ok() { break attempt.unwrap() }
 }
 ```
 
 ## Functions
 
+Both `def` and `fn` are accepted (both 1 token in cl100k_base). Both indent and brace blocks work.
+
 ```nebula
-// Basic function
-fn add(a: Int, b: Int) -> Int {
+// Basic function (indent form)
+def add(a: Int, b: Int) -> Int:
     a + b    // last expression is the return value
-}
 
 // Short-form: single expression with =
-fn add(a, b) = a + b
-fn double(x) = x * 2
-fn square(x: Int) -> Int = x * x
+def add(a, b) = a + b
+def double(x) = x * 2
+def square(x: Int) -> Int = x * x
 
 // With default parameters
-fn greet(name: String, greeting = "Hello") -> String {
+def greet(name: Str, greeting = "Hello") -> Str:
     "{greeting}, {name}!"
-}
 
 // Named arguments at call site
 greet(name: "Alice", greeting: "Hi")
 
 // Explicit return
-fn early_return(x: Int) -> Int {
-    if x < 0 { rt 0 }
+def early_return(x: Int) -> Int:
+    if x < 0:
+        return 0
     x * 2
-}
 
 // Lambda / anonymous function
-lt double = |x| x * 2
-lt add = |a, b| a + b
-lt process = |x| {
-    lt y = x * 2
+double := |x| x * 2
+add := |a, b| a + b
+process := |x| {
+    y := x * 2
     y + 1
 }
 
@@ -287,38 +305,39 @@ lt (num, text) = pair    // destructuring
 lt first = pair.0
 ```
 
-## Structs (Data Types)
+## Structs and Classes
 
 ```nebula
-st Point {
+// Struct with fields (Go/Rust style)
+struct Point:
     x: Float
     y: Float
-}
 
-lt p = Point { x: 1.0, y: 2.0 }
-lt p2 = Point { ...p, x: 3.0 }    // spread with override
+p := Point { x: 1.0, y: 2.0 }
+p2 := Point { ...p, x: 3.0 }    // spread with override
 
-// Struct with methods (OOP style)
-st Circle {
+// Class style (Python/JS — combines struct + impl, no separate field declaration)
+class Circle:
+    def new(self, x: Float, y: Float, r: Float):
+        self.center = Point { x, y }
+        self.radius = r
+
+    def area(self) -> Float:
+        return std.math.PI * self.radius ** 2
+
+    def scale(self, factor: Float):
+        self.radius *= factor
+
+// Struct + impl style (Go/Rust — separate data and methods)
+struct Circle:
     center: Point
     radius: Float
-}
 
-im Circle {
-    fn new(x: Float, y: Float, r: Float) -> Circle {
-        Circle { center: Point { x, y }, radius: r }
-    }
+impl Circle:
+    def area(self) -> Float:
+        return std.math.PI * self.radius ** 2
 
-    fn area(sf) -> Float {
-        std.math.PI * sf.radius ** 2
-    }
-
-    fn scale(mt sf, factor: Float) {
-        sf.radius *= factor
-    }
-}
-
-lt c = Circle.new(0.0, 0.0, 5.0)
+c := Circle(0.0, 0.0, 5.0)
 print(c.area())
 ```
 
@@ -326,47 +345,33 @@ print(c.area())
 
 ```nebula
 // Simple enum
-en Color {
+enum Color {
     Red
     Green
     Blue
 }
 
 // Enum with associated data (algebraic data types)
-en Shape {
+enum Shape {
     Circle(radius: Float)
     Rectangle(width: Float, height: Float)
     Point
 }
 
-im Shape {
-    fn area(sf) -> Float {
-        mc sf {
+impl Shape:
+    def area(self) -> Float:
+        match self {
             Shape.Circle(r) => std.math.PI * r ** 2
             Shape.Rectangle(w, h) => w * h
             Shape.Point => 0.0
         }
-    }
-}
-
-// Option and Result are built-in enums
-en Option<T> {
-    Some(T)
-    None
-}
-
-en Result<T, E> {
-    Ok(T)
-    Err(E)
-}
 ```
 
 ## Traits (Interfaces)
 
 ```nebula
-tr Printable {
-    fn to_string(sf) -> String
-}
+trait Printable:
+    def to_string(self) -> Str
 
 tr Drawable {
     fn draw(sf)

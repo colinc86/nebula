@@ -1,0 +1,66 @@
+
+========================================================================
+Challenge 2: Graph Algorithms
+========================================================================
+Base Qwen 14B...
+  3793 + 910 tokens, 21.8s
+Fine-tuned Qwen v2 (conservative)...
+  3772 + 3000 tokens, 676.8s
+  Output tokens: base=910 ft=3000 (-229.7%)
+  Nebula kw:     base=106 ft=316
+  Go kw:         base=6 ft=5
+
+========================================================================
+Challenge 3: Text Processing
+========================================================================
+Base Qwen 14B...
+  2091 + 562 tokens, 10.7s
+Fine-tuned Qwen v2 (conservative)...
+  2070 + 3000 tokens, 647.5s
+  Output tokens: base=562 ft=3000 (-433.8%)
+  Nebula kw:     base=58 ft=255
+  Go kw:         base=1 ft=14
+
+========================================================================
+Challenge 4: State Machine
+========================================================================
+Base Qwen 14B...
+  2278 + 589 tokens, 11.0s
+Fine-tuned Qwen v2 (conservative)...
+  2257 + 3000 tokens, 647.8s
+  Output tokens: base=589 ft=3000 (-409.3%)
+  Nebula kw:     base=65 ft=354
+  Go kw:         base=0 ft=15
+
+========================================================================
+Challenge 5: Numerical Computation
+========================================================================
+Base Qwen 14B...
+  3081 + 840 tokens, 15.2s
+Fine-tuned Qwen v2 (conservative)...
+  3060 + 3000 tokens, 660.3s
+  Output tokens: base=840 ft=3000 (-257.1%)
+  Nebula kw:     base=77 ft=310
+  Go kw:         base=3 ft=8
+
+
+========================================================================
+AGGREGATE (Qwen 14B base vs FT v2 conservative, 4 clean challenges)
+========================================================================
+
+Metric                          Base Qwen      FT Qwen v2
+------------------------------------------------------------
+Input tokens                       11,243          11,159
+Output tokens                       2,901          12,000
+Total tokens                       14,144          23,159
+Nebula keywords                       306            1235
+Go keywords                            10              42
+
+Output token reduction: -313.7%
+Nebula purity — Base: 96%  Fine-tuned v2: 96%
+
+=== Sanity check — loop/degeneration detection ===
+  Challenge 2: Graph Algorithms            tags=  8 chinese=False truncated=True
+  Challenge 3: Text Processing             tags=  8 chinese=False truncated=True
+  Challenge 4: State Machine               tags=  6 chinese=False truncated=True
+  Challenge 5: Numerical Computation       tags=  7 chinese=False truncated=True

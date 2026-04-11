@@ -1,0 +1,53 @@
+[
+  {
+    "name": "Challenge 3: Text Processing (CSV, word freq, table format, glob match)",
+    "base": {
+      "time": 5.46926212310791,
+      "prompt_tokens": 2115,
+      "output_tokens": 471,
+      "nebula_kw": 36,
+      "go_kw": 6
+    },
+    "ft": {
+      "time": 12.727759838104248,
+      "prompt_tokens": 2114,
+      "output_tokens": 512,
+      "nebula_kw": 46,
+      "go_kw": 4
+    }
+  },
+  {
+    "name": "Challenge 4: State Machine (reachable, deadlock, BFS, validate)",
+    "base": {
+      "time": 6.4495580196380615,
+      "prompt_tokens": 2298,
+      "output_tokens": 548,
+      "nebula_kw": 69,
+      "go_kw": 1
+    },
+    "ft": {
+      "time": 13.254725217819214,
+      "prompt_tokens": 2297,
+      "output_tokens": 539,
+      "nebula_kw": 73,
+      "go_kw": 0
+    }
+  },
+  {
+    "name": "Challenge 5: Numerical (matmul, transpose, determinant, regression)",
+    "base": {
+      "time": 8.518606901168823,
+      "prompt_tokens": 3051,
+      "output_tokens": 796,
+      "nebula_kw": 70,
+      "go_kw": 3
+    },
+    "ft": {
+      "time": 18.010430097579956,
+      "prompt_tokens": 3050,
+      "output_tokens": 768,
+      "nebula_kw": 68,
+      "go_kw": 0
+    }
+  }
+]

@@ -1,5 +1,44 @@
+# Build artifacts
 /compiler/target/
 /linter/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Editor
 *.swp
 *.swo
 .DS_Store
+
+# Secrets
+*.env
+
+# Model weights (multi-GB, download from Together AI or Ollama)
+bench/finetune/models/*/model*.safetensors
+bench/finetune/models/*/model*.bin
+bench/finetune/models/*/model*.gguf
+bench/finetune/models/*/*.tar.zst
+bench/finetune/models/*/optimizer.pt
+bench/finetune/models/*/rng_state.pth
+bench/finetune/models/*/scheduler.pt
+bench/finetune/models/*/training_args.bin
+
+# Training data (large, regeneratable via prepare_data.py / prepare_multi_target.py)
+bench/finetune/data/raw_*.jsonl
+bench/finetune/data/pairs.jsonl
+bench/finetune/data/train.jsonl
+bench/finetune/data/val.jsonl
+bench/finetune/data/multi_target/raw_*.jsonl
+bench/finetune/data/multi_target/pairs_*.jsonl
+bench/finetune/data/multi_target/train.jsonl
+bench/finetune/data/multi_target/val.jsonl
+
+# External tool repos (cloned separately)
+bench/external/SimPy/
+bench/external/TokenSugar/
+
+# Unsloth cache
+bench/finetune/unsloth_compiled_cache/

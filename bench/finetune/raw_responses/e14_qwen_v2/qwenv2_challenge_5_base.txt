@@ -1,0 +1,103 @@
+```nebula
+im Matrix {
+  fn Multiply(sf, other: Ptr<Matrix>) -> (Ptr<Matrix>, error) {
+    if sf.Cols != other.Rows {
+      rt (nil, fmt.Errorf("dimension mismatch"))
+    }
+    mt result = NewMatrix(sf.Rows, other.Cols)
+mt i = 0
+    wl i < sf.Rows {
+mt j = 0
+      wl j < other.Cols {
+        mt sum = go_var("float64")
+mt k = 0
+        wl k < sf.Cols {
+          sum += sf.Data[i][k] * other.Data[k][j]
+          k += 1
+        }
+        result.Data[i][j] = sum
+        j += 1
+      }
+      i += 1
+    }
+    rt (result, nil)
+  }
+}
+im Matrix {
+  fn Transpose(sf) -> Ptr<Matrix> {
+    mt transposed = NewMatrix(sf.Cols, sf.Rows)
+mt i = 0
+    wl i < sf.Rows {
+mt j = 0
+      wl j < sf.Cols {
+        transposed.Data[j][i] = sf.Data[i][j]
+        j += 1
+      }
+      i += 1
+    }
+    rt transposed
+  }
+}
+im Matrix {
+  fn Determinant(sf) -> (float64, error) {
+    if sf.Rows != sf.Cols {
+      rt (0.0, fmt.Errorf("matrix must be square"))
+    } else if sf.Rows == 2 {
+      rt (sf.Data[0][0] * sf.Data[1][1] - sf.Data[0][1] * sf.Data[1][0], nil)
+    }
+    mt det = go_var("float64")
+mt i = 0
+    wl i < sf.Rows {
+      mt submatrix = Minor(sf, 0, i)
+      det += math.Pow(-1.0, float64(i)) * sf.Data[0][i] * (submatrix.Determinant())
+      i += 1
+    }
+    rt (det, nil)
+  }
+
+  fn Minor(sf, row: int, col: int) -> Ptr<Matrix> {
+    mt minor = NewMatrix(sf.Rows - 1, sf.Cols - 1)
+mt i = 0
+    wl i < sf.Rows {
+      if i == row {
+        i += 1
+        continue
+      }
+mt j = 0
+      wl j < sf.Cols {
+        if j == col {
+          j += 1
+          continue
+        }
+        minor.Data[i - (i >= row)][j - (j >= col)] = sf.Data[i][j]
+        j += 1
+      }
+      i += 1
+    }
+    rt minor
+  }
+}
+fn LinearRegression(xs: List<float64>, ys: List<float64>) -> (float64, float64, error) {
+  if ln(xs) != ln(ys) or ln(xs) < 2 {
+    rt (0.0, 0.0, fmt.Errorf("invalid input"))
+  }
+mt sum_x = go_var("float64")
+mt sum_y = go_var("float64")
+mt sum_xy = go_var("float64")
+mt sum_xx = go_var("float64")
+mt n = ln(xs)
+mt i = 0
+  wl i < n {
+    sum_x += xs[i]
+    sum_y += ys[i]
+    sum_xy += xs[i] * ys[i]
+    sum_xx += xs[i] * xs[i]
+    i += 1
+  }
+mt mean_x = sum_x / float64(n)
+mt mean_y = sum_y / float64(n)
+mt slope = (sum_xy - n * mean_x * mean_y) / (sum_xx - n * mean_x * mean_x)
+mt intercept = mean_y - slope * mean_x
+  rt (slope, intercept, nil)
+}
+```

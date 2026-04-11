@@ -11,6 +11,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::lang_detect;
+use crate::neural;
 
 /// Entry point: run the MCP server on stdin/stdout.
 pub fn serve() {
@@ -128,6 +129,28 @@ fn handle_request(request: &Value) -> Option<Value> {
                             },
                             "required": ["query"]
                         }
+                    },
+                    {
+                        "name": "translate_code",
+                        "description": "Translate code between languages via Nebula IL. Tries neural translation (Ollama) first, falls back to rule-based codegen.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "code": {
+                                    "type": "string",
+                                    "description": "Source code to translate"
+                                },
+                                "source_language": {
+                                    "type": "string",
+                                    "description": "Source language (e.g. 'python', 'javascript', 'go')"
+                                },
+                                "target_language": {
+                                    "type": "string",
+                                    "description": "Target language (e.g. 'python', 'javascript', 'go')"
+                                }
+                            },
+                            "required": ["code", "source_language", "target_language"]
+                        }
                     }
                 ]
             })))
@@ -142,6 +165,7 @@ fn handle_request(request: &Value) -> Option<Value> {
                 "read_code" => tool_read_code(&args),
                 "write_code" => tool_write_code(&args),
                 "search_code" => tool_search_code(&args),
+                "translate_code" => tool_translate_code(&args),
                 _ => Err(format!("Unknown tool: {tool_name}")),
             };
 
@@ -289,6 +313,49 @@ fn tool_search_code(args: &Value) -> Result<String, String> {
         Ok(format!("No matches found for '{}'", query))
     } else {
         Ok(serde_json::to_string_pretty(&results).unwrap_or_default())
+    }
+}
+
+fn tool_translate_code(args: &Value) -> Result<String, String> {
+    let code = args.get("code")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: code")?;
+    let source_language = args.get("source_language")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: source_language")?;
+    let target_language = args.get("target_language")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: target_language")?;
+
+    // Ingest source code to Nebula
+    let src_lang = lang_detect::detect(&format!("file.{}", lang_ext(source_language)));
+    let nebula = lang_detect::to_nebula(code, src_lang);
+
+    // Try neural translation first
+    if neural::is_available() {
+        if let Ok(output) = neural::generate(&nebula, target_language, None) {
+            return Ok(output);
+        }
+    }
+
+    // Fall back to rule-based codegen
+    let tgt_lang = lang_detect::detect(&format!("file.{}", lang_ext(target_language)));
+    lang_detect::from_nebula(&nebula, tgt_lang)
+}
+
+/// Map language name to a file extension for lang_detect::detect().
+fn lang_ext(lang: &str) -> &str {
+    match lang.to_lowercase().as_str() {
+        "python" | "py" => "py",
+        "javascript" | "js" => "js",
+        "typescript" | "ts" => "ts",
+        "go" => "go",
+        "swift" => "swift",
+        "kotlin" | "kt" => "kt",
+        "rust" | "rs" => "rs",
+        "c" => "c",
+        "nebula" | "neb" => "neb",
+        _ => lang,
     }
 }
 

@@ -1,0 +1,149 @@
+```nebula
+im Graph {
+  fn ShortestPath(sf, from: int, to: int) -> (List<int>, float64, error) {
+    mt visited = make("map[int]bool")
+    mt distances = make("map[int]float64")
+    mt previous = make("map[int]int")
+    mt queue = [from]
+    mt startDist = 0.0
+    mt endDist = math.MaxFloat64
+
+    sf.mu.Lock()
+    defer sf.mu.Unlock()
+
+    fo i, node in sf.nodes {
+      distances[i] = math.MaxFloat64
+      previous[i] = -1
+    }
+    distances[from] = startDist
+
+    while ln(queue) > 0 {
+      mt currentNode = queue[0]
+      queue = queue[1..]
+
+      if currentNode == to {
+        break
+      }
+
+      visited[currentNode] = tt
+
+      fo _, e in sf.edges {
+        if e.From == currentNode and not visited[e.To] {
+          mt newDist = distances[currentNode] + e.Cost
+          if newDist < distances[e.To] {
+            distances[e.To] = newDist
+            previous[e.To] = currentNode
+            queue = psh(queue, e.To)
+          }
+        }
+      }
+    }
+
+    if distances[to] == math.MaxFloat64 {
+      rt (nil, ErrNoPath(from, to))
+    }
+
+    mt path = go_var("[]int")
+    mt current = to
+
+    while current != -1 {
+      path = psh(path, current)
+      current = previous[current]
+    }
+    rt (psh(path, from), distances[to], nil)
+  }
+
+  fn ConnectedComponents(sf) -> List<List<int>> {
+    mt visited = make("map[int]bool")
+    mt components = go_var("[]List[int]")
+
+    sf.mu.Lock()
+    defer sf.mu.Unlock()
+
+    fo i, node in sf.nodes {
+      if not visited[i] {
+        mt component = go_var("[]int")
+        mc (component) {
+          fo _, e in sf.edges {
+            if e.From == i and not visited[e.To] {
+              component = psh(component, e.To)
+              visited[e.To] = tt
+            }
+          }
+          components = psh(components, component)
+        }
+      }
+    }
+
+    mt sortedComponents = go_var("[]List[int]")
+    fo _, c in components {
+      mc (sortedComponents) {
+        fo i, n in c {
+          if ln(sortedComponents) == 0 or n < sortedComponents[ln(sortedComponents) - 1][0] {
+            sortedComponents = psh(sortedComponents, [n])
+          } else {
+            sortedComponents[ln(sortedComponents) - 1] = psh(sortedComponents[ln(sortedComponents) - 1], n)
+          }
+        }
+      }
+    }
+
+    rt sortedComponents
+  }
+
+  fn DetectCycles(sf) -> bool {
+    mt visited = make("map[int]bool")
+    mt recursionStack = go_var("[]int")
+
+    sf.mu.Lock()
+    defer sf.mu.Unlock()
+
+    fo i, node in sf.nodes {
+      if not visited[i] and sf.DetectCyclesHelper(i, -1, visited, recursionStack) {
+        rt tt
+      }
+    }
+
+    rt ff
+  }
+
+  fn DetectCyclesHelper(sf, currentNode: int, parent: int, visited: Map<int, bool>, recursionStack: List<int>) -> bool {
+    mt isCyclic = ff
+
+    visited[currentNode] = tt
+    recursionStack = psh(recursionStack, currentNode)
+
+    fo _, e in sf.edges {
+      if e.From == currentNode and not visited[e.To] {
+        if sf.DetectCyclesHelper(e.To, currentNode, visited, recursionStack) {
+          isCyclic = tt
+        }
+      } else if e.From == currentNode and ln(recursionStack) > 0 and recursionStack[ln(recursionStack) - 1] == e.To {
+        isCyclic = tt
+      }
+    }
+
+    if not isCyclic {
+      visited[currentNode] = ff
+      recursionStack = psh(recursionStack, -1)
+    }
+
+    rt isCyclic
+  }
+
+  fn FilterByTag(sf, tag: string) -> List<Edge> {
+    mt filteredEdges = go_var("[]Edge")
+
+    sf.mu.Lock()
+    defer sf.mu.Unlock()
+
+    fo _, e in sf.edges {
+      if ln(e.Tags) > 0 and or(ln(e.Tags) == 1 or e.Tags[0] == tag) {
+        filteredEdges = psh(filteredEdges, e)
+      }
+    }
+
+    rt filteredEdges
+  }
+}
+```

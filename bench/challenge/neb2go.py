@@ -75,6 +75,13 @@ def neb_to_go(source: str, package: str = "main") -> str:
                 out.append(f"type {m.group(1)} interface {{")
                 continue
 
+        # Implementation: im Name { (methods follow)
+        if stripped.startswith("im "):
+            m = re.match(r"im\s+(\w+)\s*\{", stripped)
+            if m:
+                # Just skip the im line, methods will follow with fn which becomes func
+                continue
+
         # Match: mc expr {
         line = re.sub(r"(\s*)mc\s+(.+?)\s*\{", r"\1switch \2 {", line)
 
@@ -136,6 +143,37 @@ def expand_keywords(line: str) -> str:
     # Method: fn Name(sf, params) → func (s *Type) Name(params)
     # We handle the simple keyword replacements here
 
+    # fn → func
+    line = re.sub(r"\bfn\b", "func", line)
+    # -> RetType → RetType (remove the arrow)
+    line = re.sub(r"\s*->\s*", " ", line)
+    # Lambda/closure: |params| → func(params)
+    line = re.sub(r"\|([^|]+)\|\s*\{", r"func(\1) {", line)
+    # Tuple destructuring: mt (a, b) = func() → a, b := func()
+    line = re.sub(r"\bmt\s+\(([^)]+)\)\s*=", r"\1 :=", line)
+    # Ptr<Type> → *Type
+    line = re.sub(r"Ptr<(\w+)>", r"*\1", line)
+    # List<Type> → []Type
+    line = re.sub(r"List<(\w+)>", r"[]\1", line)
+    # Map<K,V> → map[K]V
+    line = re.sub(r"Map<(\w+),\s*(\w+)>", r"map[\1]\2", line)
+    # Type: FieldType → FieldType (parameter syntax - just remove the colon and type becomes the value)
+    # Actually, this is tricky. For now, let's handle common cases
+    # t: Ptr<TestingT> → t *TestingT (parameter syntax)
+    line = re.sub(r"(\w+):\s*\*(\w+)", r"\1 *\2", line)
+    # t: Type → t Type (parameter syntax, but NOT in struct literals)
+    # Only convert if not inside { }
+    if "{" not in line:
+        line = re.sub(r"(\w+):\s+(\w+)\b", r"\1 \2", line)
+    # Array/slice literals: handle string and int arrays
+    # But don't convert array indexing like arr[0] or arr[i]
+    # String arrays: ["string"] → []string{"string"}
+    # Only convert if preceded by space or operator, not by identifier
+    line = re.sub(r'([\s=\(,])\[\s*(".*?")\s*\]', r'\1[]string{\2}', line)
+    line = re.sub(r'([\s=\(,])\[\s*(".*?",\s*(?:".*?,\s*)*".*?)\s*\]', r'\1[]string{\2}', line)
+    # Integer/numeric arrays: [1, 2, 3] → []int{1, 2, 3} (if not already converted)
+    # Only convert if preceded by space or operator, not by identifier (array indexing)
+    line = re.sub(r'([\s=\(,])\[\s*(\d[\d,\s]*)\s*\](?!\{)', r'\1[]int{\2}', line)
     # rt → return
     line = re.sub(r"\brt\b", "return", line)
     # lt → (used for const/var - context dependent, but in Go it's usually var or :=)

@@ -1,0 +1,121 @@
+```nebula
+im Graph {
+  fn ShortestPath(sf, from: int, to: int) -> (List<int>, float64, error) {
+    mt dist = make("map[int]float64")
+    mt prev = make("map[int]int")
+    fo _, n in sf.nodes {
+      dist[n.ID] = math.MaxFloat64
+    }
+    dist[from] = 0.0
+    mt pq = heap.New()
+    pq.Push((from, 0))
+    wh not pq.Empty() {
+      mt (node, distance) = pq.Pop().(int, float64)
+      if node == to {
+        rt sf.reconstructPath(prev, from, to), dist[to], nil
+      }
+      fo _, e in sf.edges {
+        if e.From == node and dist[e.To] > distance + e.Cost {
+          dist[e.To] = distance + e.Cost
+          prev[e.To] = node
+          pq.Push((e.To, dist[e.To]))
+        }
+      }
+    }
+    rt nil, math.MaxFloat64, ErrNoPath(from, to)
+  }
+
+  fn ConnectedComponents(sf) -> List<List<int>> {
+    mt visited = make("map[int]bool")
+    mt components = go_var("[][]int")
+    fo _, n in sf.nodes {
+      if not visited[n.ID] {
+        mt component = sf.explore(n.ID, visited)
+        components = psh(components, component)
+      }
+    }
+    rt sortedComponents(components)
+
+  }
+
+  fn DetectCycles(sf) -> bool {
+    mt visited = make("map[int]bool")
+    mt recStack = make("map[int]bool")
+    fo _, n in sf.nodes {
+      if not visited[n.ID] and sf.isCyclicUtil(n.ID, visited, recStack) {
+        rt tt
+      }
+    }
+    rt ff
+  }
+
+  fn FilterByTag(sf, tag: string) -> List<Edge> {
+    mt filtered = go_var("[]Edge")
+    fo _, e in sf.edges {
+      if contains(e.Tags, tag) {
+        filtered = psh(filtered, e)
+      }
+    }
+    rt filtered
+  }
+
+  fn reconstructPath(sf, prev: Map<int, int>, from: int, to: int) -> List<int> {
+    mt path = go_var("[]int")
+    for to != -1 {
+      path = psh(path, to)
+      to = prev[to]
+    }
+    return reverse(path)
+  }
+
+  fn explore(sf, v: int, visited: Map<int, bool>) -> List<int> {
+    visited[v] = tt
+    mt component = [v]
+    fo _, e in sf.edges {
+      if (e.From == v or e.To == v) and not visited[e.To] {
+        component = psh(component, sf.explore(e.To, visited))
+      }
+    }
+    return flatten(component)
+  }
+
+  fn isCyclicUtil(sf, node: int, visited: Map<int, bool>, recStack: Map<int, bool>) -> bool {
+    visited[node] = tt
+    recStack[node] = tt
+    fo _, e in sf.edges {
+      if (e.From == node or e.To == node) and not visited[e.To] and sf.isCyclicUtil(e.To, visited, recStack) {
+        rt tt
+      } elif visited[e.To] and recStack[e.To] {
+        rt tt
+      }
+    }
+    recStack[node] = ff
+    rt ff
+  }
+
+  fn sortedComponents(sf, components: List<List<int>>) -> List<List<int>> {
+    fo i in range(ln(components)) {
+      sort(components[i])
+    }
+    return sort(components)
+  }
+
+  fn reverse(sf, list: List<int>) -> List<int> {
+    mt reversed = go_var("[]int")
+    for i := ln(list) - 1; i >= 0; i-- {
+      reversed = psh(reversed, list[i])
+    }
+    rt reversed
+  }
+
+  fn flatten(sf, list: List<List<int>>) -> List<int> {
+    mt flatList = go_var("[]int")
+    fo _, sublist in list {
+      for val := range sublist {
+        flatList = psh(flatList, val)
+      }
+    }
+    rt flatList
+  }
+}
+```

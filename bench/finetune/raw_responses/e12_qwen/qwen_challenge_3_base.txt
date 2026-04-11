@@ -1,0 +1,75 @@
+```nebula
+fn ParseCSV(input: string) -> (Ptr<Table>, error) {
+  mt table = NewTable()
+  fo _, line in NonEmptyLines(input) {
+    if ln(table.Headers) == 0 {
+      table.Headers = Tokenize(line)
+    } el {
+      mt fields = []string{}
+      mt currentField = ""
+      fo r in line {
+        if r == '"' {
+          if len(currentField) > 0 and currentField[len(currentField)-1] != '\\' {
+            currentField += r
+          }
+          if len(currentField) > 0 and currentField[len(currentField)-1] == '\\' {
+            currentField = currentField[:len(currentField)-2]
+          } el {
+            fields = psh(fields, strings.TrimSuffix(strings.TrimPrefix(currentField, "\""), "\""))
+            currentField = ""
+          }
+        } el if r == ',' {
+          if len(currentField) > 0 and currentField[len(currentField)-1] != '\\' {
+            fields = psh(fields, currentField)
+            currentField = ""
+          }
+        } el {
+          currentField += r
+        }
+      }
+      if len(currentField) > 0 {
+        fields = psh(fields, strings.TrimSuffix(strings.TrimPrefix(currentField, "\""), "\""))
+      }
+      table.AddRow(fields...)
+    }
+  }
+  rt (table, nil)
+}
+
+fn WordFrequency(text: string) -> Map<string, int> {
+  mt words = Tokenize(strings.ToLower(strings.ReplaceAll(text, ".", " ").ReplaceAll(text, ",", " ")))
+  mt freq = go_var("map[string]int")
+  fo word in words {
+    if _, ok := freq[word]; !ok {
+      freq[word] = 1
+    } el {
+      freq[word] += 1
+    }
+  }
+  rt freq
+}
+
+fn FormatTable(t: Ptr<Table>) -> string {
+  mt headerLine = strings.Join(t.Headers, "|") + "\n"
+  mt dashLine = strings.Repeat("-", ln(headerLine)-ln(t.Headers)) + "\n"
+  mt rows = ""
+  fo row in t.Rows {
+    mt fields = []string{}
+    fo field in row.Fields {
+      fields = psh(fields, field)
+    }
+    rows += strings.Join(fields, "|") + "\n"
+  }
+  rt headerLine + dashLine + rows
+}
+
+fn FindAllMatches(text: string, pattern: string) -> List<int> {
+  mt matches = []int{}
+  fo i in range(0, ln(text)) {
+    if text[i:i+ln(pattern)] == pattern or (pattern[0] == '?' and text[i] == pattern[1]) or (pattern[0] == '*' and FindAllMatches(text[i:], strings.ReplaceAll(pattern, "*", ""))[0] == 0) {
+      matches = psh(matches, i)
+    }
+  }
+  rt matches
+}
+```

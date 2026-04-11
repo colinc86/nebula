@@ -259,41 +259,6 @@ impl Parser {
             Token::Use => self.parse_use(),
             Token::Module => self.parse_module(),
             _ => {
-                // Detect common mistakes: using old-style keywords
-                if let Token::Ident(name) = self.peek() {
-                    let suggestion = match name.as_str() {
-                        "let" => Some("lt"),
-                        "mut" => Some("mt"),
-                        "const" => Some("cn"),
-                        "return" => Some("rt"),
-                        "else" => Some("el"),
-                        "match" => Some("mc"),
-                        "for" => Some("fo"),
-                        "while" => Some("wl"),
-                        "loop" => Some("lp"),
-                        "break" => Some("bk"),
-                        "continue" => Some("ct"),
-                        "struct" => Some("st"),
-                        "enum" => Some("en"),
-                        "trait" => Some("tr"),
-                        "impl" => Some("im"),
-                        "module" => Some("md"),
-                        "pub" => Some("pb"),
-                        "self" => Some("sf"),
-                        "true" => Some("tt"),
-                        "false" => Some("ff"),
-                        _ => None,
-                    };
-                    if let Some(short) = suggestion {
-                        let (line, col) = self.current_span();
-                        return Err(ParseError {
-                            message: format!("Unknown keyword '{name}'. In Nebula, use '{short}' instead"),
-                            line,
-                            col,
-                        });
-                    }
-                }
-
                 let expr = self.parse_expr()?;
 
                 // Check for assignment
@@ -351,6 +316,34 @@ impl Parser {
                             op: AssignOp::ModAssign,
                             value,
                         })
+                    }
+                    Token::ColonAssign => {
+                        // x := expr → immutable binding (like let)
+                        self.advance();
+                        let value = self.parse_expr()?;
+                        if let Expr::Ident(name) = expr {
+                            Ok(Statement::Let {
+                                name,
+                                type_ann: None,
+                                value,
+                            })
+                        } else if let Expr::Tuple(items) = expr {
+                            // (a, b) := expr → destructuring let
+                            let names: Vec<String> = items.into_iter().filter_map(|e| {
+                                if let Expr::Ident(n) = e { Some(n) } else { None }
+                            }).collect();
+                            Ok(Statement::LetDestructure {
+                                names,
+                                value,
+                                mutable: false,
+                            })
+                        } else {
+                            let (line, col) = self.current_span();
+                            Err(ParseError {
+                                message: "Left side of := must be an identifier or tuple".to_string(),
+                                line, col,
+                            })
+                        }
                     }
                     _ => Ok(Statement::Expr(expr)),
                 }
@@ -556,40 +549,73 @@ impl Parser {
     }
 
     fn parse_struct_decl(&mut self, is_pub: bool) -> Result<Statement, ParseError> {
-        self.advance(); // struct
+        self.advance(); // struct/class
         let name = self.expect_ident()?;
         let generics = self.parse_optional_generics()?;
         self.skip_newlines();
-        self.expect(&Token::LeftBrace)?;
-        self.skip_newlines();
 
-        let mut fields = Vec::new();
-        while !matches!(self.peek(), Token::RightBrace) {
-            let field_pub = if matches!(self.peek(), Token::Pub) {
-                self.advance();
-                true
-            } else {
-                false
-            };
-            let fname = self.expect_ident()?;
-            self.expect(&Token::Colon)?;
-            let ftype = self.parse_type()?;
-            fields.push(Field {
-                name: fname,
-                type_ann: ftype,
-                is_pub: field_pub,
-            });
-            if matches!(self.peek(), Token::Comma) {
-                self.advance();
-            }
+        // Handle empty struct: `struct Foo {}` or `struct Foo`
+        if matches!(self.peek(), Token::LeftBrace) {
+            self.advance(); // {
             self.skip_newlines();
-        }
-        self.expect(&Token::RightBrace)?;
 
+            // Check if this is class-style (body starts with def/fn) or regular struct (fields)
+            if matches!(self.peek(), Token::Fn | Token::Pub | Token::Hash | Token::At) {
+                // Class-style: struct/class Name { methods... }
+                // Parse as impl block methods, return StructDecl + ImplBlock
+                // We return an ImplBlock here — the empty StructDecl is implicit
+                let mut methods = Vec::new();
+                while !matches!(self.peek(), Token::RightBrace | Token::Eof) {
+                    let stmt = self.parse_statement()?;
+                    methods.push(stmt);
+                    self.skip_newlines();
+                }
+                self.expect(&Token::RightBrace)?;
+                // Return as ImplBlock (the struct is implicitly declared)
+                return Ok(Statement::ImplBlock {
+                    trait_name: None,
+                    target: name,
+                    methods,
+                });
+            }
+
+            // Regular struct with fields
+            let mut fields = Vec::new();
+            while !matches!(self.peek(), Token::RightBrace) {
+                let field_pub = if matches!(self.peek(), Token::Pub) {
+                    self.advance();
+                    true
+                } else {
+                    false
+                };
+                let fname = self.expect_ident()?;
+                self.expect(&Token::Colon)?;
+                let ftype = self.parse_type()?;
+                fields.push(Field {
+                    name: fname,
+                    type_ann: ftype,
+                    is_pub: field_pub,
+                });
+                if matches!(self.peek(), Token::Comma) {
+                    self.advance();
+                }
+                self.skip_newlines();
+            }
+            self.expect(&Token::RightBrace)?;
+
+            return Ok(Statement::StructDecl {
+                name,
+                generics,
+                fields,
+                is_pub,
+            });
+        }
+
+        // No brace — empty struct declaration (forward declaration)
         Ok(Statement::StructDecl {
             name,
             generics,
-            fields,
+            fields: Vec::new(),
             is_pub,
         })
     }
@@ -880,6 +906,18 @@ impl Parser {
             } else {
                 self.advance(); // consume >
             }
+            Ok(TypeExpr::Generic(name, args))
+        } else if matches!(self.peek(), Token::LeftBracket) {
+            // Python-style generics: List[Int], Map[String, Int], Tuple[Int, Int]
+            self.advance();
+            let mut args = Vec::new();
+            while !matches!(self.peek(), Token::RightBracket) {
+                if !args.is_empty() {
+                    self.expect(&Token::Comma)?;
+                }
+                args.push(self.parse_type()?);
+            }
+            self.expect(&Token::RightBracket)?;
             Ok(TypeExpr::Generic(name, args))
         } else {
             Ok(TypeExpr::Named(name))
@@ -1937,21 +1975,24 @@ mod tests {
     }
 
     #[test]
-    fn test_old_keyword_error_message() {
-        let msg = parse_err("let x = 42");
-        assert!(msg.contains("use 'lt' instead"));
+    fn test_long_keyword_let() {
+        // Long-form keywords are now accepted (Nebula 1.0)
+        let prog = parse_source("let x = 42");
+        assert!(matches!(&prog.statements[0], Statement::Let { name, .. } if name == "x"));
     }
 
     #[test]
-    fn test_old_keyword_for() {
-        let msg = parse_err("for x in items { }");
-        assert!(msg.contains("use 'fo' instead"));
+    fn test_long_keyword_for() {
+        // Long-form "for" is now accepted
+        let prog = parse_source("for x in [1, 2, 3] { x }");
+        assert!(matches!(&prog.statements[0], Statement::Expr(Expr::For { .. })));
     }
 
     #[test]
-    fn test_old_keyword_struct() {
-        let msg = parse_err("struct Pt { x: Int }");
-        assert!(msg.contains("use 'st' instead"));
+    fn test_long_keyword_struct() {
+        // Long-form "struct" is now accepted
+        let prog = parse_source("struct Pt { x: Int }");
+        assert!(matches!(&prog.statements[0], Statement::StructDecl { name, .. } if name == "Pt"));
     }
 
     #[test]

@@ -1,0 +1,371 @@
+ ```nebula
+im Graph {
+  fn ShortestPath(sf, from: int, to: int) -> (List<int>, float64, error) {
+    mt visited = make("map[int]bool")
+    mt distances = make("map[int]float64")
+    mt previousNodes = make("map[int]int")
+    fo _, n in sf.nodes {
+      distances[n.ID] = math.MaxFloat64
+    }
+    distances[from] = 0.0
+    mt priorityQueue = new(PriorityQueue)
+    priorityQueue.Push(from, 0.0)
+    wh not priorityQueue.IsEmpty() {
+      mt (nodeID, distance) = priorityQueue.Pop()
+      if nodeID == to {
+        rt sf.reconstructPath(previousNodes, from, to), distance, nil
+      }
+      visited[nodeID] = tt
+      fo _, e in sf.edges {
+        if e.From == nodeID and not visited[e.To] {
+          mt newDistance = distance + e.Cost
+          if newDistance < distances[e.To] {
+            distances[e.To] = newDistance
+            previousNodes[e.To] = nodeID
+            priorityQueue.Push(e.To, newDistance)
+          }
+        }
+      }
+    }
+    rt nil, 0.0, ErrNoPath(from, to)
+  }
+
+  fn reconstructPath(sf, previous: Map<int, int>, start: int, end: int) -> List<int> {
+    mt path = go_var("[]int")
+    for current := end; current != start; current = previous[current] {
+      path = psh(path, current)
+    }
+    path = psh(path, start)
+    rt reverse(path)
+  }
+
+  fn ConnectedComponents(sf) -> List<List<int>> {
+    mt visited = make("map[int]bool")
+    mt components = go_var("[][]int")
+    fo _, n in sf.nodes {
+      if not visited[n.ID] {
+        mt component = sf.explore(n.ID, visited)
+        components = psh(components, sort(component))
+      }
+    }
+    rt components
+  }
+
+  fn explore(sf, nodeID: int, visited: Map<int, bool>) -> List<int> {
+    mt stack = [nodeID]
+    wh ln(stack) > 0 {
+      mt current = stack[ln(stack)-1]
+      stack = stack[:ln(stack)-1]
+      if not visited[current] {
+        visited[current] = tt
+        fo _, e in sf.edges {
+          if (e.From == current and not visited[e.To]) or (e.To == current and not visited[e.From]) {
+            stack = psh(stack, e.To)
+            stack = psh(stack, e.From)
+          }
+        }
+      }
+    }
+    rt keys(visited)
+  }
+
+  fn DetectCycles(sf) -> bool {
+    mt visited = make("map[int]bool")
+    mt recursionStack = make("map[int]bool")
+    fo _, n in sf.nodes {
+      if not visited[n.ID] and sf.isCyclicUtil(n.ID, visited, recursionStack) {
+        rt tt
+      }
+    }
+    rt ff
+  }
+
+  fn isCyclicUtil(sf, nodeID: int, visited: Map<int, bool>, recursionStack: Map<int, bool>) -> bool {
+    visited[nodeID] = tt
+    recursionStack[nodeID] = tt
+    fo _, e in sf.edges {
+      if e.From == nodeID and not visited[e.To] and sf.isCyclicUtil(e.To, visited, recursionStack) {
+        rt tt
+      } elseif e.From == nodeID and recursionStack[e.To] {
+        rt tt
+      }
+    }
+    recursionStack[nodeID] = ff
+    rt ff
+  }
+
+  fn FilterByTag(sf, tag: string) -> List<Edge> {
+    mt filteredEdges = go_var("[]Edge")
+    fo _, e in sf.edges {
+      if contains(e.Tags, tag) {
+        filteredEdges = psh(filteredEdges, e)
+      }
+    }
+    rt filteredEdges
+  }
+
+}
+```nebula ```nebula
+im Graph {
+  fn ShortestPath(sf, from: int, to: int) -> (List<int>, float64, error) {
+    mt visited = make("map[int]bool")
+    mt distances = make("map[int]float64")
+    mt previousNodes = make("map[int]int")
+    fo _, n in sf.nodes {
+      distances[n.ID] = math.MaxFloat64
+    }
+    distances[from] = 0.0
+    mt priorityQueue = new(PriorityQueue)
+    priorityQueue.Push(from, 0.0)
+    wh not priorityQueue.IsEmpty() {
+      mt (nodeID, distance) = priorityQueue.Pop()
+      if nodeID == to {
+        rt sf.reconstructPath(previousNodes, from, to), distance, nil
+      }
+      visited[nodeID] = tt
+      fo _, e in sf.edges {
+        if e.From == nodeID and not visited[e.To] {
+          mt newDistance = distance + e.Cost
+          if newDistance < distances[e.To] {
+            distances[e.To] = newDistance
+            previousNodes[e.To] = nodeID
+            priorityQueue.Push(e.To, newDistance)
+          }
+        }
+      }
+    }
+    rt nil, 0.0, ErrNoPath(from, to)
+  }
+
+  fn reconstructPath(sf, previous: Map<int, int>, start: int, end: int) -> List<int> {
+    mt path = go_var("[]int")
+    for current := end; current != start; current = previous[current] {
+      path = psh(path, current)
+    }
+    path = psh(path, start)
+    rt reverse(path)
+  }
+
+  fn ConnectedComponents(sf) -> List<List<int>> {
+    mt visited = make("map[int]bool")
+    mt components = go_var("[][]int")
+    fo _, n in sf.nodes {
+      if not visited[n.ID] {
+        mt component = sf.explore(n.ID, visited)
+        components = psh(components, sort(component))
+      }
+    }
+    rt components
+  }
+
+  fn explore(sf, nodeID: int, visited: Map<int, bool>) -> List<int> {
+    mt stack = [nodeID]
+    wh ln(stack) > 0 {
+      mt current = stack[ln(stack)-1]
+      stack = stack[:ln(stack)-1]
+      if not visited[current] {
+        visited[current] = tt
+        fo _, e in sf.edges {
+          if (e.From == current and not visited[e.To]) or (e.To == current and not visited[e.From]) {
+            stack = psh(stack, e.To)
+            stack = psh(stack, e.From)
+          }
+        }
+      }
+    }
+    rt keys(visited)
+  }
+
+  fn DetectCycles(sf) -> bool {
+    mt visited = make("map[int]bool")
+    mt recursionStack = make("map[int]bool")
+    fo _, n in sf.nodes {
+      if not visited[n.ID] and sf.isCyclicUtil(n.ID, visited, recursionStack) {
+        rt tt
+      }
+    }
+    rt ff
+  }
+
+  fn isCyclicUtil(sf, nodeID: int, visited: Map<int, bool>, recursionStack: Map<int, bool>) -> bool {
+    visited[nodeID] = tt
+    recursionStack[nodeID] = tt
+    fo _, e in sf.edges {
+      if e.From == nodeID and not visited[e.To] and sf.isCyclicUtil(e.To, visited, recursionStack) {
+        rt tt
+      } elseif e.From == nodeID and recursionStack[e.To] {
+        rt tt
+      }
+    }
+    recursionStack[nodeID] = ff
+    rt ff
+  }
+
+  fn FilterByTag(sf, tag: string) -> List<Edge> {
+    mt filteredEdges = go_var("[]Edge")
+    fo _, e in sf.edges {
+      if contains(e.Tags, tag) {
+        filteredEdges = psh(filteredEdges, e)
+      }
+    }
+    rt filteredEdges
+  }
+
+}
+```nebula ```nebula
+im Graph {
+  fn ShortestPath(sf, from: int, to: int) -> (List<int>, float64, error) {
+    mt visited = make("map[int]bool")
+    mt distances = make("map[int]float64")
+    mt previousNodes = make("map[int]int")
+    fo _, n in sf.nodes {
+      distances[n.ID] = math.MaxFloat64
+    }
+    distances[from] = 0.0
+    mt priorityQueue = new(PriorityQueue)
+    priorityQueue.Push(from, 0.0)
+    wh not priorityQueue.IsEmpty() {
+      mt (nodeID, distance) = priorityQueue.Pop()
+      if nodeID == to {
+        rt sf.reconstructPath(previousNodes, from, to), distance, nil
+      }
+      visited[nodeID] = tt
+      fo _, e in sf.edges {
+        if e.From == nodeID and not visited[e.To] {
+          mt newDistance = distance + e.Cost
+          if newDistance < distances[e.To] {
+            distances[e.To] = newDistance
+            previousNodes[e.To] = nodeID
+            priorityQueue.Push(e.To, newDistance)
+          }
+        }
+      }
+    }
+    rt nil, 0.0, ErrNoPath(from, to)
+  }
+
+  fn reconstructPath(sf, previous: Map<int, int>, start: int, end: int) -> List<int> {
+    mt path = go_var("[]int")
+    for current := end; current != start; current = previous[current] {
+      path = psh(path, current)
+    }
+    path = psh(path, start)
+    rt reverse(path)
+  }
+
+  fn ConnectedComponents(sf) -> List<List<int>> {
+    mt visited = make("map[int]bool")
+    mt components = go_var("[][]int")
+    fo _, n in sf.nodes {
+      if not visited[n.ID] {
+        mt component = sf.explore(n.ID, visited)
+        components = psh(components, sort(component))
+      }
+    }
+    rt components
+  }
+
+  fn explore(sf, nodeID: int, visited: Map<int, bool>) -> List<int> {
+    mt stack = [nodeID]
+    wh ln(stack) > 0 {
+      mt current = stack[ln(stack)-1]
+      stack = stack[:ln(stack)-1]
+      if not visited[current] {
+        visited[current] = tt
+        fo _, e in sf.edges {
+          if (e.From == current and not visited[e.To]) or (e.To == current and not visited[e.From]) {
+            stack = psh(stack, e.To)
+            stack = psh(stack, e.From)
+          }
+        }
+      }
+    }
+    rt keys(visited)
+  }
+
+  fn DetectCycles(sf) -> bool {
+    mt visited = make("map[int]bool")
+    mt recursionStack = make("map[int]bool")
+    fo _, n in sf.nodes {
+      if not visited[n.ID] and sf.isCyclicUtil(n.ID, visited, recursionStack) {
+        rt tt
+      }
+    }
+    rt ff
+  }
+
+  fn isCyclicUtil(sf, nodeID: int, visited: Map<int, bool>, recursionStack: Map<int, bool>) -> bool {
+    visited[nodeID] = tt
+    recursionStack[nodeID] = tt
+    fo _, e in sf.edges {
+      if e.From == nodeID and not visited[e.To] and sf.isCyclicUtil(e.To, visited, recursionStack) {
+        rt tt
+      } elseif e.From == nodeID and recursionStack[e.To] {
+        rt tt
+      }
+    }
+    recursionStack[nodeID] = ff
+    rt ff
+  }
+
+  fn FilterByTag(sf, tag: string) -> List<Edge> {
+    mt filteredEdges = go_var("[]Edge")
+    fo _, e in sf.edges {
+      if contains(e.Tags, tag) {
+        filteredEdges = psh(filteredEdges, e)
+      }
+    }
+    rt filteredEdges
+  }
+
+}
+```nebula ```nebula
+im Graph {
+  fn ShortestPath(sf, from: int, to: int) -> (List<int>, float64, error) {
+    mt visited = make("map[int]bool")
+    mt distances = make("map[int]float64")
+    mt previousNodes = make("map[int]int")
+    fo _, n in sf.nodes {
+      distances[n.ID] = math.MaxFloat64
+    }
+    distances[from] = 0.0
+    mt priorityQueue = new(PriorityQueue)
+    priorityQueue.Push(from, 0.0)
+    wh not priorityQueue.IsEmpty() {
+      mt (nodeID, distance) = priorityQueue.Pop()
+      if nodeID == to {
+        rt sf.reconstructPath(previousNodes, from, to), distance, nil
+      }
+      visited[nodeID] = tt
+      fo _, e in sf.edges {
+        if e.From == nodeID and not visited[e.To] {
+          mt newDistance = distance + e.Cost
+          if newDistance < distances[e.To] {
+            distances[e.To] = newDistance
+            previousNodes[e.To] = nodeID
+            priorityQueue.Push(e.To, newDistance)
+          }
+        }
+      }
+    }
+    rt nil, 0.0, ErrNoPath(from, to)
+  }
+
+  fn reconstructPath(sf, previous: Map<int, int>, start: int, end: int) -> List<int> {
+    mt path = go_var("[]int")
+    for current := end; current != start; current = previous[current] {
+      path = psh(path, current)
+    }
+    path = psh(path, start)
+    rt reverse(path)
+  }
+
+  fn ConnectedComponents(sf) ->  List<List<int>> {
+    mt visited = make("map[int]bool")
+    mt components = go_var("[][]int")
+    fo _, n in  sf.nodes   {
+      if op(visited Likened to n.ID) == tt    {
+ive        continue
+      }
+mt       currentComponent =跟新上文，生成的代码在`ConnectedComponents`方法中有一个逻辑错误，请修复它。
+```nebula

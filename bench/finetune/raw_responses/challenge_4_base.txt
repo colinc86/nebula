@@ -1,0 +1,84 @@
+```nebula
+im Machine {
+  fn ReachableStates(sf, start: State) -> List<State> {
+    sf.mu.Lock()
+    defer sf.mu.Unlock()
+    mt visited = make("map[State]bool")
+    mt queue = go_var("[]State")
+    queue = psh(queue, start)
+    visited[start] = tt
+    fo _ in queue {
+      mt state = rt
+      fo _, t in sf.transitions {
+        if not visited[t.To] and t.From == state {
+          visited[t.To] = tt
+          queue = psh(queue, t.To)
+        }
+      }
+    }
+    mt result = go_var("[]State")
+    fo _, s in visited {
+      if s {
+        result = psh(result, s)
+      }
+    }
+    rt result
+  }
+
+  fn IsDeadlock(sf) -> bool {
+    sf.mu.RLock()
+    defer sf.mu.RUnlock()
+    fo _, t in sf.transitions {
+      if t.From == sf.current {
+        rt ff
+      }
+    }
+    rt tt
+  }
+
+  fn ShortestPath(sf, from: State, to: State) -> List<Event> {
+    sf.mu.Lock()
+    defer sf.mu.Unlock()
+    mt queue = go_var("[]State")
+    mt came_from = make("map[State]State")
+    mt cost_so_far = make("map[State]int")
+    queue = psh(queue, from)
+    cost_so_far[from] = 0
+    fo _ in queue {
+      mt state = rt
+      fo _, t in sf.transitions {
+        if t.From == state and not came_from[t.To] {
+          came_from[t.To] = state
+          cost_so_far[t.To] = cost_so_far[state] + 1
+          queue = psh(queue, t.To)
+        }
+      }
+    }
+    mt current = to
+    mt path = go_var("[]Event")
+    while current != from {
+      fo _, t in sf.transitions {
+        if t.From == came_from[current] and t.Event != "" {
+          path = psh(path, t.Event)
+          current = came_from[current]
+        }
+      }
+    }
+    rt path
+  }
+
+  fn ValidateDeterministic(sf) -> bool {
+    sf.mu.RLock()
+    defer sf.mu.RUnlock()
+    mt seen = make("map[(State, Event)]bool")
+    fo _, t in sf.transitions {
+      if not seen[(t.From, t.Event)] {
+        seen[(t.From, t.Event)] = tt
+      } else {
+        rt ff
+      }
+    }
+    rt tt
+  }
+}
+```

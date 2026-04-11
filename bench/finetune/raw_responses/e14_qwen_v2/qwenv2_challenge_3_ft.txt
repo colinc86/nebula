@@ -1,0 +1,392 @@
+ ```nebula
+st Row {
+  Fields: List<string>
+}
+st Table {
+  Headers: List<string>
+  Rows: List<Row>
+}
+fn NewTable() -> Ptr<Table> {
+  rt (&Table { Headers: headers, Rows: go_var("[]Row") })
+}
+im Table {
+  fn AddRow(sf) {
+    sf.Rows = psh(sf.Rows, Row { Fields: fields })
+  }
+  fn RowCount(sf) -> int {
+    rt ln(sf.Rows)
+  }
+  fn ColCount(sf) -> int {
+    rt ln(sf.Headers)
+  }
+}
+fn Tokenize(input: string) -> List<string> {
+  mt tokens = go_var("[]string")
+  mt current = go_var("strings.Builder")
+  fo _, r in input {
+    if unicode.IsSpace(r) {
+      if current.Len() > 0 {
+        tokens = psh(tokens, current.String())
+        current.Reset()
+      }
+    } el {
+      current.WriteRune(r)
+    }
+  }
+  if current.Len() > 0 {
+    tokens = psh(tokens, current.String())
+  }
+  rt tokens
+}
+fn Reverse(s: string) -> string {
+  mt runes = []rune(s)
+mt (i, j) = (0, ln(runes) - 1)
+  wl i < j {
+    mt __tmp = runes[j]
+    runes[i] = runes[i]
+    runes[j] = __tmp
+    mt __tmp = i + 1
+  i = j - 1
+  j = __tmp
+  }
+  rt string(runes)
+}
+fn CountWords(s: string) -> int {
+  rt ln(Tokenize(s))
+}
+fn CountOccurrences(s: string, substr: string) -> int {
+  if substr == "" {
+    rt 0
+  }
+  mt count = 0
+  mt index = 0
+  lp {
+    mt found = strings.Index(s[index..], substr)
+    if found == -1 {
+      rt count
+    }
+    count += 1
+    index = found + ln(substr)
+  }
+}
+fn SplitLines(s: string) -> List<string> {
+  rt (strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n"))
+}
+fn NonEmptyLines(s: string) -> List<string> {
+  mt result = go_var("[]string")
+  fo _, line in SplitLines(s) {
+    if strings.TrimSpace(line) != "" {
+      result = psh(result, line)
+    }
+  }
+  rt result
+}
+fn ParseCSV(input: string) -> (Ptr<Table>, error) {
+  mt lines = NonEmptyLines(input)
+  if ln(lines) == 0 {
+    return nil, errors.New("empty CSV")
+  }
+  mt headers = Tokenize(lines[0])
+  mt table = NewTable(headers...)
+  fo i in range(1, ln(lines)) {
+    mt fields = parseFields(Tokenize(lines[i]))
+    table.AddRow(fields...)
+  }
+  rt (table, nil)
+}
+fn WordFrequency(text: string) -> Map<string, int> {
+  mt freq = go_var("map[string]int")
+  fo _, word in Tokenize(strings.ToLower(text)) {
+    if not contains(freq, word) {
+      freq[word] = 0
+    }
+    freq[word] += 1
+  }
+  rt freq
+}
+fn FormatTable(t: Ptr<Table>) -> string {
+  mt headers = strings.Join(t.Headers, " | ")
+mt rows = go_var("[]string")
+  fo _, row in t.Rows {
+    mt fields = go_var("strings.Builder")
+    fo i in range(ln(row.Fields)) {
+      if i > 0 {
+        fields.WriteString(" | ")
+      }
+      fields.WriteString(row.Fields[i])
+    }
+    rows = psh(rows, fields.String())
+  }
+mt result = strings.Join(append([]string{headers}, rows...), "\n") + "\n"
+  rt result
+}
+fn FindAllMatches(text: string, pattern: string) -> List<int> {
+  mt matches = go_var("[]int")
+  mt i = 0
+  lp {
+    if i >= ln(text) {
+      break
+    }
+    mt j = strings.IndexFunc(pattern, func(r rune) bool { return r == '?' or r == '*' })
+    if j != -1 and (pattern[j] == '?' or pattern[j+1:] == "") {
+      matches = psh(matches, i)
+      i += 1
+    } el {
+      mt k = strings.IndexFunc(text[i:], func(r rune) bool { return not (r == pattern[0]) })
+      if k == -1 and matchPattern(pattern, text[i:]) {
+        matches = psh(matches, i)
+        break
+      }
+      if k != -1 {
+        i += k + 1
+      } el {
+        i += ln(text) - i + 1
+      }
+    }
+  }
+  rt matches
+}
+fn parseFields(tokens: List<string>) -> List<string> {
+  mt fields = go_var("[]string")
+  fo _, token in tokens {
+    if strings.HasPrefix(token, "\"") and strings.HasSuffix(token, "\"") {
+      fields = psh(fields, strings.Trim(token, "\""))
+    } el {
+      fields = psh(fields, token)
+    }
+  }
+  rt fields
+}
+fn matchPattern(pattern: string, text: string) -> bool {
+  if pattern == "" {
+    return true
+  }
+  mt i = 0
+  mt j = 0
+  lp {
+    if j >= ln(text) {
+      break
+    }
+    if (pattern[i] == '?' or pattern[i] == text[j]) and (i+1 < ln(pattern) or j+1 == ln(text)) {
+      i += 1
+      j += 1
+    } el {
+      if pattern[i] != '*' {
+        break
+      }
+      i += 1
+    }
+  }
+  rt (i >= ln(pattern))
+}
+```nebula ```nebula
+fn main() {
+  mt csv = "name,age,city\nAlice,30,NYC\nBob,25,SF"
+  mt text = "The quick brown fox jumps over the lazy dog. The dog barks!"
+  mt tokens = Tokenize(text)
+  prt("Tokens: %v\n", tokens)
+  prt("Word count: %d\n", CountWords(text))
+  prt("Occurrences of 'the': %d\n", CountOccurrences(strings.ToLower(text), "the"))
+  mt reversed = Reverse("hello")
+  prt("Reversed: %s\n", reversed)
+}
+``` ```nebula
+fn TestChallenge_ParseCSV(t: Ptr<TestingT>) {
+  mt input = "name,age,city\nAlice,30,NYC\nBob,25,\"San Francisco\"\nCarol,35,\"Los Angeles\""
+  mt (table, err) = ParseCSV(input)
+  if err != nil {
+    t.Fatalf("unexpected error: %v", err)
+  }
+  if table.ColCount() != 3 {
+    t.Fatalf("expected 3 columns, got %d", table.ColCount())
+  }
+  if table.RowCount() != 3 {
+    t.Fatalf("expected 3 rows, got %d", table.RowCount())
+  }
+  if table.Rows[0].Fields[0] != "Alice" {
+    t.Fatal("first cell wrong")
+  }
+  if table.Rows[2].Fields[2] != "Los Angeles" {
+    t.Fatalf("quoted field wrong: got %q", table.Rows[2].Fields[2])
+  }
+}
+fn TestChallenge_WordFrequency(t: Ptr<TestingT>) {
+  mt text = "The cat sat on the mat. The cat was happy!"
+  mt freq = WordFrequency(text)
+  if freq["the"] != 3 {
+    t.Fatalf("expected 'the' count 3, got %d", freq["the"])
+  }
+  if freq["cat"] != 2 {
+    t.Fatalf("expected 'cat' count 2, got %d", freq["cat"])
+  }
+  if freq["happy"] != 1 {
+    t.Fatalf("expected 'happy' count 1, got %d", freq["happy"])
+  }
+}
+fn TestChallenge_FormatTable(t: Ptr<TestingT>) {
+  mt table = NewTable("Name", "Age")
+  table.AddRow("Alice", "30")
+  table.AddRow("Bob", "25")
+  mt result = FormatTable(table)
+  if ln(result) == 0 {
+    t.Fatal("FormatTable returned empty string")
+  }
+  if not contains(result, "Name") or not contains(result, "Age") {
+    t.Fatal("FormatTable missing headers")
+  }
+  if not contains(result, "|") {
+    t.Fatal("FormatTable missing column separator")
+  }
+  if not contains(result, "Alice") or not contains(result, "Bob") {
+    t.Fatal("FormatTable missing row data")
+  }
+}
+fn TestChallenge_FindAllMatches(t: Ptr<TestingT>) {
+  mt matches = FindAllMatches("abcdefabc", "abc")
+  if ln(matches) != 2 or matches[0] != 0 or matches[1] != 6 {
+    t.Fatalf("literal match failed: %v", matches)
+  }
+  matches = FindAllMatches("foo bar foo baz", "f?o")
+  if ln(matches) != 2 {
+    t.Fatalf("? wildcard failed: %v", matches)
+  }
+  matches = FindAllMatches("axyzb", "a*b")
+  if ln(matches) != 1 or matches[0] != 0 {
+    t.Fatalf("* wildcard failed: %v", matches)
+  }
+}
+``` ```nebula
+fn contains(s: string, substr: string) -> bool {
+  rt (ln(s) >= ln(substr) and CountOccurrences(s, substr) > 0)
+}
+``` ```nebula
+```nebula ```nebula
+st Row {
+  Fields: List<string>
+}
+st Table {
+  Headers: List<string>
+  Rows: List<Row>
+}
+fn NewTable() -> Ptr<Table> {
+  rt (&Table { Headers: headers, Rows: go_var("[]Row") })
+}
+im Table {
+  fn AddRow(sf) {
+    sf.Rows = psh(sf.Rows, Row { Fields: fields })
+  }
+  fn RowCount(sf) -> int {
+    rt ln(sf.Rows)
+  }
+  fn ColCount(sf) -> int {
+    rt ln(sf.Headers)
+  }
+}
+fn Tokenize(input: string) -> List<string> {
+  mt tokens = go_var("[]string")
+  mt current = go_var("strings.Builder")
+  fo _, r in input {
+    if unicode.IsSpace(r) {
+      if current.Len() > 0 {
+        tokens = psh(tokens, current.String())
+        current.Reset()
+      }
+    } el {
+      current.WriteRune(r)
+    }
+  }
+  if current.Len() > 0 {
+    tokens = psh(tokens, current.String())
+  }
+  rt tokens
+}
+fn Reverse(s: string) -> string {
+  mt runes = []rune(s)
+mt (i, j) = (0, ln(runes) - 1)
+  wl i < j {
+    mt __tmp = runes[j]
+    runes[i] = runes[i]
+    runes[j] = __tmp
+    mt __tmp = i + 1
+  i = j - 1
+  j = __tmp
+  }
+  rt string(runes)
+}
+fn CountWords(s: string) -> int {
+  rt ln(Tokenize(s))
+}
+fn CountOccurrences(s: string, substr: string) -> int {
+  if substr == "" {
+    rt 0
+  }
+  mt count = 0
+  mt index = 0
+  lp {
+    mt found = strings.Index(s[index..], substr)
+    if found == -1 {
+      rt count
+    }
+    count += 1
+    index = found + ln(substr)
+  }
+}
+fn SplitLines(s: string) -> List<string> {
+  rt (strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n"))
+}
+fn NonEmptyLines(s: string) -> List<string> {
+  mt result = go_var("[]string")
+  fo _, line in SplitLines(s) {
+    if strings.TrimSpace(line) != "" {
+      result = psh(result, line)
+    }
+  }
+  rt result
+}
+fn ParseCSV(input: string) -> (Ptr<Table>, error) {
+  mt lines = NonEmptyLines(input)
+  if ln(lines) == 0 {
+    return nil, errors.New("empty CSV")
+  }
+  mt headers = Tokenize(lines[0])
+  mt table = NewTable(headers...)
+  fo i in range(1, ln(lines)) {
+    mt fields = parseFields(Tokenize(lines[i]))
+    table.AddRow(fields...)
+  }
+  rt (table, nil)
+}
+fn WordFrequency(text: string) -> Map<string, int> {
+  mt freq = go_var("map[string]int")
+  fo _, word in Tokenize(strings.ToLower(text)) {
+    if not contains(freq, word) {
+      freq[word] = 0
+    }
+    freq[word] += 1
+  }
+  rt freq
+}
+fn FormatTable(t: Ptr<Table>) -> string {
+  mt headers = strings.Join(t.Headers, " | ")
+mt rows = go_var("[]string")
+  fo _, row in t.Rows {
+    mt fields = go_var("strings.Builder")
+    fo i in range(ln(row.Fields)) {
+      if i > 0 {
+        fields.WriteString(" | ")
+      }
+      fields.WriteString(row.Fields[i])
+    }
+    rows = psh(rows, fields.String())
+  }
+mt result = strings.Join(append([]string{headers}, rows...), "\n") + "\n"
+  rt result
+}
+fn FindAllMatches(text: string, pattern: string) -> List<int> {
+  mt matches = go_var("[]int")
+  mt i = 0
+  lp {
+    if i >= ln(text) {
+      break
+    }
+    mt j = strings.IndexFunc(pattern, func(r rune) bool { return r ==

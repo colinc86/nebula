@@ -1,0 +1,10 @@
+# Nebula Neural Refinement — Python Dependencies
+#
+# pip install -r requirements.txt
+
+# Together AI SDK (training + inference)
+together>=1.0.0
+
+# Data preparation
+datasets
+tiktoken

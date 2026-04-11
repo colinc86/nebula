@@ -1,0 +1,101 @@
+```nebula
+im Matrix {
+  fn Multiply(sf, other: Ptr<Matrix>) -> (Ptr<Matrix>, error) {
+    if sf.Cols != other.Rows {
+      rt (nil, fmt.Errorf("dimension mismatch: %dx%d vs %dx%d", sf.Rows, sf.Cols, other.Rows, other.Cols))
+    }
+    mt result = NewMatrix(sf.Rows, other.Cols)
+mt i = 0
+    wl i < sf.Rows {
+mt j = 0
+      wl j < other.Cols {
+        mt sum = go_var("float64")
+mt k = 0
+        wl k < sf.Cols {
+          sum = sum + sf.Data[i][k] * other.Data[k][j]
+          k += 1
+        }
+        result.Data[i][j] = sum
+        j += 1
+      }
+      i += 1
+    }
+    rt (result, nil)
+  }
+}
+im Matrix {
+  fn Transpose(sf) -> Ptr<Matrix> {
+    mt result = NewMatrix(sf.Cols, sf.Rows)
+mt i = 0
+    wl i < sf.Rows {
+mt j = 0
+      wl j < sf.Cols {
+        result.Data[j][i] = sf.Data[i][j]
+        j += 1
+      }
+      i += 1
+    }
+    rt result
+  }
+}
+im Matrix {
+  fn Determinant(sf) -> (float64, error) {
+    if sf.Rows != sf.Cols {
+      rt (-1.0, fmt.Errorf("matrix is not square"))
+    }
+    mt det = go_var("float64")
+mt i = 0
+    wl i < sf.Rows {
+      mt sub = NewMatrix(sf.Rows - 1, sf.Cols - 1)
+mt j = 0
+      wl j < sf.Cols {
+        mt k = 0
+        wl k < sf.Rows {
+          if k == i {
+            continue
+          }
+          mt l = 0
+          wl l < sf.Cols {
+            if l == j {
+              continue
+            }
+            sub.Data[k - 1][l - 1] = sf.Data[k][l]
+            l += 1
+          }
+          k += 1
+        }
+        j += 1
+      }
+      mt (d, _) = sub.Determinant()
+      if i % 2 == 0 {
+        det = det + d * sf.Data[i][j]
+      } else {
+        det = det - d * sf.Data[i][j]
+      }
+    }
+    rt (det, nil)
+  }
+}
+fn LinearRegression(xs: List<float64>, ys: List<float64>) -> (float64, float64, error) {
+  if ln(xs) != ln(ys) {
+    rt (-1.0, -1.0, fmt.Errorf("length mismatch"))
+  }
+  mt xmean = go_var("float64")
+mt ymean = go_var("float64")
+  mt sumx2 = go_var("float64")
+  mt sumxy = go_var("float64")
+mt i = 0
+  wl i < ln(xs) {
+    xmean = xmean + xs[i]
+    ymean = ymean + ys[i]
+    sumx2 = sumx2 + xs[i] * xs[i]
+    sumxy = sumxy + xs[i] * ys[i]
+    i += 1
+  }
+  xmean = xmean / float64(ln(xs))
+ymean = ymean / float64(ln(ys))
+  mt slope = (sumxy - xmean * ymean) / (sumx2 - xmean * xmean)
+mt intercept = ymean - slope * xmean
+  rt (slope, intercept, nil)
+}
+```

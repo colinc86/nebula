@@ -1,0 +1,407 @@
+ ```nebula
+im Machine {
+  fn ReachableStates(sf, start: State) -> List<State> {
+    mt seen = make("map[State]bool")
+    mt queue = go_var("[start]")
+    fo _, s in queue {
+      if not seen[s] {
+        seen[s] = tt
+        fo _, t in sf.transitions {
+          if t.From == s and not seen[t.To] {
+            queue = psh(queue, t.To)
+          }
+        }
+      }
+    }
+    rt keys(seen)
+  }
+}
+im Machine {
+  fn IsDeadlock(sf) -> bool {
+    fo _, t in sf.transitions {
+      if t.From == sf.current {
+        rt ff
+      }
+    }
+    rt tt
+  }
+}
+im Machine {
+  fn ShortestPath(sf, from: State, to: State) -> List<Event> {
+    mt seen = make("map[State]bool")
+    mt parents = make("map[State]Event")
+    mt queue = go_var("[from]")
+    fo _, s in queue {
+      if not seen[s] {
+        seen[s] = tt
+        fo _, t in sf.transitions {
+          if t.From == s and not seen[t.To] {
+            parents[t.To] = t.Event
+            queue = psh(queue, t.To)
+          }
+        }
+      }
+    }
+    if not seen[to] {
+      rt nil
+    }
+    mt path = go_var("[]Event")
+    fo to != from {
+      path = psh(path, parents[to])
+      to = sf.transitions[0].From // dummy value, will be overwritten
+      fo _, t in sf.transitions {
+        if t.To == to {
+          to = t.From
+          bk
+        }
+      }
+    }
+    rt path
+  }
+}
+im Machine {
+  fn ValidateDeterministic(sf) -> bool {
+    mt seen = make("map[State]map[Event]bool")
+    fo _, t in sf.transitions {
+      if not seen[t.From][t.Event] {
+        seen[t.From][t.Event] = tt
+      } eli {
+        rt ff
+      }
+    }
+    rt tt
+  }
+}
+```nebula
+im Machine {
+  fn ReachableStates(sf, start: State) -> List<State> {
+    mt seen = make("map[State]bool")
+    mt queue = go_var("[start]")
+    fo _, s in queue {
+      if not seen[s] {
+        seen[s] = tt
+        fo _, t in sf.transitions {
+          if t.From == s and not seen[t.To] {
+            queue = psh(queue, t.To)
+          }
+        }
+      }
+    }
+    rt keys(seen)
+  }
+}
+im Machine {
+  fn IsDeadlock(sf) -> bool {
+    fo _, t in sf.transitions {
+      if t.From == sf.current {
+        rt ff
+      }
+    }
+    rt tt
+  }
+}
+im Machine {
+  fn ShortestPath(sf, from: State, to: State) -> List<Event> {
+    mt seen = make("map[State]bool")
+    mt parents = make("map[State]Event")
+    mt queue = go_var("[from]")
+    fo _, s in queue {
+      if not seen[s] {
+        seen[s] = tt
+        fo _, t in sf.transitions {
+          if t.From == s and not seen[t.To] {
+            parents[t.To] = t.Event
+            queue = psh(queue, t.To)
+          }
+        }
+      }
+    }
+    if not seen[to] {
+      rt nil
+    }
+    mt path = go_var("[]Event")
+    fo to != from {
+      path = psh(path, parents[to])
+      to = sf.transitions[0].From // dummy value, will be overwritten
+      fo _, t in sf.transitions {
+        if t.To == to {
+          to = t.From
+          bk
+        }
+      }
+    }
+    rt path
+  }
+}
+im Machine {
+  fn ValidateDeterministic(sf) -> bool {
+    mt seen = make("map[State]map[Event]bool")
+    fo _, t in sf.transitions {
+      if not seen[t.From][t.Event] {
+        seen[t.From][t.Event] = tt
+      } eli {
+        rt ff
+      }
+    }
+    rt tt
+  }
+}
+```nebula
+im Machine {
+  fn ReachableStates(sf, start: State) -> List<State> {
+    mt seen = make("map[State]bool")
+    mt queue = go_var("[start]")
+    fo _, s in queue {
+      if not seen[s] {
+        seen[s] = tt
+        fo _, t in sf.transitions {
+          if t.From == s and not seen[t.To] {
+            queue = psh(queue, t.To)
+          }
+        }
+      }
+    }
+    rt keys(seen)
+  }
+}
+im Machine {
+  fn IsDeadlock(sf) -> bool {
+    fo _, t in sf.transitions {
+      if t.From == sf.current {
+        rt ff
+      }
+    }
+    rt tt
+  }
+}
+im Machine {
+  fn ShortestPath(sf, from: State, to: State) -> List<Event> {
+    mt seen = make("map[State]bool")
+    mt parents = make("map[State]Event")
+    mt queue = go_var("[from]")
+    fo _, s in queue {
+      if not seen[s] {
+        seen[s] = tt
+        fo _, t in sf.transitions {
+          if t.From == s and not seen[t.To] {
+            parents[t.To] = t.Event
+            queue = psh(queue, t.To)
+          }
+        }
+      }
+    }
+    if not seen[to] {
+      rt nil
+    }
+    mt path = go_var("[]Event")
+    fo to != from {
+      path = psh(path, parents[to])
+      to = sf.transitions[0].From // dummy value, will be overwritten
+      fo _, t in sf.transitions {
+        if t.To == to {
+          to = t.From
+          bk
+        }
+      }
+    }
+    rt path
+  }
+}
+im Machine {
+  fn ValidateDeterministic(sf) -> bool {
+    mt seen = make("map[State]map[Event]bool")
+    fo _, t in sf.transitions {
+      if not seen[t.From][t.Event] {
+        seen[t.From][t.Event] = tt
+      } eli {
+        rt ff
+      }
+    }
+    rt tt
+  }
+}
+```nebula
+im Machine {
+  fn ReachableStates(sf, start: State) -> List<State> {
+    mt seen = make("map[State]bool")
+    mt queue = go_var("[start]")
+    fo _, s in queue {
+      if not seen[s] {
+        seen[s] = tt
+        fo _, t in sf.transitions {
+          if t.From == s and not seen[t.To] {
+            queue = psh(queue, t.To)
+          }
+        }
+      }
+    }
+    rt keys(seen)
+  }
+}
+im Machine {
+  fn IsDeadlock(sf) -> bool {
+    fo _, t in sf.transitions {
+      if t.From == sf.current {
+        rt ff
+      }
+    }
+    rt tt
+  }
+}
+im Machine {
+  fn ShortestPath(sf, from: State, to: State) -> List<Event> {
+    mt seen = make("map[State]bool")
+    mt parents = make("map[State]Event")
+    mt queue = go_var("[from]")
+    fo _, s in queue {
+      if not seen[s] {
+        seen[s] = tt
+        fo _, t in sf.transitions {
+          if t.From == s and not seen[t.To] {
+            parents[t.To] = t.Event
+            queue = psh(queue, t.To)
+          }
+        }
+      }
+    }
+    if not seen[to] {
+      rt nil
+    }
+    mt path = go_var("[]Event")
+    fo to != from {
+      path = psh(path, parents[to])
+      to = sf.transitions[0].From // dummy value, will be overwritten
+      fo _, t in sf.transitions {
+        if t.To == to {
+          to = t.From
+          bk
+        }
+      }
+    }
+    rt path
+  }
+}
+im Machine {
+  fn ValidateDeterministic(sf) -> bool {
+    mt seen = make("map[State]map[Event]bool")
+    fo _, t in sf.transitions {
+      if not seen[t.From][t.Event] {
+        seen[t.From][t.Event] = tt
+      } eli {
+        rt ff
+      }
+    }
+    rt tt
+  }
+}
+```nebula
+im Machine {
+  fn ReachableStates(sf, start: State) -> List<State> {
+    mt seen = make("map[State]bool")
+    mt queue = go_var("[start]")
+    fo _, s in queue {
+      if not seen[s] {
+        seen[s] = tt
+        fo _, t in sf.transitions {
+          if t.From == s and not seen[t.To] {
+            queue = psh(queue, t.To)
+          }
+        }
+      }
+    }
+    rt keys(seen)
+  }
+}
+im Machine {
+  fn IsDeadlock(sf) -> bool {
+    fo _, t in sf.transitions {
+      if t.From == sf.current {
+        rt ff
+      }
+    }
+    rt tt
+  }
+}
+im Machine {
+  fn ShortestPath(sf, from: State, to: State) -> List<Event> {
+    mt seen = make("map[State]bool")
+    mt parents = make("map[State]Event")
+    mt queue = go_var("[from]")
+    fo _, s in queue {
+      if not seen[s] {
+        seen[s] = tt
+        fo _, t in sf.transitions {
+          if t.From == s and not seen[t.To] {
+            parents[t.To] = t.Event
+            queue = psh(queue, t.To)
+          }
+        }
+      }
+    }
+    if not seen[to] {
+      rt nil
+    }
+    mt path = go_var("[]Event")
+    fo to != from {
+      path = psh(path, parents[to])
+      to = sf.transitions[0].From // dummy value, will be overwritten
+      fo _, t in sf.transitions {
+        if t.To == to {
+          to = t.From
+          bk
+        }
+      }
+    }
+    rt path
+  }
+}
+im Machine {
+  fn ValidateDeterministic(sf) -> bool {
+    mt seen = make("map[State]map[Event]bool")
+    fo _, t in sf.transitions {
+      if not seen[t.From][t.Event] {
+        seen[t.From][t.Event] = tt
+      } eli {
+        rt ff
+      }
+    }
+    rt tt
+  }
+}
+```nebula
+im Machine {
+  fn ReachableStates(sf, start: State) -> List<State> {
+    mt seen = make("map[State]bool")
+    mt queue = go_var("[start]")
+    fo _, s in queue {
+      if not seen[s] {
+        seen[s] = tt
+        fo _, t in sf.transitions {
+          if t.From == s and not seen[t.To] {
+            queue = psh(queue, t.To)
+          }
+        }
+      }
+    }
+    rt keys(seen)
+  }
+}
+im Machine {
+  fn IsDeadlock(sf) -> bool {
+    fo _, t in sf.transitions {
+      if t.From == sf.current {
+        rt ff
+      }
+    }
+    rt tt
+  }
+}
+im Machine {
+  fn ShortestPath(sf, from: State, to: State) -> List<Event> {
+    mt seen = make("map[State]bool")
+    mt parents = make("map[State]Event")
+    mt queue = go_var("[from]")
+    fo _, s in queue {
+      if not seen[s] {
+        seen[s] = tt
+        fo _, t in sf.transitions

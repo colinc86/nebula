@@ -1,0 +1,76 @@
+```nebula
+im Machine {
+  fn ReachableStates(sf, start: State) -> List<State> {
+    mt visited = make("map[State]bool")
+    mt queue = go_var("[]State")
+    psh(queue, start)
+    visited[start] = tt
+    wh not is_empty(queue) {
+      mt current = pop_front(queue)
+      fo _, t in sf.transitions {
+        if t.From == current and not visited[t.To] {
+          psh(queue, t.To)
+          visited[t.To] = tt
+        }
+      }
+    }
+    rt keys(visited)
+  }
+}
+im Machine {
+  fn IsDeadlock(sf) -> bool {
+    fo _, t in sf.transitions {
+      if t.From == sf.current and not is_empty(sf.callbacks[t.To]) {
+        rt ff
+      }
+    }
+    rt tt
+  }
+}
+im Machine {
+  fn ShortestPath(sf, from: State, to: State) -> List<Event> {
+    mt visited = make("map[State]bool")
+    mt parent = make("map[State]Ptr<Transition>")
+    mt queue = go_var("[]State")
+    psh(queue, from)
+    visited[from] = tt
+    wh not is_empty(queue) and sf.current != to {
+      mt current = pop_front(queue)
+      fo _, t in sf.transitions {
+        if t.From == current and not visited[t.To] {
+          psh(queue, t.To)
+          visited[t.To] = tt
+          parent[t.To] = t
+        }
+      }
+    }
+    if sf.current != to {
+      rt nil
+    }
+    mt path = go_var("[]Event")
+    mt current_state = to
+    wh current_state != from {
+      mt transition = parent[current_state]
+      psh(path, transition.Event)
+      current_state = transition.From
+    }
+    reverse(path)
+    rt path
+  }
+}
+im Machine {
+  fn ValidateDeterministic(sf) -> bool {
+    mt transitions_map = make("map[string][]Transition")
+    fo _, t in sf.transitions {
+      mt key = fmt.Sprintf("%s:%s", t.From, t.Event)
+      psh(transitions_map[key], t)
+    }
+    fo _, ts in transitions_map {
+      if ln(ts) > 1 {
+        rt ff
+      }
+    }
+    rt tt
+  }
+}
+```

@@ -1,0 +1,437 @@
+ Do not modify existing code.
+```nebula
+im Graph {
+  fn ShortestPath(sf, from: int, to: int) -> (List<int>, float64, error) {
+    mt dist = make("map[int]float64")
+    fo _, n in sf.nodes {
+      dist[n.ID] = math.MaxFloat64
+    }
+    dist[from] = 0.0
+    mt pq = pqueue.New()
+    pq.Push(Pair { Value: from, Priority: 0.0 })
+    wl pq.Len() > 0 {
+      mt node = pq.Pop().(Pair).Value.(int)
+      if node == to {
+        rt (nil, dist[to], nil)
+      }
+      fo _, e in sf.edges {
+        if e.From != node {
+          ct
+        }
+        mt alt = dist[node] + e.Cost
+        if alt < dist[e.To] {
+          dist[e.To] = alt
+          pq.Push(Pair { Value: e.To, Priority: alt })
+        }
+      }
+    }
+    rt (nil, 0.0, ErrNoPath(from, to))
+  }
+}
+im Graph {
+  fn ConnectedComponents(sf) -> List<List<int>> {
+    mt visited = make("map[int]bool")
+    mt components = go_var("[][]int")
+    fo _, n in sf.nodes {
+      if not visited[n.ID] {
+        mt component = go_var("[]int")
+        dfs(n.ID, &component)
+        sort.Ints(component)
+        components = psh(components, component)
+      }
+    }
+    rt components
+  }
+}
+im Graph {
+  fn DetectCycles(sf) -> bool {
+    mt visited = make("map[int]bool")
+    fo _, n in sf.nodes {
+      if not visited[n.ID] and dfs(n.ID, nil) {
+        rt tt
+      }
+    }
+    rt ff
+  }
+}
+im Graph {
+  fn FilterByTag(sf, tag: string) -> List<Edge> {
+    mt filtered = go_var("[]Edge")
+    fo _, e in sf.edges {
+      if contains(e.Tags, tag) {
+        filtered = psh(filtered, e)
+      }
+    }
+    rt filtered
+  }
+}
+```nebula
+fn dfs(node: int, component: Ptr<List<int>>) -> bool {
+mt visited[node] = tt
+  fo _, n in sf.Neighbors(node) {
+    if not visited[n] and (component == nil or psh(component, node)) {
+      if dfs(n, component) {
+        rt tt
+      }
+    } eli component != nil and contains(component, n) {
+      rt tt
+    }
+  }
+  rt ff
+}
+```nebula
+fn contains(list: List<string>, item: string) -> bool {
+  fo _, i in list {
+    if i == item {
+      rt tt
+    }
+  }
+  rt ff
+}
+```nebula
+```nebula
+im Graph {
+  fn ShortestPath(sf, from: int, to: int) -> (List<int>, float64, error) {
+    mt dist = make("map[int]float64")
+    fo _, n in sf.nodes {
+      dist[n.ID] = math.MaxFloat64
+    }
+    dist[from] = 0.0
+    mt pq = pqueue.New()
+    pq.Push(Pair { Value: from, Priority: 0.0 })
+    wl pq.Len() > 0 {
+      mt node = pq.Pop().(Pair).Value.(int)
+      if node == to {
+        rt (nil, dist[to], nil)
+      }
+      fo _, e in sf.edges {
+        if e.From != node {
+          ct
+        }
+        mt alt = dist[node] + e.Cost
+        if alt < dist[e.To] {
+          dist[e.To] = alt
+          pq.Push(Pair { Value: e.To, Priority: alt })
+        }
+      }
+    }
+    rt (nil, 0.0, ErrNoPath(from, to))
+  }
+}
+im Graph {
+  fn ConnectedComponents(sf) -> List<List<int>> {
+    mt visited = make("map[int]bool")
+    mt components = go_var("[][]int")
+    fo _, n in sf.nodes {
+      if not visited[n.ID] {
+        mt component = go_var("[]int")
+        dfs(n.ID, &component)
+        sort.Ints(component)
+        components = psh(components, component)
+      }
+    }
+    rt components
+  }
+}
+im Graph {
+  fn DetectCycles(sf) -> bool {
+    mt visited = make("map[int]bool")
+    fo _, n in sf.nodes {
+      if not visited[n.ID] and dfs(n.ID, nil) {
+        rt tt
+      }
+    }
+    rt ff
+  }
+}
+im Graph {
+  fn FilterByTag(sf, tag: string) -> List<Edge> {
+    mt filtered = go_var("[]Edge")
+    fo _, e in sf.edges {
+      if contains(e.Tags, tag) {
+        filtered = psh(filtered, e)
+      }
+    }
+    rt filtered
+  }
+}
+```nebula
+fn dfs(node: int, component: Ptr<List<int>>) -> bool {
+mt visited[node] = tt
+  fo _, n in sf.Neighbors(node) {
+    if not visited[n] and (component == nil or psh(component, node)) {
+      if dfs(n, component) {
+        rt tt
+      }
+    } eli component != nil and contains(component, n) {
+      rt tt
+    }
+  }
+  rt ff
+}
+```nebula
+fn contains(list: List<string>, item: string) -> bool {
+  fo _, i in list {
+    if i == item {
+      rt tt
+    }
+  }
+  rt ff
+}
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula

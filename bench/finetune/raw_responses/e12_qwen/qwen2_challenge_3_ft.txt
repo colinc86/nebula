@@ -1,0 +1,1065 @@
+ ```nebula
+fn ParseCSV(input: string) -> (Ptr<Table>, error) {
+  mt lines = NonEmptyLines(input)
+  if ln(lines) == 0 {
+    rt (nil, errors.New("empty CSV"))
+  }
+  mt headers = Tokenize(lines[0])
+  mt table = NewTable(headers...)
+  fo _, line in lines[1:] {
+    mt fields = go_var("[string]")
+    mt err = csv.ParseFields(line, &fields)
+    if err != nil {
+      rt (nil, errors.New("invalid CSV"))
+    }
+    if ln(fields) != ln(headers) {
+      rt (nil, errors.New("mismatched columns"))
+    }
+    table.AddRow(fields...)
+  }
+  rt (table, nil)
+}
+fn WordFrequency(text: string) -> Map<string, int> {
+  mt freq = make("map[string]int")
+  fo _, word in Tokenize(strings.ToLower(text)) {
+    freq[word] += 1
+  }
+  rt freq
+}
+fn FormatTable(t: Ptr<Table>) -> string {
+  if t == nil or ln(t.Headers) == 0 {
+    return ""
+  }
+  mt colWidths = make("[]int, len(t.Headers)")
+mt (i, j) = (0, len(colWidths))
+  wl i < j {
+    colWidths[i] = 4
+    i += 1
+  }
+  fo _, row in t.Rows {
+    fo i, field in row.Fields {
+      if ln(field) > colWidths[i] {
+        colWidths[i] = ln(field)
+      }
+    }
+  }
+mt (i, j) = (0, len(t.Headers))
+  wl i < j {
+    mt header = fmt.Sprintf("%-*s", colWidths[i], t.Headers[i])
+    if i == 0 {
+      rt header
+    }
+    rt header + " | "
+  }
+}
+fn FindAllMatches(text: string, pattern: string) -> List<int> {
+  mt matches = go_var("[]int")
+mt (i, j) = (0, len(text))
+  wl i < j {
+    if strings.HasPrefix(pattern, "*") {
+      mt index = strings.Index(text[i:], pattern[1:])
+      if index == -1 {
+        rt matches
+      }
+      matches = psh(matches, i + index)
+      i += ln(pattern) - 2
+    } el if strings.HasPrefix(pattern, "?") {
+      if len(text) > i and (pattern[1] == text[i] or pattern[1] == '?') {
+        matches = psh(matches, i)
+        i += 1
+      }
+    } el {
+      mt index = strings.Index(text[i:], pattern)
+      if index == -1 {
+        rt matches
+      }
+      matches = psh(matches, i + index)
+      i += ln(pattern) - 1
+    }
+    pattern = pattern[ln(pattern)-1:]
+  }
+  rt matches
+}
+```nebula
+fn main() {
+  mt csv = "name,age,city\nAlice,30,NYC\nBob,25,SF\n"
+  prt("Sample CSV:")
+  prt(csv)
+  mt text = "The quick brown fox jumps over the lazy dog. The dog barks!"
+  mt tokens = Tokenize(text)
+  prt("Tokens: %v\n", tokens)
+  prt("Word count: %d\n", CountWords(text))
+  prt("Occurrences of 'the': %d\n", CountOccurrences(strings.ToLower(text), "the"))
+  mt reversed = Reverse("hello")
+  prt("Reversed: %s\n", reversed)
+}
+``` ```nebula
+fn TestChallenge_ParseCSV(t: Ptr<TestingT>) {
+  t.Skip("CHALLENGE: Implement ParseCSV")
+  mt input = "name,age,city\nAlice,30,NYC\nBob,25,\"San Francisco\"\nCarol,35,\"Los Angeles\""
+  mt (table, err) = ParseCSV(input)
+  if err != nil {
+    t.Fatalf("unexpected error: %v", err)
+  }
+  if table.ColCount() != 3 {
+    t.Fatalf("expected 3 columns, got %d", table.ColCount())
+  }
+  if table.RowCount() != 3 {
+    t.Fatalf("expected 3 rows, got %d", table.RowCount())
+  }
+  if table.Rows[0].Fields[0] != "Alice" {
+    t.Fatal("first cell wrong")
+  }
+  if table.Rows[2].Fields[2] != "Los Angeles" {
+    t.Fatalf("quoted field wrong: got %q", table.Rows[2].Fields[2])
+  }
+}
+fn TestChallenge_WordFrequency(t: Ptr<TestingT>) {
+  t.Skip("CHALLENGE: Implement WordFrequency")
+  mt text = "The cat sat on the mat. The cat was happy!"
+  mt freq = WordFrequency(text)
+  if freq["the"] != 3 {
+    t.Fatalf("expected 'the' count 3, got %d", freq["the"])
+  }
+  if freq["cat"] != 2 {
+    t.Fatalf("expected 'cat' count 2, got %d", freq["cat"])
+  }
+  if freq["happy"] != 1 {
+    t.Fatalf("expected 'happy' count 1, got %d", freq["happy"])
+  }
+}
+fn TestChallenge_FormatTable(t: Ptr<TestingT>) {
+  t.Skip("CHALLENGE: Implement FormatTable")
+  mt table = NewTable("Name", "Age")
+  table.AddRow("Alice", "30")
+  table.AddRow("Bob", "25")
+  mt result = FormatTable(table)
+  if ln(result) == 0 {
+    t.Fatal("FormatTable returned empty string")
+  }
+  if not contains(result, "Name") or not contains(result, "Age") {
+    t.Fatal("FormatTable missing headers")
+  }
+  if not contains(result, "|") {
+    t.Fatal("FormatTable missing column separator")
+  }
+  if not contains(result, "Alice") or not contains(result, "Bob") {
+    t.Fatal("FormatTable missing row data")
+  }
+}
+fn TestChallenge_FindAllMatches(t: Ptr<TestingT>) {
+  t.Skip("CHALLENGE: Implement FindAllMatches")
+  mt matches = FindAllMatches("abcdefabc", "abc")
+  if ln(matches) != 2 or matches[0] != 0 or matches[1] != 6 {
+    t.Fatalf("literal match failed: %v", matches)
+  }
+  matches = FindAllMatches("foo bar foo baz", "f?o")
+  if ln(matches) != 2 {
+    t.Fatalf("? wildcard failed: %v", matches)
+  }
+  matches = FindAllMatches("axyzb", "a*b")
+  if ln(matches) != 1 or matches[0] != 0 {
+    t.Fatalf("* wildcard failed: %v", matches)
+  }
+}
+``` ```nebula
+fn contains(s: string, substr: string) -> bool {
+  rt (ln(s) >= ln(substr) and CountOccurrences(s, substr) > 0)
+}
+``` ```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula
+```nebula

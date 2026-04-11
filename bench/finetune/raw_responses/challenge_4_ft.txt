@@ -1,0 +1,80 @@
+```nebula
+im Machine {
+  fn ReachableStates(sf, start: State) -> List<State> {
+    sf.mu.RLock()
+    defer sf.mu.RUnlock()
+    mt visited = make("map[State]bool")
+    mt queue = go_var("[]State")
+    queue = psh(queue, start)
+    visited[start] = tt
+    fo _ in range(1000) {
+      if ln(queue) == 0 {
+        rt []
+      }
+      mt state = queue[0]
+      queue = queue[1..]
+      fo _, t in sf.transitions {
+        if not visited[t.To] and t.From == state {
+          queue = psh(queue, t.To)
+          visited[t.To] = tt
+        }
+      }
+    }
+    rt go_var("[]State")
+  }
+}
+im Machine {
+  fn IsDeadlock(sf) -> bool {
+    sf.mu.RLock()
+    defer sf.mu.RUnlock()
+    fo _, t in sf.transitions {
+      if t.From == sf.current {
+        rt ff
+      }
+    }
+    rt tt
+  }
+}
+im Machine {
+  fn ShortestPath(sf, from: State, to: State) -> List<Event> {
+    sf.mu.RLock()
+    defer sf.mu.RUnlock()
+    mt visited = make("map[State]bool")
+    mt queue = go_var("[]StateEventList")
+    queue = psh(queue, (from, nil))
+    visited[from] = tt
+    fo _ in range(1000) {
+      if ln(queue) == 0 {
+        rt nil
+      }
+      mt (state, path) = queue[0]
+      queue = queue[1..]
+      if state == to {
+        rt path
+      }
+      fo _, t in sf.transitions {
+        if not visited[t.To] and t.From == state {
+          queue = psh(queue, (t.To, psh(path, t.Event)))
+          visited[t.To] = tt
+        }
+      }
+    }
+    rt nil
+  }
+}
+im Machine {
+  fn ValidateDeterministic(sf) -> bool {
+    sf.mu.RLock()
+    defer sf.mu.RUnlock()
+    mt seen = make("map[StateEvent][]bool")
+    fo _, t in sf.transitions {
+      mt key = fmt.Sprintf("%s %s", t.From, t.Event)
+      if ln(seen[key]) > 0 and not seen[key][ln(seen[key])-1] {
+        rt ff
+      }
+      seen[key] = psh(seen[key], tt)
+    }
+    rt tt
+  }
+}
+```

@@ -1,0 +1,11 @@
+{
+  "job_id": "ft-45cf5753-952a",
+  "model": "Qwen/Qwen2.5-1.5B",
+  "train_file": "file-40ef3cf3-aa61-4a97-8df5-5d2fbf48c3e2",
+  "val_file": "file-6706f7d1-cabd-49d7-b296-cfd32547ca37",
+  "train_count": 16940,
+  "epochs": 3,
+  "lr": 2e-05,
+  "lora_r": 16,
+  "timestamp": "2026-04-10 10:59:50"
+}

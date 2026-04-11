@@ -9,6 +9,7 @@ mod lang_detect;
 mod lexer;
 mod linter;
 mod mcp;
+mod neural;
 mod parser;
 
 use std::env;
@@ -28,6 +29,12 @@ fn main() {
     if args.len() >= 3 && (args[1] == "-e" || args[1] == "--eval") {
         let code = args[2..].join(" ");
         run(&code, "<eval>");
+        return;
+    }
+
+    // Handle `translate` command separately (it has its own arg parsing)
+    if args.len() >= 2 && args[1] == "translate" {
+        translate_command(&args[2..]);
         return;
     }
 
@@ -343,6 +350,106 @@ fn show_token_count(source: &str, file_path: &str) {
     println!("  {:16} {:>6} tokens  (compact saves {:.0}%)", "Neb compact", compact_tokens, (1.0 - compact_tokens as f64 / ts_tokens as f64) * 100.0);
 }
 
+fn translate_command(args: &[String]) {
+    let mut from_lang: Option<String> = None;
+    let mut to_lang: Option<String> = None;
+    let mut file_path: Option<&str> = None;
+    let mut i = 0;
+
+    while i < args.len() {
+        match args[i].as_str() {
+            "--from" => {
+                i += 1;
+                if i < args.len() {
+                    from_lang = Some(args[i].to_lowercase());
+                }
+            }
+            "--to" => {
+                i += 1;
+                if i < args.len() {
+                    to_lang = Some(args[i].to_lowercase());
+                }
+            }
+            _ => {
+                file_path = Some(&args[i]);
+            }
+        }
+        i += 1;
+    }
+
+    let file_path = match file_path {
+        Some(p) => p,
+        None => {
+            eprintln!("Usage: nebula translate [--from LANG] --to LANG <file>");
+            process::exit(1);
+        }
+    };
+
+    let target = match &to_lang {
+        Some(t) => t.clone(),
+        None => {
+            eprintln!("Error: --to LANG is required");
+            eprintln!("Usage: nebula translate [--from LANG] --to LANG <file>");
+            process::exit(1);
+        }
+    };
+
+    let source = match fs::read_to_string(file_path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Error reading '{file_path}': {e}");
+            process::exit(1);
+        }
+    };
+
+    // Determine source language: explicit --from or detect from extension
+    let src_lang = match &from_lang {
+        Some(l) => lang_detect::detect(&format!("file.{}", lang_to_ext(l))),
+        None => lang_detect::detect(file_path),
+    };
+
+    // Ingest to Nebula (if not already Nebula)
+    let nebula = lang_detect::to_nebula(&source, src_lang);
+
+    // Try neural translation first, fall back to rule-based codegen
+    if neural::is_available() {
+        match neural::generate(&nebula, &target, None) {
+            Ok(output) => {
+                print!("{output}");
+                return;
+            }
+            Err(e) => {
+                eprintln!("Neural translation failed ({}), falling back to rule-based codegen", e);
+            }
+        }
+    }
+
+    // Fall back to rule-based codegen
+    let target_lang = lang_detect::detect(&format!("file.{}", lang_to_ext(&target)));
+    match lang_detect::from_nebula(&nebula, target_lang) {
+        Ok(output) => print!("{output}"),
+        Err(e) => {
+            eprintln!("Translation failed: {e}");
+            process::exit(1);
+        }
+    }
+}
+
+fn lang_to_ext(lang: &str) -> &str {
+    match lang {
+        "python" | "py" => "py",
+        "javascript" | "js" => "js",
+        "typescript" | "ts" => "ts",
+        "go" => "go",
+        "swift" => "swift",
+        "kotlin" | "kt" => "kt",
+        "rust" | "rs" => "rs",
+        "c" => "c",
+        "nebula" | "neb" => "neb",
+        _ => lang, // pass through; detect() will return Unknown
+    }
+}
+
 fn print_builtins() {
     println!("Nebula Built-in Functions & Aliases");
     println!("===================================");
@@ -442,6 +549,10 @@ fn print_cli_help() {
     println!("  stats <file>     Show program statistics");
     println!("  builtins         List all built-in functions & methods");
     println!("  repl             Interactive REPL");
+    println!();
+    println!("NEURAL TRANSLATION:");
+    println!("  translate --to LANG <file>       Neural translate (Ollama), falls back to rule-based");
+    println!("  translate --from LANG --to LANG <file>");
     println!();
     println!("TRANSLATORS:");
     println!("  to-py <file>     Translate to Python");

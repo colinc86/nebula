@@ -1,0 +1,62 @@
+```nebula
+fn ParseCSV(input: string) -> (Ptr<Table>, error) {
+  mt lines = SplitLines(strings.ReplaceAll(input, "\r\n", "\n"))
+  mt table = NewTable()
+  mt headers = go_var("[]string")
+  mt currentRow = go_var("[]string")
+  fo _, line in lines {
+    if strings.TrimSpace(line) == "" {
+      continue
+    }
+    if ln(headers) == 0 {
+      headers = Tokenize(strings.ToUpper(line))
+      table.Headers = headers
+    } else {
+      currentRow = Tokenize(line)
+      table.AddRow(currentRow)
+    }
+  }
+  return (table, nil)
+}
+
+fn WordFrequency(text: string) -> Map<string, int> {
+  mt words = Tokenize(strings.ReplaceAll(text, ",", "."))
+  mt frequency = go_var("map[string]int")
+  fo _, word in words {
+    if unicode.IsSpace(rune(word[0])) {
+      continue
+    }
+    mt lowerWord = strings.ToLower(string(word))
+    mt count = (frequency(lowerWord) ?: 0) + 1
+    frequency(lowerWord) = count
+  }
+  rt frequency
+}
+
+fn FormatTable(t: Ptr<Table>) -> string {
+  mt result = go_var("strings.Builder")
+  mt headers = t.Headers
+  mt rows = t.Rows
+  mt headerLine = strings.Join(headers, "|") + "\n"
+  mt rowTemplate = "%s|%s\n"
+  wl ln(rows) > 0 {
+    if ln(headers) != ln(rows[0].Fields) {
+      return ""
+    }
+    result.WriteString(headerLine)
+    fo _, row in rows {
+      mt fields = row.Fields
+      mt formattedRow = strings.Repeat("-", ln(fields)) + "\n" +
+        strings.Join(strings.Map(func(s: string) { fmt.Sprintf("%s", s) }, fields), "|") + "\n"
+      result.WriteString(formattedRow)
+    }
+  }
+  rt result.String()
+}
+
+fn FindAllMatches(text: string, pattern: string) -> List<int> {
+  mt regex = regexp.MustCompile(pattern.ReplaceAllString("*", ".*"))
+  mt matches = regex.FindAllIndex(text, -1)
+  return matches
+}
+```

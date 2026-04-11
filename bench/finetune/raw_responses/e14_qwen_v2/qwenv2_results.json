@@ -1,0 +1,70 @@
+[
+  {
+    "name": "Challenge 2: Graph Algorithms",
+    "base": {
+      "time": 21.83700394630432,
+      "prompt_tokens": 3793,
+      "output_tokens": 910,
+      "nebula_kw": 106,
+      "go_kw": 6
+    },
+    "ft": {
+      "time": 676.7984540462494,
+      "prompt_tokens": 3772,
+      "output_tokens": 3000,
+      "nebula_kw": 316,
+      "go_kw": 5
+    }
+  },
+  {
+    "name": "Challenge 3: Text Processing",
+    "base": {
+      "time": 10.733404874801636,
+      "prompt_tokens": 2091,
+      "output_tokens": 562,
+      "nebula_kw": 58,
+      "go_kw": 1
+    },
+    "ft": {
+      "time": 647.5460710525513,
+      "prompt_tokens": 2070,
+      "output_tokens": 3000,
+      "nebula_kw": 255,
+      "go_kw": 14
+    }
+  },
+  {
+    "name": "Challenge 4: State Machine",
+    "base": {
+      "time": 10.996601819992065,
+      "prompt_tokens": 2278,
+      "output_tokens": 589,
+      "nebula_kw": 65,
+      "go_kw": 0
+    },
+    "ft": {
+      "time": 647.8108079433441,
+      "prompt_tokens": 2257,
+      "output_tokens": 3000,
+      "nebula_kw": 354,
+      "go_kw": 15
+    }
+  },
+  {
+    "name": "Challenge 5: Numerical Computation",
+    "base": {
+      "time": 15.230944156646729,
+      "prompt_tokens": 3081,
+      "output_tokens": 840,
+      "nebula_kw": 77,
+      "go_kw": 3
+    },
+    "ft": {
+      "time": 660.2818500995636,
+      "prompt_tokens": 3060,
+      "output_tokens": 3000,
+      "nebula_kw": 310,
+      "go_kw": 8
+    }
+  }
+]

@@ -1,0 +1,14 @@
+FROM ./model.safetensors
+
+TEMPLATE """<|im_start|>system
+{{ .System }}<|im_end|>
+<|im_start|>user
+{{ .Prompt }}<|im_end|>
+<|im_start|>assistant
+"""
+
+SYSTEM "You are a code translator. Given code in Nebula (a universal intermediate language), produce the equivalent idiomatic Python code."
+
+PARAMETER temperature 0.1
+PARAMETER stop "<|im_end|>"
+PARAMETER stop "<|endoftext|>"

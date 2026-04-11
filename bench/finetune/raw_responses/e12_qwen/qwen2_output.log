@@ -1,0 +1,74 @@
+
+========================================================================
+Challenge 2: Graph Algorithms
+========================================================================
+Base Qwen 14B...
+  3793 + 880 tokens, 16.0s
+Fine-tuned Qwen Nebula...
+  3772 + 2899 tokens, 650.4s
+  Output: base=880 ft=2899 (-229.4%)
+  Nebula kw: base=90 ft=175
+  Go kw: base=2 ft=0
+
+========================================================================
+Challenge 3: Text Processing
+========================================================================
+Base Qwen 14B...
+  2091 + 576 tokens, 10.7s
+Fine-tuned Qwen Nebula...
+  2070 + 6000 tokens, 1334.2s
+  Output: base=576 ft=6000 (-941.7%)
+  Nebula kw: base=61 ft=98
+  Go kw: base=15 ft=6
+
+========================================================================
+Challenge 4: State Machine
+========================================================================
+Base Qwen 14B...
+  2278 + 469 tokens, 9.5s
+Fine-tuned Qwen Nebula...
+  2257 + 6000 tokens, 1337.5s
+  Output: base=469 ft=6000 (-1179.3%)
+  Nebula kw: base=61 ft=585
+  Go kw: base=0 ft=16
+
+========================================================================
+Challenge 5: Numerical Computation
+========================================================================
+Base Qwen 14B...
+  3081 + 781 tokens, 14.3s
+Fine-tuned Qwen Nebula...
+Traceback (most recent call last):
+  File "/tmp/claude/benchmark_qwen_v2.py", line 103, in <module>
+    ft = run(FT_MODEL, prompt)
+  File "/tmp/claude/benchmark_qwen_v2.py", line 60, in run
+    with urllib.request.urlopen(req, timeout=1800) as resp:
+         ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.13/3.13.3_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/urllib/request.py", line 189, in urlopen
+    return opener.open(url, data, timeout)
+           ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.13/3.13.3_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/urllib/request.py", line 489, in open
+    response = self._open(req, data)
+  File "/opt/homebrew/Cellar/python@3.13/3.13.3_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/urllib/request.py", line 506, in _open
+    result = self._call_chain(self.handle_open, protocol, protocol +
+                              '_open', req)
+  File "/opt/homebrew/Cellar/python@3.13/3.13.3_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/urllib/request.py", line 466, in _call_chain
+    result = func(*args)
+  File "/opt/homebrew/Cellar/python@3.13/3.13.3_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/urllib/request.py", line 1348, in http_open
+    return self.do_open(http.client.HTTPConnection, req)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.13/3.13.3_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/urllib/request.py", line 1323, in do_open
+    r = h.getresponse()
+  File "/opt/homebrew/Cellar/python@3.13/3.13.3_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/http/client.py", line 1430, in getresponse
+    response.begin()
+    ~~~~~~~~~~~~~~^^
+  File "/opt/homebrew/Cellar/python@3.13/3.13.3_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/http/client.py", line 331, in begin
+    version, status, reason = self._read_status()
+                              ~~~~~~~~~~~~~~~~~^^
+  File "/opt/homebrew/Cellar/python@3.13/3.13.3_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/http/client.py", line 292, in _read_status
+    line = str(self.fp.readline(_MAXLINE + 1), "iso-8859-1")
+               ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.13/3.13.3_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/socket.py", line 719, in readinto
+    return self._sock.recv_into(b)
+           ~~~~~~~~~~~~~~~~~~~~^^^
+ConnectionResetError: [Errno 54] Connection reset by peer

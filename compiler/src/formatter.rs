@@ -48,15 +48,15 @@ impl NebFmt {
         match stmt {
             Statement::Let { name, type_ann, value } => {
                 let ann = self.fmt_optional_type(type_ann);
-                format!("{}lt {}{} = {}", self.ind(), name, ann, self.fmt_expr(value))
+                format!("{}{}{} := {}", self.ind(), name, ann, self.fmt_expr(value))
             }
             Statement::Mut { name, type_ann, value } => {
                 let ann = self.fmt_optional_type(type_ann);
-                format!("{}mt {}{} = {}", self.ind(), name, ann, self.fmt_expr(value))
+                format!("{}{}{} = {}", self.ind(), name, ann, self.fmt_expr(value))
             }
             Statement::Const { name, type_ann, value } => {
                 let ann = self.fmt_optional_type(type_ann);
-                format!("{}cn {}{} = {}", self.ind(), name, ann, self.fmt_expr(value))
+                format!("{}{}{} := {}", self.ind(), name, ann, self.fmt_expr(value))
             }
             Statement::FnDecl {
                 name,
@@ -78,7 +78,7 @@ impl NebFmt {
                 }
                 if *is_test { prefix.push_str(&format!("{}#[test]\n", self.ind())); }
                 let test_prefix = prefix;
-                let pub_prefix = if *is_pub { "pb " } else { "" };
+                let pub_prefix = if *is_pub { "pub " } else { "" };
                 let ps = self.fmt_params(params);
                 let ret = return_type
                     .as_ref()
@@ -89,7 +89,7 @@ impl NebFmt {
                 if body.statements.is_empty() {
                     if let Some(expr) = &body.expr {
                         return format!(
-                            "{}{}{}fn {}({}){} = {}",
+                            "{}{}{}def {}({}){} = {}",
                             test_prefix,
                             self.ind(),
                             pub_prefix,
@@ -102,7 +102,7 @@ impl NebFmt {
                 }
 
                 let mut out = format!(
-                    "{}{}{}fn {}({}){} {{\n",
+                    "{}{}{}def {}({}){} {{\n",
                     test_prefix,
                     self.ind(),
                     pub_prefix,
@@ -122,13 +122,13 @@ impl NebFmt {
                 fields,
                 is_pub,
             } => {
-                let pub_prefix = if *is_pub { "pb " } else { "" };
+                let pub_prefix = if *is_pub { "pub " } else { "" };
                 let gen = if generics.is_empty() {
                     String::new()
                 } else {
                     format!("<{}>", generics.join(", "))
                 };
-                let mut out = format!("{}{}st {}{} {{\n", self.ind(), pub_prefix, name, gen);
+                let mut out = format!("{}{}struct {}{} {{\n", self.ind(), pub_prefix, name, gen);
                 self.indent += 1;
                 for f in fields {
                     out.push_str(&format!(
@@ -148,13 +148,13 @@ impl NebFmt {
                 variants,
                 is_pub,
             } => {
-                let pub_prefix = if *is_pub { "pb " } else { "" };
+                let pub_prefix = if *is_pub { "pub " } else { "" };
                 let gen = if generics.is_empty() {
                     String::new()
                 } else {
                     format!("<{}>", generics.join(", "))
                 };
-                let mut out = format!("{}{}en {}{} {{\n", self.ind(), pub_prefix, name, gen);
+                let mut out = format!("{}{}enum {}{} {{\n", self.ind(), pub_prefix, name, gen);
                 self.indent += 1;
                 for v in variants {
                     if v.fields.is_empty() {
@@ -184,13 +184,13 @@ impl NebFmt {
                 methods,
                 is_pub,
             } => {
-                let pub_prefix = if *is_pub { "pb " } else { "" };
+                let pub_prefix = if *is_pub { "pub " } else { "" };
                 let gen = if generics.is_empty() {
                     String::new()
                 } else {
                     format!("<{}>", generics.join(", "))
                 };
-                let mut out = format!("{}{}tr {}{} {{\n", self.ind(), pub_prefix, name, gen);
+                let mut out = format!("{}{}trait {}{} {{\n", self.ind(), pub_prefix, name, gen);
                 self.indent += 1;
                 for m in methods {
                     let ps = self.fmt_params(&m.params);
@@ -200,13 +200,13 @@ impl NebFmt {
                         .map(|t| format!(" -> {}", self.fmt_type(t)))
                         .unwrap_or_default();
                     if let Some(body) = &m.body {
-                        out.push_str(&format!("{}fn {}({}){} {{\n", self.ind(), m.name, ps, ret));
+                        out.push_str(&format!("{}def {}({}){} {{\n", self.ind(), m.name, ps, ret));
                         self.indent += 1;
                         out.push_str(&self.fmt_block_body(body));
                         self.indent -= 1;
                         out.push_str(&format!("{}}}\n", self.ind()));
                     } else {
-                        out.push_str(&format!("{}fn {}({}){}\n", self.ind(), m.name, ps, ret));
+                        out.push_str(&format!("{}def {}({}){}\n", self.ind(), m.name, ps, ret));
                     }
                 }
                 self.indent -= 1;
@@ -219,9 +219,9 @@ impl NebFmt {
                 methods,
             } => {
                 let header = if let Some(t) = trait_name {
-                    format!("im {} fo {}", t, target)
+                    format!("impl {} for {}", t, target)
                 } else {
-                    format!("im {}", target)
+                    format!("impl {}", target)
                 };
                 let mut out = format!("{}{} {{\n", self.ind(), header);
                 self.indent += 1;
@@ -240,14 +240,14 @@ impl NebFmt {
                 format!("{}{}", self.ind(), self.fmt_expr(expr))
             }
             Statement::Return(Some(expr)) => {
-                format!("{}rt {}", self.ind(), self.fmt_expr(expr))
+                format!("{}return {}", self.ind(), self.fmt_expr(expr))
             }
-            Statement::Return(None) => format!("{}rt", self.ind()),
+            Statement::Return(None) => format!("{}return", self.ind()),
             Statement::Break(Some(expr)) => {
-                format!("{}bk {}", self.ind(), self.fmt_expr(expr))
+                format!("{}break {}", self.ind(), self.fmt_expr(expr))
             }
-            Statement::Break(None) => format!("{}bk", self.ind()),
-            Statement::Continue => format!("{}ct", self.ind()),
+            Statement::Break(None) => format!("{}break", self.ind()),
+            Statement::Continue => format!("{}continue", self.ind()),
             Statement::Assignment { target, op, value } => {
                 let op_str = match op {
                     AssignOp::Assign => "=",
@@ -276,14 +276,14 @@ impl NebFmt {
                 }
             }
             Statement::Module { path } => {
-                format!("{}md {}", self.ind(), path.join("."))
+                format!("{}module {}", self.ind(), path.join("."))
             }
             Statement::TypeAlias { name, type_expr } => {
-                format!("{}ty {} = {}", self.ind(), name, self.fmt_type(type_expr))
+                format!("{}type {} = {}", self.ind(), name, self.fmt_type(type_expr))
             }
             Statement::LetDestructure { names, value, mutable } => {
-                let kw = if *mutable { "mt" } else { "lt" };
-                format!("{}{}({}) = {}", self.ind(), kw, names.join(", "), self.fmt_expr(value))
+                let op = if *mutable { "=" } else { ":=" };
+                format!("{}({}) {} {}", self.ind(), names.join(", "), op, self.fmt_expr(value))
             }
         }
     }
@@ -310,7 +310,7 @@ impl NebFmt {
                     f.to_string()
                 }
             }
-            Expr::BoolLit(b) => if *b { "tt" } else { "ff" }.to_string(),
+            Expr::BoolLit(b) => if *b { "True" } else { "False" }.to_string(),
             Expr::StringLit(s) => {
                 let mut inner = String::new();
                 for part in &s.parts {
@@ -328,7 +328,7 @@ impl NebFmt {
                 format!("\"{}\"", inner)
             }
             Expr::CharLit(c) => format!("'{c}'"),
-            Expr::Nil => "nil".to_string(),
+            Expr::Nil => "None".to_string(),
             Expr::Ident(name) => name.clone(),
 
             Expr::BinaryOp { left, op, right } => {
@@ -398,7 +398,7 @@ impl NebFmt {
                         if let Some(else_expr) = &else_b.expr {
                             if else_b.statements.is_empty() {
                                 return format!(
-                                    "if {} {{ {} }} el {{ {} }}",
+                                    "if {} {{ {} }} else {{ {} }}",
                                     self.fmt_expr(condition),
                                     self.fmt_expr(then_expr),
                                     self.fmt_expr(else_expr)
@@ -414,7 +414,7 @@ impl NebFmt {
                 self.indent -= 1;
                 out.push_str(&format!("{}}}", self.ind()));
                 if let Some(eb) = else_block {
-                    out.push_str(" el {\n");
+                    out.push_str(" else {\n");
                     self.indent += 1;
                     out.push_str(&self.fmt_block_body(eb));
                     self.indent -= 1;
@@ -424,7 +424,7 @@ impl NebFmt {
             }
 
             Expr::Match { subject, arms } => {
-                let mut out = format!("mc {} {{\n", self.fmt_expr(subject));
+                let mut out = format!("match {} {{\n", self.fmt_expr(subject));
                 self.indent += 1;
                 for arm in arms {
                     let pat = self.fmt_pattern(&arm.pattern);
@@ -515,7 +515,7 @@ impl NebFmt {
                 } else {
                     binding.clone()
                 };
-                let mut out = format!("fo {} in {} {{\n", bind, self.fmt_expr(iterable));
+                let mut out = format!("for {} in {} {{\n", bind, self.fmt_expr(iterable));
                 self.indent += 1;
                 out.push_str(&self.fmt_block_body(body));
                 self.indent -= 1;
@@ -524,7 +524,7 @@ impl NebFmt {
             }
 
             Expr::While { condition, body } => {
-                let mut out = format!("wl {} {{\n", self.fmt_expr(condition));
+                let mut out = format!("while {} {{\n", self.fmt_expr(condition));
                 self.indent += 1;
                 out.push_str(&self.fmt_block_body(body));
                 self.indent -= 1;
@@ -533,7 +533,7 @@ impl NebFmt {
             }
 
             Expr::Loop { body } => {
-                let mut out = format!("lp {{\n");
+                let mut out = format!("loop {{\n");
                 self.indent += 1;
                 out.push_str(&self.fmt_block_body(body));
                 self.indent -= 1;
@@ -546,7 +546,7 @@ impl NebFmt {
                 self.indent += 1;
                 out.push_str(&self.fmt_block_body(try_block));
                 self.indent -= 1;
-                out.push_str(&format!("{}}} ch {} {{\n", self.ind(), error_binding));
+                out.push_str(&format!("{}}} catch {} {{\n", self.ind(), error_binding));
                 self.indent += 1;
                 out.push_str(&self.fmt_block_body(catch_block));
                 self.indent -= 1;
@@ -650,32 +650,40 @@ mod tests {
 
     #[test]
     fn test_format_let() {
-        assert_eq!(fmt("lt   x  =  42").trim(), "lt x = 42");
+        // lt/let now format to walrus := (immutable binding)
+        assert_eq!(fmt("lt   x  =  42").trim(), "x := 42");
+        assert_eq!(fmt("let x = 42").trim(), "x := 42");
+        // Walrus := also parses correctly
+        assert_eq!(fmt("x := 42").trim(), "x := 42");
     }
 
     #[test]
     fn test_format_fn_short_form() {
+        // Old "fn" parses, formats to canonical "def"
         let result = fmt("fn double(x) = x * 2");
-        assert!(result.contains("fn double(x) = x * 2"));
+        assert!(result.contains("def double(x) = x * 2"));
+        // New "def" also works
+        let result2 = fmt("def double(x) = x * 2");
+        assert!(result2.contains("def double(x) = x * 2"));
     }
 
     #[test]
     fn test_format_fn_block() {
         let result = fmt("fn foo(x) {\n  lt y = x\n  y\n}");
-        assert!(result.contains("fn foo(x) {"));
-        assert!(result.contains("    lt y = x"));
+        assert!(result.contains("def foo(x) {"));
+        assert!(result.contains("    y := x"));
     }
 
     #[test]
     fn test_format_if_inline() {
         let result = fmt("if x > 0 { 1 } el { 2 }");
-        assert!(result.contains("if x > 0 { 1 } el { 2 }"));
+        assert!(result.contains("if x > 0 { 1 } else { 2 }"));
     }
 
     #[test]
     fn test_format_struct() {
         let result = fmt("st Point {\n  x: Float\n  y: Float\n}");
-        assert!(result.contains("st Point {"));
+        assert!(result.contains("struct Point {"));
         assert!(result.contains("    x: Float"));
     }
 
@@ -688,7 +696,7 @@ mod tests {
     #[test]
     fn test_format_match() {
         let result = fmt("mc x {\n  0 => \"zero\"\n  _ => \"other\"\n}");
-        assert!(result.contains("mc x {"));
+        assert!(result.contains("match x {"));
         assert!(result.contains("0 => \"zero\""));
         assert!(result.contains("_ => \"other\""));
     }
@@ -708,7 +716,7 @@ mod tests {
     #[test]
     fn test_roundtrip_preserves_semantics() {
         // Format, re-parse, re-format — should be identical
-        let source = "fn fact(n) = if n <= 1 { 1 } el { n * fact(n - 1) }";
+        let source = "def fact(n) = if n <= 1 { 1 } else { n * fact(n - 1) }";
         let formatted_once = fmt(source);
         let formatted_twice = fmt(formatted_once.trim());
         assert_eq!(formatted_once, formatted_twice);

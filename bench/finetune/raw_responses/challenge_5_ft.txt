@@ -1,0 +1,94 @@
+```nebula
+im Matrix {
+  fn Multiply(sf, other: Ptr<Matrix>) -> (Ptr<Matrix>, error) {
+    if sf.Cols != other.Rows {
+      rt (nil, fmt.Errorf("dimension mismatch: %dx%d vs %dx%d", sf.Rows, sf.Cols, other.Rows, other.Cols))
+    }
+    mt result = NewMatrix(sf.Rows, other.Cols)
+mt i = 0
+    wl i < sf.Rows {
+mt j = 0
+      wl j < other.Cols {
+        mt sum = go_var("float64")
+mt k = 0
+        wl k < sf.Cols {
+          sum = sum + sf.Data[i][k] * other.Data[k][j]
+          k += 1
+        }
+        result.Data[i][j] = sum
+        j += 1
+      }
+      i += 1
+    }
+    rt (result, nil)
+  }
+}
+im Matrix {
+  fn Transpose(sf) -> Ptr<Matrix> {
+    mt result = NewMatrix(sf.Cols, sf.Rows)
+mt i = 0
+    wl i < sf.Rows {
+mt j = 0
+      wl j < sf.Cols {
+        result.Data[j][i] = sf.Data[i][j]
+        j += 1
+      }
+      i += 1
+    }
+    rt result
+  }
+}
+im Matrix {
+  fn Determinant(sf) -> (float64, error) {
+    if sf.Rows != sf.Cols {
+      rt (0.0, fmt.Errorf("non-square matrix"))
+    }
+    mt det = go_var("float64")
+mt i = 0
+    wl i < sf.Rows {
+mt j = 0
+      wl j < sf.Cols {
+        mt sub = NewMatrix(sf.Rows - 1, sf.Cols - 1)
+mt k = 0
+        wl k < sf.Rows {
+          if k != i {
+            mt l = 0
+            wl l < sf.Cols {
+              sub.Data[k][l] = sf.Data[k][j]
+              l += 1
+            }
+            k += 1
+          }
+        }
+        det = det + (-1) ^ (i + j) * sf.Data[i][j] * sub.Determinant()
+        j += 1
+      }
+      i += 1
+    }
+    rt (det, nil)
+  }
+}
+fn LinearRegression(xs: List<float64>, ys: List<float64>) -> (slope: float64, intercept: float64, error) {
+  if ln(xs) != ln(ys) {
+    rt (0.0, 0.0, fmt.Errorf("length mismatch"))
+  }
+  mt n = ln(xs)
+mt sumx = go_var("float64")
+mt sumy = go_var("float64")
+mt sumxy = go_var("float64")
+mt sumxx = go_var("float64")
+mt sumyy = go_var("float64")
+mt sumxsq = go_var("float64")
+  fo i in xs {
+    sumx = sumx + i
+    sumy = sumy + ys[i]
+    sumxy = sumxy + i * ys[i]
+    sumxx = sumxx + i * i
+    sumyy = sumyy + ys[i] * ys[i]
+    sumxsq = sumxsq + i * i
+  }
+  mt a = (n * sumxy - sumx * sumy) / (n * sumxx - sumxsq)
+  mt b = (sumy - a * sumx) / n
+  rt (a, b, nil)
+}
+```

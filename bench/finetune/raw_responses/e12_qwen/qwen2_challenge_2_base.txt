@@ -1,0 +1,121 @@
+```nebula
+im Graph {
+  fn ShortestPath(sf, from: int, to: int) -> (List<int>, float64, error) {
+    mt distances = make("map[int]float64")
+    mt previous = make("map[int]int")
+    mt visited = make("map[int]bool")
+    fo _, n in sf.nodes {
+      distances[n.ID] = math.MaxFloat64
+      previous[n.ID] = -1
+    }
+    distances[from] = 0.0
+    mt pq = heap.MakeHeap(func(a, b float64) bool { return a < b })
+    pq.Push(distances[from])
+    while ln(pq) > 0 {
+      mt currentDist = pq.Top()
+      pq.Pop()
+      if visited[currentDist] {
+        ct
+      }
+      visited[currentDist] = tt
+      fo _, e in sf.edges {
+        if e.From == from and not visited[e.To] {
+          mt newDist = distances[from] + e.Cost
+          if newDist < distances[e.To] {
+            distances[e.To] = newDist
+            previous[e.To] = from
+            pq.Push(newDist)
+          }
+        }
+      }
+    }
+    if distances[to] == math.MaxFloat64 {
+      rt (nil, 0.0, ErrNoPath(from, to))
+    }
+    mt path = go_var("[]int")
+    mt current = to
+    while current != -1 {
+      path = psh(path, current)
+      current = previous[current]
+    }
+    path = reverse(path)
+    rt (path, distances[to], nil)
+  }
+
+  fn ConnectedComponents(sf) -> List<List<int>> {
+    mt visited = make("map[int]bool")
+    mt components = go_var("[][]int")
+    fo _, n in sf.nodes {
+      if not visited[n.ID] {
+        mt component = goset()
+        exploreComponent(n.ID, &component)
+        components = psh(components, sort(component))
+      }
+    }
+    rt components
+
+    fn exploreComponent(sf, node: int, component: *Set<int>) {
+      visited[node] = tt
+      (*component).Add(node)
+      fo _, e in sf.edges {
+        if (e.From == node and not visited[e.To]) or (e.To == node and not visited[e.From]) {
+          exploreComponent(e.To, component) // undirected graph exploration
+        }
+      }
+    }
+
+    fn sort(nodes: Set<int>) -> List<int> {
+      mt sorted = go_var("[]int")
+      fo n in nodes {
+        sorted = psh(sorted, n)
+      }
+      sort.Ints(sorted)
+      rt sorted
+    }
+  }
+
+  fn DetectCycles(sf) -> bool {
+    mt visited = make("map[int]bool")
+    mt recStack = make("map[int]bool")
+    fo _, n in sf.nodes {
+      if not visited[n.ID] and detectCycle(n.ID, visited, recStack) {
+        rt tt
+      }
+    }
+    rt ff
+
+    fn detectCycle(sf, node: int, visited: *Map<int,bool>, recStack: *Map<int,bool>) -> bool {
+      (*visited)[node] = tt
+      (*recStack)[node] = tt
+      fo _, e in sf.edges {
+        if (e.From == node and not (*visited)[e.To]) or ((*visited)[e.To] and (*recStack)[e.To]) {
+          rt tt
+        } else if (e.From == node) {
+          detectCycle(e.To, visited, recStack)
+        }
+      }
+      (*recStack)[node] = ff
+      rt ff
+    }
+  }
+
+  fn FilterByTag(sf, tag: string) -> List<Edge> {
+    mt filteredEdges = go_var("[]Edge")
+    fo _, e in sf.edges {
+      if contains(e.Tags, tag) {
+        filteredEdges = psh(filteredEdges, e)
+      }
+    }
+    rt filteredEdges
+
+    fn contains(tags: List<string>, tag: string) -> bool {
+      fo t in tags {
+        if t == tag {
+          rt tt
+        }
+      }
+      rt ff
+    }
+  }
+}
+```

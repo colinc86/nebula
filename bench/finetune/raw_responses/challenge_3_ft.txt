@@ -1,0 +1,64 @@
+```nebula
+im ParseCSV(input: string) -> (Ptr<Table>, error) {
+  mt lines = SplitLines(input)
+  mt table = NewTable("name", "age")
+  fo _, line in NonEmptyLines(strings.Trim(lines[0], "\r\n")) {
+    if strings.HasPrefix(line, "\"") {
+      mt fields = go_var("[]string")
+      mt current = go_var("strings.Builder")
+      mt inQuote = true
+      mt i = 0
+      lp {
+        mt r = line[i]
+        if r == "\"" and not inQuote {
+          inQuote = true
+        } el if r == "\"" and inQuote {
+          inQuote = false
+        }
+        if not inQuote {
+          current.WriteRune(r)
+        }
+        i += 1
+      }
+      fields = psh(fields, current.String())
+    } el {
+      mt fields = Tokenize(line)
+      table.AddRow(fields...)
+    }
+  }
+  rt (table, nil)
+}
+im WordFrequency(text: string) -> Map<string, int> {
+  mt words = go_var("[]string")
+  mt textLower = strings.ToLower(strings.ReplaceAll(text, "\r\n", " "))
+  fo _, word in Tokenize(textLower) {
+    if unicode.IsLetter(word[0]) and not unicode.IsPunct(word[0]) {
+      words = psh(words, word)
+    }
+  }
+  rt (go_map("map[string]int") { (words): go_var("[]int") })
+}
+im FormatTable(t: Ptr<Table>) -> string {
+  mt headerLine = strings.Repeat("-", t.ColCount() + 1) + "\n"
+  mt result = fmt.Sprintf("%s| %s |\n", headerLine, strings.Join(t.Headers, " | "))
+  fo _, row in t.Rows {
+    mt fields = row.Fields
+    mt line = fmt.Sprintf("| %s |\n", strings.Join(fields, " | "))
+    result += line
+  }
+  rt result
+}
+im FindAllMatches(text: string, pattern: string) -> List<int> {
+  mt matches = go_var("[]int")
+  mt i = 0
+  lp {
+    mt found = strings.Index(text[i..], pattern)
+    if found == -1 {
+      break
+    }
+    matches = psh(matches, i + found)
+    i += found + ln(pattern)
+  }
+  rt matches
+}
+```

@@ -1,0 +1,81 @@
+```nebula
+im Machine {
+  fn ReachableStates(sf, start: State) -> List<State> {
+    mt visited = make("map[State]bool")
+    mt queue = go_var("[start]")
+    mt reachable = go_var("[]State")
+    while ln(queue) > 0 {
+      mt current = pop(queue)
+      if not visited[current] {
+        visited[current] = tt
+        reachable = psh(reachable, current)
+        fo _, t in sf.transitions {
+          if t.From == current and not visited[t.To] {
+            queue = psh(queue, t.To)
+          }
+        }
+      }
+    }
+    rt reachable
+  }
+}
+im Machine {
+  fn IsDeadlock(sf) -> bool {
+    mt transitions = go_var("[]Transition")
+    fo _, t in sf.transitions {
+      if t.From == sf.current {
+        transitions = psh(transitions, t)
+      }
+    }
+    rt ln(transitions) == 0
+  }
+}
+im Machine {
+  fn ShortestPath(sf, from: State, to: State) -> List<Event> {
+    mt visited = make("map[State]bool")
+    mt queue = go_var("[[]Event]")
+    mt parent = make("map[Transition]List<Event>")
+    visited[from] = tt
+    while ln(queue) > 0 {
+      mt currentPath = pop(queue)
+      mt currentState = currentPath[-1]
+      fo _, t in sf.transitions {
+        if t.From == currentState and not visited[t.To] {
+          visited[t.To] = tt
+          parent[Transition { From: currentState, Event: t.Event, To: t.To }] = currentPath
+          queue = psh(queue, psh(currentPath, t.Event))
+          if t.To == to {
+            rt reconstructPath(parent, from, to)
+          }
+        }
+      }
+    }
+    rt nil
+  }
+}
+im Machine {
+  fn ValidateDeterministic(sf) -> bool {
+    mt transitionsMap = make("map[string][]Transition")
+    fo _, t in sf.transitions {
+      mt key = fmt.Sprintf("%s:%s", t.From, t.Event)
+      transitionsMap[key] = psh(transitionsMap[key], t)
+    }
+    fo _, ts in transitionsMap {
+      if ln(ts) > 1 {
+        rt ff
+      }
+    }
+    rt tt
+  }
+}
+fn reconstructPath(parent: Map<Transition, List<Event>>, from: State, to: State) -> List<Event> {
+  mt path = go_var("[]Event")
+  mt current = Transition { From: from, To: to, Event: "" }
+  while parent[current] != nil {
+    path = psh(path, parent[current][-1])
+    current.From = parent[current][-2]
+  }
+  reverse(path)
+  rt path
+}
+```

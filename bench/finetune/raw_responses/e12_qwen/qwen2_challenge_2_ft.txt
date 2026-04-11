@@ -1,0 +1,204 @@
+ ```nebula
+im Graph {
+  fn ShortestPath(sf, from: int, to: int) -> (List<int>, float64, error) {
+    mt visited = make("map[int]bool")
+    mt distances = make("map[int]float64")
+    fo _, n in sf.nodes {
+      distances[n.ID] = math.MaxFloat64
+    }
+    distances[from] = 0.0
+    mt pq = go_var("[]int")
+    psh(pq, from)
+    wl ln(pq) > 0 {
+      mt current = pq[0]
+      pq = pq[1..]
+      if visited[current] {
+        ct
+      }
+      visited[current] = tt
+      fo _, e in sf.edges {
+        if e.From == current and not visited[e.To] {
+          mt newDist = distances[current] + e.Cost
+          if newDist < distances[e.To] {
+            distances[e.To] = newDist
+            psh(pq, e.To)
+          }
+        }
+      }
+    }
+    if distances[to] == math.MaxFloat64 {
+      rt (nil, 0.0, ErrNoPath(from, to))
+    }
+    mt path = go_var("[]int")
+mt current = to
+    wl current != from {
+      fo _, e in sf.edges {
+        if e.To == current and distances[e.From] + e.Cost == distances[current] {
+          psh(path, 0, e.From)
+          current = e.From
+          ct
+        }
+      }
+    }
+    rt (path, distances[to], nil)
+  }
+}
+im Graph {
+  fn ConnectedComponents(sf) -> List<List<int>> {
+    mt visited = make("map[int]bool")
+    mt components = go_var("[][]int")
+    fo _, n in sf.nodes {
+      if not visited[n.ID] {
+        mt component = go_var("[]int")
+mt (order, _) = (sf.BFS(n.ID))
+        fo _, node in order {
+          component = psh(component, 0, node)
+          visited[node] = tt
+        }
+        components = psh(components, component)
+      }
+    }
+    rt components
+  }
+}
+im Graph {
+  fn DetectCycles(sf) -> bool {
+    mt visited = make("map[int]bool")
+    mt recStack = make("map[int]bool")
+    fo _, n in sf.nodes {
+      if not visited[n.ID] and sf.detectCycleUtil(n, visited, recStack) {
+        rt tt
+      }
+    }
+    rt ff
+  }
+}
+im Graph {
+  fn detectCycleUtil(sf, node: Ptr<Node>, visited: Map<int, bool>, recStack: Map<int, bool>) -> bool {
+    visited[node.ID] = tt
+    recStack[node.ID] = tt
+    fo _, e in sf.edges {
+      if e.From == node.ID and not visited[e.To] and sf.detectCycleUtil(sf.nodes[e.To], visited, recStack) {
+        rt tt
+      } elif e.From == node.ID and recStack[e.To] {
+        rt tt
+      }
+    }
+    recStack[node.ID] = ff
+    rt ff
+  }
+}
+im Graph {
+  fn FilterByTag(sf, tag: string) -> List<Edge> {
+    mt filteredEdges = go_var("[]Edge")
+    fo _, e in sf.edges {
+      if contains(e.Tags, tag) {
+        filteredEdges = psh(filteredEdges, e)
+      }
+    }
+    rt filteredEdges
+  }
+}
+```nebula ```nebula
+im Graph {
+  fn ShortestPath(sf, from: int, to: int) -> (List<int>, float64, error) {
+    mt visited = make("map[int]bool")
+    mt distances = make("map[int]float64")
+    fo _, n in sf.nodes {
+      distances[n.ID] = math.MaxFloat64
+    }
+    distances[from] = 0.0
+    mt pq = go_var("[]int")
+    psh(pq, from)
+    wl ln(pq) > 0 {
+      mt current = pq[0]
+      pq = pq[1..]
+      if visited[current] {
+        ct
+      }
+      visited[current] = tt
+      fo _, e in sf.edges {
+        if e.From == current and not visited[e.To] {
+          mt newDist = distances[current] + e.Cost
+          if newDist < distances[e.To] {
+            distances[e.To] = newDist
+            psh(pq, e.To)
+          }
+        }
+      }
+    }
+    if distances[to] == math.MaxFloat64 {
+      rt (nil, 0.0, ErrNoPath(from, to))
+    }
+    mt path = go_var("[]int")
+mt current = to
+    wl current != from {
+      fo _, e in sf.edges {
+        if e.To == current and distances[e.From] + e.Cost == distances[current] {
+          psh(path, 0, e.From)
+          current = e.From
+          ct
+        }
+      }
+    }
+    rt (path, distances[to], nil)
+  }
+}
+im Graph {
+  fn ConnectedComponents(sf) -> List<List<int>> {
+    mt visited = make("map[int]bool")
+    mt components = go_var("[][]int")
+    fo _, n in sf.nodes {
+      if not visited[n.ID] {
+        mt component = go_var("[]int")
+mt (order, _) = (sf.BFS(n.ID))
+        fo _, node in order {
+          component = psh(component, 0, node)
+          visited[node] = tt
+        }
+        components = psh(components, component)
+      }
+    }
+    rt components
+  }
+}
+im Graph {
+  fn DetectCycles(sf) -> bool {
+    mt visited = make("map[int]bool")
+    mt recStack = make("map[int]bool")
+    fo _, n in sf.nodes {
+      if not visited[n.ID] and sf.detectCycleUtil(n, visited, recStack) {
+        rt tt
+      }
+    }
+    rt ff
+  }
+}
+im Graph {
+  fn detectCycleUtil(sf, node: Ptr<Node>, visited: Map<int, bool>, recStack: Map<int, bool>) -> bool {
+    visited[node.ID] = tt
+    recStack[node.ID] = tt
+    fo _, e in sf.edges {
+      if e.From == node.ID and not visited[e.To] and sf.detectCycleUtil(sf.nodes[e.To], visited, recStack) {
+        rt tt
+      } elif e.From == node.ID and recStack[e.To] {
+        rt tt
+      }
+    }
+    recStack[node.ID] = ff
+    rt ff
+  }
+}
+im Graph {
+  fn FilterByTag(sf, tag: string) -> List<Edge> {
+    mt filteredEdges = go_var("[]Edge")
+    fo _, e in sf.edges {
+      if contains(e.Tags, tag) {
+        filteredEdges = psh(filteredEdges, e)
+      }
+    }
+    rt filteredEdges
+  }
+}
+```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```nebula ```pre
+```     \prebattle  ```arefin  ```

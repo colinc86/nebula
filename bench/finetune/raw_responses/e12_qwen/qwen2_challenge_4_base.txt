@@ -1,0 +1,77 @@
+```nebula
+im Machine {
+  fn ReachableStates(sf, start: State) -> List<State> {
+    mt visited = make("map[State]bool")
+    mt queue = go_var("[start]")
+    mt reachable = go_var("[]State")
+    while ln(queue) > 0 {
+      mt current = pop(queue)
+      if not visited[current] {
+        visited[current] = tt
+        reachable = psh(reachable, current)
+        fo _, t in sf.transitions {
+          if t.From == current and not visited[t.To] {
+            queue = psh(queue, t.To)
+          }
+        }
+      }
+    }
+    rt reachable
+  }
+}
+im Machine {
+  fn IsDeadlock(sf) -> bool {
+    sf.mu.RLock()
+    defer sf.mu.RUnlock()
+    fo _, t in sf.transitions {
+      if t.From == sf.current {
+        rt ff
+      }
+    }
+    rt tt
+  }
+}
+im Machine {
+  fn ShortestPath(sf, from: State, to: State) -> List<Event> {
+    mt visited = make("map[State]bool")
+    mt queue = go_var("[from]")
+    mt parent = make("map[Event]State")
+    while ln(queue) > 0 {
+      mt current = pop(queue)
+      if current == to {
+        mt path = go_var("[]Event")
+        fo _, e in parent {
+          if parent[e] == from {
+            bk
+          }
+          path = psh(path, e)
+        }
+        reverse(path)
+        rt path
+      }
+      visited[current] = tt
+      fo _, t in sf.transitions {
+        if t.From == current and not visited[t.To] {
+          queue = psh(queue, t.To)
+          parent[t.Event] = current
+        }
+      }
+    }
+    rt nil
+  }
+}
+im Machine {
+  fn ValidateDeterministic(sf) -> bool {
+    sf.mu.RLock()
+    defer sf.mu.RUnlock()
+    mt seen = make("map[State][Event]bool")
+    fo _, t in sf.transitions {
+      if seen[t.From][t.Event] {
+        rt ff
+      }
+      seen[t.From][t.Event] = tt
+    }
+    rt tt
+  }
+}
+```

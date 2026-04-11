@@ -9,7 +9,30 @@ use tree_sitter::{Node, Parser};
 // ── Public API ──
 
 pub fn from_python(source: &str) -> String {
-    convert_with_language(source, tree_sitter_python::LANGUAGE.into(), python::emit)
+    let mut parser = Parser::new();
+    parser.set_language(&tree_sitter_python::LANGUAGE.into()).expect("Failed to set Python language");
+    let tree = match parser.parse(source, None) {
+        Some(t) => t,
+        None => return source.to_string(),
+    };
+    let root = tree.root_node();
+    let nebula = python::emit(&root, source.as_bytes(), 0);
+    // Python-specific postprocess: no Go/Rust regex, no ternary munging (the
+    // ingester's `conditional_expression` arm already handles ternaries on the
+    // AST level, and running the line-based ternary fix over Python output
+    // corrupts docstrings).
+    // Python-specific: skip insert_lt_on_first_assignment since Python
+    // doesn't distinguish declaration vs reassignment. Bare assignment is cheaper.
+    let nebula = postprocess_python_no_lt(&nebula);
+    let nebula = strip_semicolons(&nebula);
+    // Python output preserves indentation; skip minify's block-flattening.
+    let nebula = strip_comments_and_blanks(&nebula);
+    let nebula = canonicalize(&nebula);
+    // Convert brace blocks to indent blocks (Python-native form is cheaper)
+    let nebula = braces_to_indent(&nebula);
+    // Strip remaining := back to = for Python (no declaration distinction needed)
+    let nebula = nebula.replace(" := ", " = ");
+    nebula.trim_end().to_string()
 }
 
 pub fn from_javascript(source: &str) -> String {
@@ -32,7 +55,9 @@ pub fn from_go(source: &str) -> String {
     // Go-specific postprocess: skip fix_generics (Go emitter handles types properly)
     let nebula = postprocess_go(&nebula);
     let nebula = strip_semicolons(&nebula);
-    minify(&nebula)
+    let nebula = minify(&nebula);
+    let nebula = canonicalize(&nebula);
+    braces_to_indent(&nebula)
 }
 
 pub fn from_swift(source: &str) -> String {
@@ -42,7 +67,9 @@ pub fn from_swift(source: &str) -> String {
     let nebula = postprocess(&nebula);
     let nebula = strip_semicolons(&nebula);
     let nebula = minify(&nebula);
-    fix_raw_keywords(&nebula)
+    let nebula = fix_raw_keywords(&nebula);
+    let nebula = canonicalize(&nebula);
+    braces_to_indent(&nebula)
 }
 
 pub fn from_kotlin(source: &str) -> String {
@@ -52,7 +79,9 @@ pub fn from_kotlin(source: &str) -> String {
     let nebula = postprocess(&nebula);
     let nebula = strip_semicolons(&nebula);
     let nebula = minify(&nebula);
-    fix_raw_keywords(&nebula)
+    let nebula = fix_raw_keywords(&nebula);
+    let nebula = canonicalize(&nebula);
+    braces_to_indent(&nebula)
 }
 
 pub fn from_rust(source: &str) -> String {
@@ -88,6 +117,10 @@ fn convert_with_language(
     let nebula = minify(&nebula);
     // Final keyword cleanup (runs AFTER minify so whitespace is normalized)
     let nebula = fix_raw_keywords(&nebula);
+    // Canonical normalization: snake_case, Python-native method names, etc.
+    let nebula = canonicalize(&nebula);
+    // Convert brace blocks to indent blocks (saves ~1 token per block boundary)
+    let nebula = braces_to_indent(&nebula);
     // Strip orphan closing braces at end of file ONLY if braces are unbalanced
     let nebula = nebula.trim_end();
     let opens = nebula.chars().filter(|&c| c == '{').count();
@@ -104,6 +137,247 @@ fn convert_with_language(
     } else {
         nebula.to_string()
     }
+}
+
+/// Python-specific postprocess: the Python ingester's AST walker already
+/// produces near-final Nebula, so this is just a few string-level cleanups.
+/// Deliberately does NOT run Go/Rust/Swift regex rules (which corrupt
+/// docstrings) or `fix_python_ternary` (the ingester emits ternaries directly
+/// from `conditional_expression` nodes).
+/// Python postprocess without inserting lt/let on first assignments.
+/// Python doesn't distinguish declaration vs reassignment, so bare assignment is cheaper.
+fn postprocess_python_no_lt(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    for line in source.lines() {
+        let processed = rewrite_python_line(line);
+        out.push_str(&processed);
+        out.push('\n');
+    }
+    out
+}
+
+fn postprocess_python(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    for line in source.lines() {
+        let processed = rewrite_python_line(line);
+        out.push_str(&processed);
+        out.push('\n');
+    }
+    // Second pass: insert `lt` before the first bare `name = expr` assignment
+    // within each function body. Python has no declaration vs reassignment
+    // distinction, but Nebula's linter treats unprefixed first-assignments as
+    // rebinding. We track function-scoped name sets using `fn ... {` as the
+    // scope entry marker.
+    insert_lt_on_first_assignment(&out)
+}
+
+fn insert_lt_on_first_assignment(source: &str) -> String {
+    // Parse line-by-line. Maintain a stack of (depth, HashSet<String>) pairs.
+    // On `fn NAME(PARAMS) ... {` push a new frame seeded with the parameter
+    // names. On matching `}` pop. On `name = expr` at depth > 0 (inside some
+    // function frame), if name is not in the current frame set, prepend `lt `
+    // and add it.
+    use std::collections::HashSet;
+    let mut out = String::with_capacity(source.len());
+    let mut stack: Vec<HashSet<String>> = Vec::new();
+    // Pre-declare names at each brace level so we know when a frame pops.
+    let mut brace_stack: Vec<usize> = Vec::new(); // number of open braces at frame boundary
+    let mut open_braces = 0i32;
+
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+        // Detect function entry: `fn NAME(PARAMS) ... {`
+        if trimmed.starts_with("fn ") && line.trim_end().ends_with('{') {
+            // Extract parameter names.
+            let mut params = HashSet::new();
+            if let (Some(lp), Some(rp)) = (line.find('('), line.rfind(')')) {
+                let inner = &line[lp + 1..rp];
+                for p in inner.split(',') {
+                    let p = p.trim();
+                    if p.is_empty() { continue; }
+                    // `name: Type` or `name = default` or just `name`
+                    let name = p.split(|c: char| c == ':' || c == '=').next().unwrap_or("").trim();
+                    if !name.is_empty() {
+                        params.insert(name.to_string());
+                    }
+                }
+            }
+            stack.push(params);
+            brace_stack.push(open_braces as usize);
+            open_braces += 1;
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+        // Non-fn brace bookkeeping.
+        let opens = line.chars().filter(|&c| c == '{').count() as i32;
+        let closes = line.chars().filter(|&c| c == '}').count() as i32;
+        open_braces += opens;
+        open_braces -= closes;
+
+        // Pop frames whose scope brace has closed.
+        while let Some(&frame_braces) = brace_stack.last() {
+            if (open_braces as usize) <= frame_braces {
+                stack.pop();
+                brace_stack.pop();
+            } else {
+                break;
+            }
+        }
+
+        if !stack.is_empty() {
+            if let Some(new_line) = maybe_add_lt(line, stack.last_mut().unwrap()) {
+                out.push_str(&new_line);
+                out.push('\n');
+                continue;
+            }
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
+/// If `line` is a bare `NAME = EXPR` assignment where NAME is not yet in
+/// `seen`, return `lt NAME = EXPR` and mark it seen. Returns None otherwise.
+fn maybe_add_lt(line: &str, seen: &mut std::collections::HashSet<String>) -> Option<String> {
+    let leading = line.len() - line.trim_start().len();
+    let (prefix, body) = line.split_at(leading);
+    // Must not already start with a keyword that owns the line.
+    for kw in &["lt ", "mt ", "fn ", "rt", "if ", "el", "fo ", "wl ", "lp", "mc ", "st ", "en ", "im ", "tr ", "ct", "bk", "//", "use ", "try", "ch "] {
+        if body.starts_with(kw) || body == kw.trim_end() {
+            return None;
+        }
+    }
+    // Find an `=` not preceded by a comparison/assignment operator char.
+    let bytes = body.as_bytes();
+    let mut eq_pos = None;
+    let mut depth = 0i32;
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        match b {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b'"' | b'\'' => {
+                // skip to matching quote
+                let q = b;
+                i += 1;
+                while i < bytes.len() {
+                    if bytes[i] == b'\\' {
+                        i += 2;
+                        continue;
+                    }
+                    if bytes[i] == q {
+                        break;
+                    }
+                    i += 1;
+                }
+            }
+            b'=' if depth == 0 => {
+                let prev = if i > 0 { bytes[i - 1] } else { b' ' };
+                let next = if i + 1 < bytes.len() { bytes[i + 1] } else { b' ' };
+                // Skip ==, !=, <=, >=, =>, +=, -=, *=, /=, %=
+                if matches!(prev, b'=' | b'!' | b'<' | b'>' | b'+' | b'-' | b'*' | b'/' | b'%' | b':') {
+                    i += 1;
+                    continue;
+                }
+                if next == b'=' || next == b'>' {
+                    i += 1;
+                    continue;
+                }
+                eq_pos = Some(i);
+                break;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    let eq_pos = eq_pos?;
+    let lhs = body[..eq_pos].trim();
+    // LHS must be a simple identifier (no dots, no brackets, no parens).
+    if lhs.is_empty() {
+        return None;
+    }
+    let first = lhs.chars().next().unwrap();
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return None;
+    }
+    if !lhs.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return None;
+    }
+    if seen.contains(lhs) {
+        return None;
+    }
+    seen.insert(lhs.to_string());
+    Some(format!("{}lt {}", prefix, body))
+}
+
+/// Rewrite a single line of Python-derived Nebula, avoiding edits inside
+/// string literals.
+fn rewrite_python_line(line: &str) -> String {
+    // Split by top-level string boundaries and rewrite only the outside parts.
+    let chars: Vec<char> = line.chars().collect();
+    let mut result = String::with_capacity(line.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '"' || c == '\'' {
+            // Copy string literal verbatim (respecting escapes).
+            let quote = c;
+            result.push(c);
+            i += 1;
+            while i < chars.len() {
+                let ch = chars[i];
+                result.push(ch);
+                if ch == '\\' && i + 1 < chars.len() {
+                    result.push(chars[i + 1]);
+                    i += 2;
+                    continue;
+                }
+                i += 1;
+                if ch == quote {
+                    break;
+                }
+            }
+            continue;
+        }
+        result.push(c);
+        i += 1;
+    }
+    // Apply small outside-string rewrites over the whole line. These are safe
+    // because the line's string contents are already copied verbatim above.
+    let applied = apply_safe_python_rewrites(&result);
+    applied
+}
+
+fn apply_safe_python_rewrites(line: &str) -> String {
+    // Only the rewrites that are unambiguous outside string literals.
+    // `self.` / `this.` → `sf.` and bare `self` → `sf`, etc., are already
+    // handled inside python::emit_expr. We leave this as a no-op pass and
+    // only do cleanups that the AST walker can't easily express.
+    line.to_string()
+}
+
+/// Minimal cleanup for Python output: strip comments and blank lines but
+/// preserve indentation (unlike `minify`, which flattens nested blocks).
+fn strip_comments_and_blanks(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.starts_with("//") {
+            // Keep // comments — they may be real code comments.
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
 }
 
 /// Go-specific postprocess: minimal cleanup, no generic conversion
@@ -815,40 +1089,39 @@ fn fix_raw_keywords(source: &str) -> String {
         let trimmed = line.trim_start();
         let ws = &line[..line.len() - trimmed.len()];
 
-        // return → rt, for → fo
-        let trimmed = if trimmed.starts_with("return ") {
-            format!("rt {}", &trimmed[7..])
-        } else if trimmed == "return" {
-            "rt".to_string()
+        // Keep keywords in canonical (Python-length) form
+        let trimmed = if trimmed.starts_with("return ") || trimmed == "return" {
+            // Already canonical — keep as-is
+            trimmed.to_string()
         } else if trimmed.starts_with("match ") {
-            format!("mc {}", &trimmed[6..])
+            // Already canonical — keep as-is
+            trimmed.to_string()
         } else if trimmed.starts_with("for ") {
             // C-style for with semicolons → while loop
             if trimmed.contains(';') {
-                // Extract condition from "for (init; cond; update) {" → "wl cond {"
                 let inner = trimmed.strip_prefix("for ").unwrap_or(trimmed);
                 let inner = inner.trim_start_matches('(');
                 let parts: Vec<&str> = inner.splitn(3, ';').collect();
                 if parts.len() >= 2 {
                     let cond = parts[1].trim();
-                    format!("wl {} {{", cond)
+                    format!("while {} {{", cond)
                 } else {
-                    format!("fo {}", &trimmed[4..])
+                    trimmed.replace(" = ", " in ")
                 }
             } else {
-                format!("fo {}", &trimmed[4..]).replace(" = ", " in ")
+                trimmed.replace(" = ", " in ")
             }
         } else if trimmed.starts_with("fo ") && trimmed.contains(" = ") && trimmed.contains('{') {
             // Go range that still has = instead of in
             trimmed.replace(" = ", " in ")
         }
-        // Python tuple unpacking: "a, b = 0, 1" → "lt (a, b) = (0, 1)"
+        // Python tuple unpacking: "a, b = 0, 1" → "let (a, b) = (0, 1)"
         else if trimmed.contains(", ") && trimmed.contains(" = ")
                 && !trimmed.contains("for ") && !trimmed.contains("fo ")
                 && !trimmed.contains("range") && !trimmed.contains("in ") {
             let parts: Vec<&str> = trimmed.splitn(2, " = ").collect();
             if parts.len() == 2 && parts[0].contains(',') && !parts[0].contains('(') {
-                format!("lt ({}) = ({})", parts[0], parts[1])
+                format!("let ({}) = ({})", parts[0], parts[1])
             } else {
                 trimmed.to_string()
             }
@@ -939,6 +1212,1172 @@ fn strip_semicolons(source: &str) -> String {
         .join("\n")
 }
 
+/// Convert brace-delimited blocks to indent-based (colon) blocks.
+/// `def foo() {` → `def foo():`
+/// `} else {` → `else:`
+/// standalone `}` lines → removed (indentation handles it)
+/// Also converts `struct X {} / impl X {` → `class X:`
+fn braces_to_indent(source: &str) -> String {
+    let mut out = Vec::new();
+    let lines: Vec<&str> = source.lines().collect();
+    let mut skip_empty_struct = false;
+
+    for i in 0..lines.len() {
+        let line = lines[i];
+        let trimmed = line.trim();
+        let ws = &line[..line.len() - trimmed.len()];
+
+        // Skip standalone } lines (block closers handled by indentation)
+        if trimmed == "}" {
+            continue;
+        }
+
+        // struct X {} followed by impl X { → class X:
+        if trimmed.starts_with("struct ") && trimmed.ends_with("{}") {
+            // Check if next non-empty line is impl for same type
+            let struct_name = trimmed.strip_prefix("struct ").unwrap()
+                .trim_end_matches("{}").trim();
+            let next = lines[i+1..].iter().find(|l| !l.trim().is_empty());
+            if let Some(next_line) = next {
+                let nt = next_line.trim();
+                if nt.starts_with("impl ") && nt.ends_with('{') {
+                    let impl_name = nt.strip_prefix("impl ").unwrap()
+                        .trim_end_matches('{').trim();
+                    if impl_name == struct_name {
+                        // Merge into class — skip this struct line, transform impl → class
+                        skip_empty_struct = true;
+                        continue;
+                    }
+                }
+            }
+            // Standalone empty struct — keep it
+            out.push(line.to_string());
+            continue;
+        }
+
+        // impl X { → class X: (when preceded by matching empty struct)
+        if skip_empty_struct && trimmed.starts_with("impl ") && trimmed.ends_with('{') {
+            let name = trimmed.strip_prefix("impl ").unwrap()
+                .trim_end_matches('{').trim();
+            out.push(format!("{}class {}:", ws, name));
+            skip_empty_struct = false;
+            continue;
+        }
+        skip_empty_struct = false;
+
+        // Lines ending with { → replace { with :
+        if trimmed.ends_with('{') && !trimmed.starts_with('"') {
+            let without_brace = trimmed.trim_end_matches('{').trim_end();
+
+            // } else { → else:
+            if without_brace == "} else" {
+                out.push(format!("{}else:", ws));
+                continue;
+            }
+            // } else if COND { → elif COND: (saves 1 token)
+            if without_brace.starts_with("} else if ") {
+                let cond = without_brace.strip_prefix("} else if ").unwrap();
+                out.push(format!("{}elif {}:", ws, cond));
+                continue;
+            }
+            // } catch VAR { → except VAR: (Python-native)
+            if without_brace.starts_with("} catch ") {
+                let rest = without_brace.strip_prefix("} catch ").unwrap();
+                out.push(format!("{}except {}:", ws, rest));
+                continue;
+            }
+            // try { → try:
+            if without_brace == "try" {
+                out.push(format!("{}try:", ws));
+                continue;
+            }
+
+            // General case: "def foo() {" → "def foo():"
+            out.push(format!("{}{}:", ws, without_brace));
+            continue;
+        }
+
+        // Regular line — keep as-is
+        out.push(line.to_string());
+    }
+
+    out.join("\n")
+}
+
+/// Canonical normalization pass. Runs after all language-specific postprocessing
+/// to produce a single canonical Nebula form regardless of source language.
+///
+/// Normalizes:
+/// 1. Identifiers: camelCase/PascalCase → snake_case
+/// 2. Method short aliases: .fl() → .filter(), .mp() → .map(), etc.
+/// 3. Builtin short aliases: ln() → len(), rng() → range(), prt() → print()
+/// 4. Type names: string → Str, bool → Bool, int → Int, boolean → Bool
+/// 5. Constructor patterns: Task.new(...) → Task(...)
+/// 6. Boolean literals: true/false → tt/ff (already handled, but ensure consistency)
+fn canonicalize(source: &str) -> String {
+    let mut s = source.to_string();
+
+    // ── 0. Normalize short-form keywords to canonical (Python-length) form ──
+    s = normalize_keywords(&s);
+
+    // ── 1. Normalize short method aliases to Python-native names ──
+    // These are method calls: .alias(
+    s = s.replace(".fl(", ".filter(")
+         .replace(".mp(", ".map(")
+         .replace(".ln(", ".len(")
+         .replace(".ln\n", ".len\n")
+         .replace(".ln ", ".len ")
+         .replace(".jn(", ".join(")
+         .replace(".fld(", ".reduce(")
+         .replace(".ea(", ".for_each(")
+         .replace(".rev(", ".reverse(")
+         .replace(".it(", ".iter(")
+         .replace(".col(", ".collect(")
+         .replace(".uw(", ".unwrap(")
+         .replace(".is_empty(", ".emp(")
+         .replace(".clr(", ".clear(")
+         .replace(".enu(", ".enumerate(")
+         .replace(".ins(", ".insert(")
+         .replace(".ck(", ".contains(");
+    // Method as property: .ln (no parens) — e.g., JS .length
+    // Only replace when .ln is at end of token (followed by space, newline, or operator)
+
+    // ── 2. Normalize short builtin aliases to Python-native names ──
+    // These are standalone function calls: alias(
+    s = s.replace("prt(", "print(")
+         .replace("psh(", "append(")
+         .replace(" ln(", " len(")
+         .replace("(ln(", "(len(")
+         .replace("[ln(", "[len(")
+         .replace("rng(", "range(")
+         .replace("enu(", "enumerate(");
+
+    // ── 3. Normalize type names to canonical forms ──
+    s = s.replace(": string", ": Str")
+         .replace(": String", ": Str")
+         .replace(": bool", ": Bool")
+         .replace(": boolean", ": Bool")
+         .replace(": Boolean", ": Bool")
+         .replace(": int", ": Int")
+         .replace(": number", ": Int")
+         .replace(": float", ": Float")
+         .replace(": double", ": Float")
+         .replace("-> string", "-> Str")
+         .replace("-> String", "-> Str")
+         .replace("-> bool", "-> Bool")
+         .replace("-> boolean", "-> Bool")
+         .replace("-> Boolean", "-> Bool")
+         .replace("-> int", "-> Int")
+         .replace("-> number", "-> Int")
+         .replace("-> float", "-> Float")
+         .replace("-> double", "-> Float");
+
+    // ── 4. Normalize constructor patterns ──
+    // Task.new(...) → Task(...) — Python-style constructors
+    // Only for identifiers that start with uppercase (type names)
+    let mut chars = s.chars().peekable();
+    let mut buf = String::new();
+    while let Some(c) = chars.next() {
+        buf.push(c);
+        // Check for ".new(" pattern after an identifier
+        if c == '.' {
+            if buf.len() >= 2 {
+                let before_dot = &buf[..buf.len() - 1];
+                let last_ident: String = before_dot.chars().rev()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_')
+                    .collect::<String>().chars().rev().collect();
+                if !last_ident.is_empty() && last_ident.chars().next().unwrap().is_uppercase() {
+                    // Check if "new(" follows
+                    let peek: String = chars.clone().take(4).collect();
+                    if peek.starts_with("new(") {
+                        // Skip "new" — the dot is already in buf, remove it
+                        buf.pop(); // remove the '.'
+                        for _ in 0..3 { chars.next(); } // skip "new"
+                        // Next char should be '(' which we'll naturally pick up
+                        continue;
+                    }
+                }
+            }
+        }
+    }
+    s = buf;
+
+    // ── 5. Normalize identifiers: camelCase → snake_case ──
+    s = normalize_identifiers(&s);
+
+    // ── 6. Normalize Go-style format strings to interpolation ──
+    s = normalize_format_strings(&s);
+
+    // ── 7. Strip language-specific residual patterns ──
+    // Vec.new() / Vec() → []
+    s = s.replace("Vec.new()", "[]").replace("Vec()", "[]");
+    // go_var("...") → appropriate literal
+    s = normalize_go_vars(&s);
+    // Go generic types: List<Task> → List, Map<K, V> → Map, Ptr<T> → T
+    s = strip_generic_params(&s);
+
+    // Strip Rust iterator ceremony: .iter().filter() → .filter(), .iter().map() → .map()
+    s = s.replace(".iter().filter(", ".filter(")
+         .replace(".iter().map(", ".map(")
+         .replace(".iter().enumerate(", ".enumerate(")
+         .replace(".iter().for_each(", ".for_each(")
+         .replace(".iter().reduce(", ".reduce(")
+         .replace(".iter().find(", ".find(")
+         .replace(".iter().any(", ".any(")
+         .replace(".iter().all(", ".all(")
+         .replace(".iter_mut().find(", ".find(")
+         .replace(".collect()", "");
+    // Also handle .it(). aliases
+    s = s.replace(".it().filter(", ".filter(")
+         .replace(".it().map(", ".map(")
+         .replace(".it().col()", "");
+    // Strip .copied() (Rust iterator adapter, not needed)
+    s = s.replace(".copied()", "");
+    // Strip identity .map(|t| t) — it's a no-op from list comprehension translation
+    s = s.replace(".map(|t| t)", "");
+    // Strip .to_string() — unnecessary type conversion
+    s = s.replace(".to_string()", "");
+    // Strip Go & references (Nebula doesn't have pointers)
+    s = s.replace("return (&", "return (")
+         .replace("return &", "return ")
+         .replace("= &", "= ")
+         .replace("(&", "(");
+    // Go float64() casts → just use the value
+    s = s.replace("float64(", "(")
+         .replace("(double)", "");
+    // Go append(list, x) → list.append(x)
+    s = normalize_go_append(&s);
+    // Strip __name__ guard
+    s = strip_name_guard(&s);
+    // Strip bare main() call at end of file
+    s = strip_bare_main_call(&s);
+    // NOTE: Kotlin/Swift trailing closures { it.X } are CHEAPER than lambdas (|it| it.X)
+    // (5 tok vs 7 tok), so we keep them as-is.
+    // Convert Kotlin string interpolation: $var → {var}, ${expr} → {expr}
+    s = convert_kotlin_interpolation(&s);
+    // Normalize Kotlin/Swift method names not caught by map_method
+    s = s.replace(".remove_all ", ".filter ")
+         .replace(".remove_all(", ".filter(")
+         .replace(".toDouble()", "")
+         .replace(".toFixed(", ".format(");
+    // Fix Rust println! mangling: "printlnnot" → "print" (the ! was converted to "not")
+    s = s.replace("printlnnot ", "print")
+         .replace("printlnnot(", "print(");
+    // Strip orphan .iter() at end of line (leftover after .collect() removal)
+    s = s.replace(".iter()\n", "\n")
+         .replace(".iter()", "");
+    // Strip unused Go index variable: "for _, x in" → "for x in"
+    s = s.replace("for _, ", "for ");
+    // Convert Rust-style positional format strings: print("{} {}", a, b) → print("{a} {b}")
+    s = normalize_positional_format_strings(&s);
+    // Collapse temp-var swap pattern: __tmp = b / a = EXPR / b = __tmp → a, b = EXPR, a
+    s = collapse_temp_swaps(&s);
+    // Strip redundant fmt() wrapper when string is already interpolated
+    s = strip_redundant_fmt(&s);
+
+    // ── 8. Normalize remaining boolean/nil variants ──
+    // Ensure consistent true→tt, false→ff (some may have slipped through)
+    s = s.replace(": false", ": ff")
+         .replace("= false", "= ff")
+         .replace(": true", ": tt")
+         .replace("= true", "= tt")
+         .replace("(false)", "(ff)")
+         .replace("(true)", "(tt)");
+
+    s
+}
+
+/// Normalize short-form Nebula keywords to canonical Python-length forms.
+/// Runs line-by-line, only converting at keyword positions (line start or after braces).
+fn normalize_keywords(source: &str) -> String {
+    let mut out = String::with_capacity(source.len() + source.len() / 10);
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+        let ws = &line[..line.len() - trimmed.len()];
+
+        // Replace leading keyword only (to avoid replacing inside identifiers/strings)
+        let converted = if trimmed.starts_with("fn ") {
+            format!("def {}", &trimmed[3..])
+        } else if trimmed.starts_with("rt ") {
+            format!("return {}", &trimmed[3..])
+        } else if trimmed == "rt" {
+            "return".to_string()
+        } else if trimmed.starts_with("lt ") || trimmed.starts_with("let ") {
+            // Immutable binding: lt/let x = expr → x := expr
+            let rest = if trimmed.starts_with("lt ") { &trimmed[3..] } else { &trimmed[4..] };
+            convert_let_to_walrus(rest)
+        } else if trimmed.starts_with("mt ") || trimmed.starts_with("mut ") {
+            // Mutable binding: mt/mut x = expr → x = expr (bare assignment)
+            let rest = if trimmed.starts_with("mt ") { &trimmed[3..] } else { &trimmed[4..] };
+            rest.to_string()
+        } else if trimmed.starts_with("cn ") || trimmed.starts_with("const ") {
+            // Const binding: cn/const x = expr → x := expr (same as let)
+            let rest = if trimmed.starts_with("cn ") { &trimmed[3..] } else { &trimmed[6..] };
+            convert_let_to_walrus(rest)
+        } else if trimmed.starts_with("fo ") {
+            format!("for {}", &trimmed[3..])
+        } else if trimmed.starts_with("wl ") {
+            format!("while {}", &trimmed[3..])
+        } else if trimmed.starts_with("lp {") || trimmed == "lp" {
+            format!("loop{}", &trimmed[2..])
+        } else if trimmed.starts_with("mc ") {
+            format!("match {}", &trimmed[3..])
+        } else if trimmed.starts_with("st ") {
+            format!("struct {}", &trimmed[3..])
+        } else if trimmed.starts_with("en ") {
+            format!("enum {}", &trimmed[3..])
+        } else if trimmed.starts_with("tr ") {
+            format!("trait {}", &trimmed[3..])
+        } else if trimmed.starts_with("im ") {
+            format!("impl {}", &trimmed[3..])
+        } else if trimmed == "bk" || trimmed.starts_with("bk ") {
+            format!("break{}", &trimmed[2..])
+        } else if trimmed == "ct" {
+            "continue".to_string()
+        } else if trimmed.starts_with("pb ") {
+            format!("pub {}", &trimmed[3..])
+        } else {
+            trimmed.to_string()
+        };
+
+        // Also normalize inline keywords: } el { → } else {, } ch → } catch
+        let converted = converted
+            .replace("} el {", "} else {")
+            .replace("} el if", "} else if")
+            .replace(" el {", " else {")
+            .replace(" el if", " else if")
+            .replace("} ch ", "} catch ");
+
+        // Normalize sf → self (only when it's a standalone keyword, not part of identifier)
+        let converted = normalize_self_keyword(&converted);
+
+        // Normalize tt/ff/nil → True/False/None
+        let converted = converted
+            .replace(" tt", " True").replace("(tt", "(True").replace(",tt", ",True")
+            .replace("{tt}", "{tt}")  // skip inside string interpolation
+            .replace(" ff", " False").replace("(ff", "(False").replace(",ff", ",False")
+            .replace(" nil", " None").replace("(nil", "(None");
+
+        out.push_str(ws);
+        out.push_str(&converted);
+        out.push('\n');
+    }
+    if !source.ends_with('\n') && out.ends_with('\n') {
+        out.pop();
+    }
+    out
+}
+
+/// Convert `name = expr` to `name := expr` (walrus operator for immutable binding).
+/// Handles type annotations: `name: Type = expr` → `name: Type := expr`
+/// Handles destructuring: `(a, b) = expr` → `(a, b) := expr`
+fn convert_let_to_walrus(rest: &str) -> String {
+    // Find the first `=` that's not part of `==`, `!=`, `<=`, `>=`, `+=`, etc.
+    let bytes = rest.as_bytes();
+    let mut i = 0;
+    let mut depth = 0i32;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b'"' | b'\'' => {
+                let q = bytes[i];
+                i += 1;
+                while i < bytes.len() {
+                    if bytes[i] == b'\\' { i += 2; continue; }
+                    if bytes[i] == q { break; }
+                    i += 1;
+                }
+            }
+            b'=' if depth == 0 => {
+                let prev = if i > 0 { bytes[i - 1] } else { b' ' };
+                let next = if i + 1 < bytes.len() { bytes[i + 1] } else { b' ' };
+                // Skip ==, !=, <=, >=, +=, -=, *=, /=, %=, :=, =>
+                if matches!(prev, b'=' | b'!' | b'<' | b'>' | b'+' | b'-' | b'*' | b'/' | b'%' | b':') {
+                    i += 1; continue;
+                }
+                if next == b'=' || next == b'>' {
+                    i += 1; continue;
+                }
+                // Found the assignment =, replace with :=
+                return format!("{} :={}", &rest[..i].trim_end(), &rest[i + 1..]);
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    // No = found, return as-is
+    rest.to_string()
+}
+
+/// Replace sf with self in a line, only at word boundaries.
+fn normalize_self_keyword(line: &str) -> String {
+    let mut result = String::with_capacity(line.len());
+    let chars: Vec<char> = line.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == 's' && i + 1 < chars.len() && chars[i + 1] == 'f' {
+            // Check word boundaries
+            let before_ok = i == 0 || !chars[i - 1].is_alphanumeric() && chars[i - 1] != '_';
+            let after_ok = i + 2 >= chars.len() || (!chars[i + 2].is_alphanumeric() && chars[i + 2] != '_');
+            if before_ok && after_ok {
+                result.push_str("self");
+                i += 2;
+                continue;
+            }
+        }
+        result.push(chars[i]);
+        i += 1;
+    }
+    result
+}
+
+/// Convert camelCase and PascalCase identifiers to snake_case.
+/// Preserves: type names (start with uppercase and are standalone types like Task, TaskManager),
+/// keywords, string literals, and struct/enum names.
+fn normalize_identifiers(source: &str) -> String {
+    // First pass: collect all type names defined in the source
+    let mut type_names = std::collections::HashSet::new();
+    for line in source.lines() {
+        let trimmed = line.trim();
+        for prefix in &["st ", "en ", "tr ", "im ", "struct ", "enum ", "trait ", "impl "] {
+            if trimmed.starts_with(prefix) {
+                let rest = &trimmed[prefix.len()..];
+                let name: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+                if !name.is_empty() {
+                    type_names.insert(name);
+                }
+            }
+        }
+    }
+
+    let mut out = String::with_capacity(source.len());
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+        let ws = &line[..line.len() - trimmed.len()];
+
+        // Skip struct/enum/trait/impl declarations — preserve type names
+        if trimmed.starts_with("st ") || trimmed.starts_with("en ")
+            || trimmed.starts_with("tr ") || trimmed.starts_with("im ")
+            || trimmed.starts_with("struct ") || trimmed.starts_with("enum ")
+            || trimmed.starts_with("trait ") || trimmed.starts_with("impl ") {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+
+        let converted = convert_identifiers_in_line(trimmed, &type_names);
+        out.push_str(ws);
+        out.push_str(&converted);
+        out.push('\n');
+    }
+    // Remove trailing newline if source didn't have one
+    if !source.ends_with('\n') && out.ends_with('\n') {
+        out.pop();
+    }
+    out
+}
+
+/// Convert identifiers in a single line from camelCase to snake_case.
+/// Preserves string literals, type names (uppercase at type positions), and keywords.
+fn convert_identifiers_in_line(line: &str, type_names: &std::collections::HashSet<String>) -> String {
+    let mut result = String::with_capacity(line.len() + 16);
+    let chars: Vec<char> = line.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        // Skip string literals
+        if chars[i] == '"' || chars[i] == '\'' {
+            let quote = chars[i];
+            result.push(chars[i]);
+            i += 1;
+            while i < chars.len() {
+                result.push(chars[i]);
+                if chars[i] == '\\' && i + 1 < chars.len() {
+                    result.push(chars[i + 1]);
+                    i += 2;
+                    continue;
+                }
+                if chars[i] == quote {
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+            continue;
+        }
+
+        // Collect identifier
+        if chars[i].is_alphabetic() || chars[i] == '_' {
+            let mut ident = String::new();
+            while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
+                ident.push(chars[i]);
+                i += 1;
+            }
+
+            // Decide whether to convert this identifier
+            if should_convert_to_snake_case(&ident, &result, &chars, i, type_names) {
+                result.push_str(&to_snake_case(&ident));
+            } else {
+                result.push_str(&ident);
+            }
+            continue;
+        }
+
+        result.push(chars[i]);
+        i += 1;
+    }
+    result
+}
+
+/// Determine if an identifier should be converted to snake_case.
+/// Returns false for: type names, keywords, builtins, single-char names.
+fn should_convert_to_snake_case(ident: &str, context_before: &str, chars: &[char], pos: usize, type_names: &std::collections::HashSet<String>) -> bool {
+    // Don't convert single-char or all-lowercase identifiers
+    if ident.len() <= 1 { return false; }
+    if ident.chars().all(|c| c.is_lowercase() || c == '_') { return false; }
+    // All-uppercase identifiers: convert short ones (Go field names like ID, OK)
+    // but keep long constants (MAX_SIZE, etc.)
+    if ident.chars().all(|c| c.is_uppercase() || c == '_') {
+        // Short all-caps identifiers (2-3 chars) are likely Go field names
+        if ident.len() > 3 { return false; }
+        // But don't convert in type positions
+    }
+
+    // Don't convert known type names from this file
+    if type_names.contains(ident) {
+        return false;
+    }
+
+    // Don't convert Nebula keywords and builtin type names
+    let protected = ["fn", "rt", "lt", "mt", "cn", "if", "el", "fo", "wl", "lp",
+                     "mc", "st", "en", "im", "tr", "bk", "ct", "sf", "Sf",
+                     "tt", "ff", "nil", "and", "or", "not", "in", "as", "try", "ch",
+                     "use", "md", "pb", "ty", "ac", "aw", "sp",
+                     "Int", "Str", "Bool", "Float", "List", "Map", "Set", "Tuple",
+                     "String", "Char", "Ptr", "Any", "Fn",
+                     "Vec", "Option", "Some", "None", "Result", "Ok", "Err",
+                     "Double", "println", "print", "len", "range", "enumerate",
+                     "sorted", "filter", "map", "append", "join", "contains",
+                     "reduce", "for_each", "reverse", "iter", "collect",
+                     "True", "False", "true", "false"];
+    if protected.contains(&ident) { return false; }
+
+    // Check what comes before this identifier
+    let ctx = context_before.trim_end();
+    let first = ident.chars().next().unwrap();
+
+    // Type position: after ":", "->", or declaration keywords — DON'T convert
+    if first.is_uppercase() {
+        if ctx.ends_with(':') || ctx.ends_with("->")
+            || ctx.ends_with("st") || ctx.ends_with("im")
+            || ctx.ends_with("en") || ctx.ends_with("tr")
+            || ctx.ends_with("fo") || ctx.ends_with('<')
+            || ctx.ends_with(',') && ctx.contains('<') {
+            return false;
+        }
+        // Followed by ( — could be constructor or function call
+        if pos < chars.len() && chars[pos] == '(' {
+            // After "fn"/"def" — function declaration, always convert
+            // After "." — method call, always convert
+            let ctx_trimmed = context_before.trim_end();
+            if ctx_trimmed.ends_with("fn") || ctx_trimmed.ends_with("def") || context_before.ends_with('.') {
+                // Fall through to convert
+            } else if !has_camel_case(ident) {
+                // Single-word PascalCase followed by ( — likely constructor (Task(), Map())
+                return false;
+            }
+            // Multi-word PascalCase followed by ( — likely function call (NewTaskManager())
+            // Fall through to convert
+        }
+        // Followed by { — struct literal (but only if standalone, not after ".")
+        if pos < chars.len() && chars[pos] == '{' && !context_before.ends_with('.') {
+            return false;
+        }
+        if pos + 1 < chars.len() && chars[pos] == ' ' && chars[pos + 1] == '{' && !context_before.ends_with('.') {
+            return false;
+        }
+    }
+
+    // Convert if it has camelCase pattern (lowercase then uppercase)
+    if has_camel_case(ident) {
+        return true;
+    }
+
+    // Also convert single-word PascalCase that isn't a type name.
+    // Type names appear in type positions (checked above) or are well-known types (in protected list).
+    // If we reach here with a PascalCase word (first char uppercase), it's a
+    // Go-style field/method name that should be lowercased.
+    if first.is_uppercase() {
+        return true;
+    }
+
+    false
+}
+
+/// Check if an identifier has camelCase or PascalCase pattern.
+fn has_camel_case(s: &str) -> bool {
+    let mut prev_lower = false;
+    for c in s.chars() {
+        if c.is_uppercase() && prev_lower {
+            return true;
+        }
+        prev_lower = c.is_lowercase();
+    }
+    false
+}
+
+/// Convert a camelCase or PascalCase identifier to snake_case.
+fn to_snake_case(s: &str) -> String {
+    // All-uppercase short identifiers: just lowercase them
+    if s.chars().all(|c| c.is_uppercase() || c == '_') {
+        return s.to_lowercase();
+    }
+    let mut result = String::with_capacity(s.len() + 4);
+    let chars: Vec<char> = s.chars().collect();
+    for (i, &c) in chars.iter().enumerate() {
+        if c.is_uppercase() {
+            let prev_lower = i > 0 && chars[i - 1].is_lowercase();
+            let next_lower = i + 1 < chars.len() && chars[i + 1].is_lowercase();
+            let prev_upper = i > 0 && chars[i - 1].is_uppercase();
+            if prev_lower || (prev_upper && next_lower) {
+                result.push('_');
+            }
+            result.push(c.to_lowercase().next().unwrap());
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
+/// Normalize Go-style format strings: fmt("format %v %d", args) → print("format {args}")
+/// and print("msg %v\n", arg) → print("msg {arg}")
+fn normalize_format_strings(source: &str) -> String {
+    let mut out = Vec::new();
+    for line in source.lines() {
+        let trimmed = line.trim();
+        // Match: print("...", arg1, arg2) or fmt("...", arg1, arg2)
+        // where format string contains %v, %d, %s, %f, %.1f, etc.
+        if (trimmed.contains("print(\"") || trimmed.contains("fmt(\""))
+            && (trimmed.contains("%v") || trimmed.contains("%d") || trimmed.contains("%s")
+                || trimmed.contains("%f") || trimmed.contains("%.")) {
+            let ws = &line[..line.len() - trimmed.len()];
+            if let Some(converted) = convert_format_to_interpolation(trimmed) {
+                out.push(format!("{}{}", ws, converted));
+                continue;
+            }
+        }
+        out.push(line.to_string());
+    }
+    out.join("\n")
+}
+
+/// Convert a printf-style call to string interpolation.
+/// `print("Hello %s, you are %d", name, age)` → `print("Hello {name}, you are {age}")`
+fn convert_format_to_interpolation(line: &str) -> Option<String> {
+    // Find the function call and opening quote
+    let func_end = line.find("(\"")?;
+    let func = &line[..func_end];
+
+    let after_open = &line[func_end + 2..];
+    // Find the closing quote of the format string
+    let mut quote_end = None;
+    let mut ci = 0;
+    let chars: Vec<char> = after_open.chars().collect();
+    while ci < chars.len() {
+        if chars[ci] == '\\' {
+            ci += 2;
+            continue;
+        }
+        if chars[ci] == '"' {
+            quote_end = Some(ci);
+            break;
+        }
+        ci += 1;
+    }
+    let quote_end = quote_end?;
+    let fmt_str = &after_open[..quote_end];
+
+    // Get the args after the format string
+    let rest = &after_open[quote_end + 1..]; // starts with , or )
+    let rest = rest.trim_start();
+
+    // If no args after format string, skip
+    if rest.starts_with(')') {
+        return None;
+    }
+
+    let rest = rest.strip_prefix(',')?;
+    let args_str = rest.trim_start().trim_end().trim_end_matches(')');
+
+    // Split args (respecting nested parens)
+    let args = split_args(args_str);
+
+    // Replace format specifiers with {arg}
+    let mut result_fmt = String::new();
+    let mut arg_idx = 0;
+    let mut fi = 0;
+    let fmt_chars: Vec<char> = fmt_str.chars().collect();
+    while fi < fmt_chars.len() {
+        if fmt_chars[fi] == '%' && fi + 1 < fmt_chars.len() {
+            let next = fmt_chars[fi + 1];
+            if next == '%' {
+                result_fmt.push('%');
+                fi += 2;
+                continue;
+            }
+            // Skip format specifier: %d, %s, %v, %f, %.1f, etc.
+            fi += 1; // skip %
+            // Skip flags/width/precision
+            while fi < fmt_chars.len() && (fmt_chars[fi] == '.' || fmt_chars[fi].is_ascii_digit() || fmt_chars[fi] == '-' || fmt_chars[fi] == '+') {
+                fi += 1;
+            }
+            // Skip conversion char
+            if fi < fmt_chars.len() {
+                fi += 1;
+            }
+            // Insert {arg}
+            if arg_idx < args.len() {
+                result_fmt.push('{');
+                result_fmt.push_str(args[arg_idx].trim());
+                result_fmt.push('}');
+                arg_idx += 1;
+            }
+        } else if fmt_chars[fi] == '\\' && fi + 1 < fmt_chars.len() && fmt_chars[fi + 1] == 'n' {
+            // Strip \n from format strings (print adds newline)
+            fi += 2;
+        } else {
+            result_fmt.push(fmt_chars[fi]);
+            fi += 1;
+        }
+    }
+
+    Some(format!("{}(\"{}\")", func, result_fmt))
+}
+
+/// Split arguments string by commas, respecting nested parens/brackets.
+fn split_args(s: &str) -> Vec<&str> {
+    let mut args = Vec::new();
+    let mut depth = 0;
+    let mut start = 0;
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            ',' if depth == 0 => {
+                args.push(&s[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    if start < s.len() {
+        args.push(&s[start..]);
+    }
+    args
+}
+
+/// Strip generic type parameters: List<Task> → List, Map<K,V> → Map, Ptr<T> → T
+fn strip_generic_params(source: &str) -> String {
+    let mut s = source.to_string();
+    // Common patterns
+    loop {
+        let prev = s.clone();
+        // Ptr<Type> → Type (Go pointer type — just use the inner type)
+        while let Some(pos) = s.find("Ptr<") {
+            if let Some(close) = s[pos..].find('>') {
+                let inner = &s[pos + 4..pos + close].to_string();
+                s = format!("{}{}{}", &s[..pos], inner, &s[pos + close + 1..]);
+            } else {
+                break;
+            }
+        }
+        // List<Type> → List
+        while let Some(pos) = s.find("List<") {
+            if let Some(close) = s[pos..].find('>') {
+                s = format!("{}List{}", &s[..pos], &s[pos + close + 1..]);
+            } else {
+                break;
+            }
+        }
+        // Map<K, V> → Map
+        while let Some(pos) = s.find("Map<") {
+            if let Some(close) = s[pos..].find('>') {
+                s = format!("{}Map{}", &s[..pos], &s[pos + close + 1..]);
+            } else {
+                break;
+            }
+        }
+        if s == prev { break; }
+    }
+    s
+}
+
+/// Convert Go-style `append(list, item)` to `list.append(item)`.
+fn normalize_go_append(source: &str) -> String {
+    let mut s = source.to_string();
+    // Pattern: "X = append(X, Y)" → "X.append(Y)"
+    // Pattern: "append(X, Y)" at start → "X.append(Y)"
+    let mut result = Vec::new();
+    for line in s.lines() {
+        let trimmed = line.trim();
+        let ws = &line[..line.len() - trimmed.len()];
+        // Match: VAR = append(VAR, EXPR)
+        if let Some(eq_pos) = trimmed.find(" = append(") {
+            let var = trimmed[..eq_pos].trim();
+            let inner = &trimmed[eq_pos + 10..]; // after "= append("
+            if let Some(comma_pos) = inner.find(", ") {
+                let first_arg = inner[..comma_pos].trim();
+                let rest = inner[comma_pos + 2..].trim_end_matches(')');
+                if first_arg == var {
+                    result.push(format!("{}{}.append({})", ws, var, rest));
+                    continue;
+                }
+            }
+        }
+        result.push(line.to_string());
+    }
+    result.join("\n")
+}
+
+/// Strip `if __name__ == "__main__":` guard and its body.
+fn strip_name_guard(source: &str) -> String {
+    let mut lines: Vec<&str> = source.lines().collect();
+    // Find and remove __name__ guard
+    let mut i = 0;
+    let mut result = Vec::new();
+    while i < lines.len() {
+        let trimmed = lines[i].trim();
+        if trimmed.starts_with("if __name__") {
+            // Skip this line and the indented body
+            let guard_indent = lines[i].len() - trimmed.len();
+            i += 1;
+            while i < lines.len() {
+                let next_trimmed = lines[i].trim();
+                if next_trimmed.is_empty() {
+                    i += 1;
+                    continue;
+                }
+                let next_indent = lines[i].len() - next_trimmed.len();
+                if next_indent > guard_indent {
+                    // Part of the guard body — include the content but dedented
+                    // Actually, for Python it's usually just main(), skip it
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+            continue;
+        }
+        result.push(lines[i]);
+        i += 1;
+    }
+    result.join("\n")
+}
+
+/// Convert Rust-style positional format strings: `print("{} {}", a, b)` → `print("{a} {b}")`.
+/// Also handles `fmt(...)` calls.
+fn normalize_positional_format_strings(source: &str) -> String {
+    let mut out = Vec::new();
+    for line in source.lines() {
+        let trimmed = line.trim();
+        // Match: func("...{} ...{}", arg1, arg2) patterns
+        if (trimmed.contains("print(\"") || trimmed.contains("fmt(\""))
+            && trimmed.contains("{}")
+        {
+            let ws = &line[..line.len() - trimmed.len()];
+            if let Some(converted) = convert_positional_format(trimmed) {
+                out.push(format!("{}{}", ws, converted));
+                continue;
+            }
+        }
+        out.push(line.to_string());
+    }
+    out.join("\n")
+}
+
+/// Convert `print("{} {}", a, b)` → `print("{a} {b}")`.
+fn convert_positional_format(line: &str) -> Option<String> {
+    let func_end = line.find("(\"")?;
+    let func = &line[..func_end];
+
+    let after_open = &line[func_end + 2..];
+    // Find closing quote
+    let mut ci = 0;
+    let chars: Vec<char> = after_open.chars().collect();
+    while ci < chars.len() {
+        if chars[ci] == '\\' { ci += 2; continue; }
+        if chars[ci] == '"' { break; }
+        ci += 1;
+    }
+    if ci >= chars.len() { return None; }
+    let fmt_str = &after_open[..ci];
+    let rest = &after_open[ci + 1..].trim_start();
+
+    if !rest.starts_with(',') { return None; }
+    let args_str = rest[1..].trim().trim_end_matches(')');
+    let args = split_args(args_str);
+
+    // Replace {} with {arg}
+    let mut result_fmt = String::new();
+    let mut arg_idx = 0;
+    let mut fi = 0;
+    let fmt_chars: Vec<char> = fmt_str.chars().collect();
+    while fi < fmt_chars.len() {
+        if fi + 1 < fmt_chars.len() && fmt_chars[fi] == '{' && fmt_chars[fi + 1] == '}' {
+            if arg_idx < args.len() {
+                result_fmt.push('{');
+                result_fmt.push_str(args[arg_idx].trim());
+                result_fmt.push('}');
+                arg_idx += 1;
+            }
+            fi += 2;
+        } else if fi + 2 < fmt_chars.len() && fmt_chars[fi] == '{' && fmt_chars[fi + 1] == ':' {
+            // Format spec like {:.1} — find closing }
+            let spec_start = fi;
+            fi += 1;
+            while fi < fmt_chars.len() && fmt_chars[fi] != '}' { fi += 1; }
+            if fi < fmt_chars.len() {
+                let spec = &fmt_str[spec_start + 1..fi]; // :.1 etc
+                if arg_idx < args.len() {
+                    result_fmt.push('{');
+                    result_fmt.push_str(args[arg_idx].trim());
+                    result_fmt.push_str(spec);
+                    result_fmt.push('}');
+                    arg_idx += 1;
+                }
+                fi += 1;
+            }
+        } else {
+            result_fmt.push(fmt_chars[fi]);
+            fi += 1;
+        }
+    }
+
+    Some(format!("{}(\"{}\")", func, result_fmt))
+}
+
+/// Collapse temp-variable swap patterns back into tuple assignment.
+/// `__tmp = B; A = EXPR; B = __tmp` → `A, B = EXPR, A`
+/// Also handles: `temp = B; B = EXPR; A = temp` patterns.
+fn collapse_temp_swaps(source: &str) -> String {
+    let lines: Vec<&str> = source.lines().collect();
+    let mut result = Vec::new();
+    let mut i = 0;
+
+    while i < lines.len() {
+        // Look for pattern: INDENT __tmp = VAR / INDENT VAR2 = EXPR / INDENT VAR = __tmp
+        if i + 2 < lines.len() {
+            let l1 = lines[i].trim();
+            let l2 = lines[i + 1].trim();
+            let l3 = lines[i + 2].trim();
+            let ws = &lines[i][..lines[i].len() - l1.len()];
+
+            // Pattern: __tmp = X / Y = EXPR / X = __tmp
+            if l1.starts_with("__tmp = ") || l1.starts_with("temp = ") {
+                let tmp_name = if l1.starts_with("__tmp") { "__tmp" } else { "temp" };
+                let saved_var = l1.strip_prefix(&format!("{} = ", tmp_name)).unwrap_or("").trim();
+
+                if l3 == format!("{} = {}", saved_var, tmp_name) {
+                    // l2 is the assignment to the other variable
+                    if let Some(eq_pos) = l2.find(" = ") {
+                        let target = &l2[..eq_pos];
+                        let expr = &l2[eq_pos + 3..];
+                        result.push(format!("{}{}, {} = {}, {}", ws, target, saved_var, expr, target));
+                        i += 3;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        result.push(lines[i].to_string());
+        i += 1;
+    }
+    result.join("\n")
+}
+
+/// Convert Kotlin-style `$var` and `${expr}` to Nebula `{var}` and `{expr}` inside strings.
+fn convert_kotlin_interpolation(source: &str) -> String {
+    let mut result = String::with_capacity(source.len());
+    let chars: Vec<char> = source.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        if chars[i] == '"' {
+            // Inside a string literal — scan for $ patterns
+            result.push('"');
+            i += 1;
+            while i < chars.len() && chars[i] != '"' {
+                if chars[i] == '\\' && i + 1 < chars.len() {
+                    result.push(chars[i]);
+                    result.push(chars[i + 1]);
+                    i += 2;
+                    continue;
+                }
+                if chars[i] == '$' && i + 1 < chars.len() {
+                    if chars[i + 1] == '{' {
+                        // ${expr} → {expr} — just skip the $
+                        i += 1; // skip $, the { will be pushed next iteration
+                        continue;
+                    } else if chars[i + 1].is_alphabetic() || chars[i + 1] == '_' {
+                        // $var → {var}
+                        i += 1; // skip $
+                        result.push('{');
+                        while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_' || chars[i] == '.') {
+                            result.push(chars[i]);
+                            i += 1;
+                        }
+                        result.push('}');
+                        continue;
+                    }
+                }
+                result.push(chars[i]);
+                i += 1;
+            }
+            if i < chars.len() {
+                result.push('"'); // closing quote
+                i += 1;
+            }
+        } else {
+            result.push(chars[i]);
+            i += 1;
+        }
+    }
+    result
+}
+
+/// Strip redundant `fmt("...")` when the string is already interpolated (no % specifiers).
+fn strip_redundant_fmt(source: &str) -> String {
+    let mut s = source.to_string();
+    // Find fmt("...") where the string has no % specifiers
+    while let Some(pos) = s.find("fmt(\"") {
+        // Find the matching closing )
+        let after = &s[pos + 4..]; // after "fmt("
+        if let Some(close) = find_matching_paren(after) {
+            let inner = &after[..close];
+            // If inner is a single string with no % specifiers, strip the fmt() wrapper
+            if !inner.contains('%') && inner.starts_with('"') && inner.ends_with('"') {
+                let before = &s[..pos];
+                let after_close = &s[pos + 4 + close + 1..];
+                s = format!("{}{}{}", before, inner, after_close);
+                continue;
+            }
+        }
+        break; // avoid infinite loop
+    }
+    s
+}
+
+/// Find matching `)` for an opening `(`.
+fn find_matching_paren(s: &str) -> Option<usize> {
+    let mut depth = 1;
+    let mut in_string = false;
+    for (i, c) in s.char_indices() {
+        if c == '"' && (i == 0 || s.as_bytes()[i-1] != b'\\') {
+            in_string = !in_string;
+        }
+        if in_string { continue; }
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 { return Some(i); }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Convert Kotlin/Swift trailing closures `{ it.X }` or `{ it * 2 }` to lambdas `(|it| it.X)`.
+fn convert_trailing_closures(source: &str) -> String {
+    let mut s = source.to_string();
+    // Pattern: .method { BODY } where BODY contains "it" references
+    // Common forms: .filter { it.done }, .map { it * 2 }, .sorted { it.X }
+    loop {
+        let prev = s.clone();
+        // Find pattern: WORD { ... it ... }
+        // Simple approach: replace "{ it" patterns after method names
+        if let Some(pos) = s.find(" { it") {
+            // Find the closing }
+            let after = &s[pos + 2..]; // skip " {"
+            if let Some(close) = find_matching_brace(after) {
+                let body = &after[..close].trim().to_string();
+                let before = &s[..pos];
+                let after_close = &s[pos + 2 + close + 1..];
+                // Convert to (|it| body)
+                s = format!("{}(|it| {}){}", before, body, after_close);
+                continue;
+            }
+        }
+        // Also handle "{ not it.X }" pattern
+        if let Some(pos) = s.find(" { not it") {
+            let after = &s[pos + 2..];
+            if let Some(close) = find_matching_brace(after) {
+                let body = &after[..close].trim().to_string();
+                let before = &s[..pos];
+                let after_close = &s[pos + 2 + close + 1..];
+                s = format!("{}(|it| {}){}", before, body, after_close);
+                continue;
+            }
+        }
+        if s == prev { break; }
+    }
+    s
+}
+
+/// Find the position of the matching `}` for an opening `{`, handling nesting.
+fn find_matching_brace(s: &str) -> Option<usize> {
+    let mut depth = 1;
+    for (i, c) in s.char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Strip bare `main()` call at end of file.
+fn strip_bare_main_call(source: &str) -> String {
+    let trimmed = source.trim_end();
+    if trimmed.ends_with("\nmain()") || trimmed == "main()" {
+        trimmed.trim_end_matches("main()").trim_end().to_string()
+    } else {
+        source.to_string()
+    }
+}
+
+/// Normalize go_var("...") calls to appropriate Nebula literals.
+fn normalize_go_vars(source: &str) -> String {
+    let mut s = source.to_string();
+    // go_var("[]Type") → []
+    while let Some(pos) = s.find("go_var(\"") {
+        if let Some(close) = s[pos..].find("\")") {
+            let before = &s[..pos];
+            let after = &s[pos + close + 2..];
+            let inner = &s[pos + 8..pos + close];
+            let replacement = if inner.starts_with("[]") {
+                "[]" // empty slice literal
+            } else {
+                "nil" // fallback
+            };
+            s = format!("{}{}{}", before, replacement, after);
+        } else {
+            break;
+        }
+    }
+    s
+}
+
 // ── Shared helpers ──
 
 fn text<'a>(node: &Node, src: &'a [u8]) -> &'a str {
@@ -969,62 +2408,61 @@ fn emit_children_as_statements(
     out
 }
 
-/// Map common builtin function names to Nebula equivalents.
-/// Only maps to aliases that are SINGLE tokens in cl100k_base.
-/// Aliases that cost 2+ tokens (tsr, tof, psh, srt, trm, fnd) are avoided.
+/// Map common builtin function names to canonical Nebula equivalents.
+/// Uses Python-native names where they are optimal for cl100k_base tokenization.
 fn map_builtin(name: &str) -> &str {
     match name {
         "print" | "println" | "puts" | "fmt.Println" | "fmt.Printf" | "console.log"
-            | "console.warn" | "console.error" | "printf" | "fprintf" => "prt",
-        "len" | "strlen" => "ln",
-        // "str" stays as "str" (1 token) — "tsr" costs 2 tokens
-        "int" => "toi",
-        // "float" stays as "float" (1 token) — "tof" costs 2 tokens
-        "type" | "isinstance" | "typeof" => "typ",
-        "range" => "rng",
-        "enumerate" => "enu",
-        // "push"/"append" stay as-is (1 token) — "psh" costs 2 tokens
-        // "sorted" stays as "sorted" (1 token) — "srt" costs 2 tokens
+            | "console.warn" | "console.error" | "printf" | "fprintf" => "print",
+        "len" | "strlen" => "len",
+        "int" => "int",
+        "type" | "isinstance" | "typeof" => "type",
+        "range" => "range",
+        "enumerate" => "enumerate",
         "abs" => "abs",
         "min" => "min",
         "max" => "max",
+        "sorted" => "sorted",
         "snprintf" | "sprintf" | "fmt.Sprintf" | "String.format" => "fmt",
         _ => name,
     }
 }
 
-/// Map common method names to Nebula equivalents.
-/// Only maps to aliases that are SINGLE tokens in cl100k_base.
+/// Map common method names to canonical Nebula equivalents.
+/// Uses Python-native names — these are optimal for cl100k_base tokenization
+/// (`.append(` = 2 tokens, `.filter(` = 2 tokens vs short aliases = 3 tokens).
+/// Map common method names to canonical Nebula equivalents.
+/// Each canonical form is the CHEAPEST token cost verified by cl100k_base audit.
+/// All methods below cost 2 tokens as `.method(` unless noted otherwise.
 fn map_method(name: &str) -> &str {
     match name {
-        // These aliases are all verified single-tokens in cl100k_base:
-        "length" | "count" | "size" | "len" => "ln",
-        "contains" | "includes" | "containsKey" | "has" => "ck",
-        "join" => "jn",
-        "map" => "mp",
-        "filter" | "retain" => "fl",
-        "reduce" | "fold" | "fold_left" => "fld",
-        "forEach" | "for_each" => "ea",
-        "reverse" | "reversed" => "rev",
-        "iter" | "iterator" => "it",
-        "collect" => "col",
-        "unwrap" | "unwrap_or" => "uw",
-        "isEmpty" | "is_empty" => "emp",
-        "removeAll" | "clear" => "clr",
-        "toFixed" | "format" => "fmt",
-        "enumerate" | "enumerated" => "enu",
+        // All 2 tokens as .method( — use readable Python-native names
+        "length" | "count" | "size" | "ln" => "len",
+        "push" | "append" => "append",
+        "contains" | "includes" | "containsKey" | "has" | "ck" => "contains", // .contains( = 2tok, .ck( = 3tok
+        "join" | "jn" | "joined" | "joinToString" => "join",     // .join( = 2tok, .jn( = 3tok
+        "map" | "mp" => "map",
+        "filter" | "retain" | "fl" => "filter",
+        "reduce" | "fold" | "fold_left" | "fld" => "reduce",     // .reduce( = 2tok, .fld( = 3tok
+        "forEach" | "for_each" | "ea" => "for_each",
+        "reverse" | "reversed" | "rev" => "reverse",
+        "iter" | "iterator" | "it" => "iter",
+        "collect" | "col" => "collect",
+        "unwrap" | "unwrap_or" | "uw" => "unwrap",               // .unwrap( = 2tok, .uw( = 3tok
+        "isEmpty" | "is_empty" => "emp",                          // .emp( = 2tok, .is_empty( = 3tok!
+        "removeAll" | "clear" | "clr" => "clear",                 // .clear( = 2tok, .clr( = 3tok
+        "toFixed" | "format" | "fmt" => "format",
+        "enumerate" | "enumerated" | "enu" => "enumerate",
         "pop" | "removeLast" => "pop",
-        "insert" => "ins",
+        "insert" | "ins" => "insert",
         "keys" => "keys",
-        "values" | "vals" => "vals",
+        "values" | "vals" => "values",
         "sum" => "sum",
-        // These stay as source names — our aliases cost 2 tokens:
-        // push/append → keep as-is (push=1tok, psh=2tok)
-        // sort/sorted → keep as-is (sort=1tok, srt=2tok)
-        // trim/strip → keep as-is (trim=1tok, trm=2tok)
-        // find/first → keep as-is (find=1tok, fnd=2tok)
-        // to_string → keep as-is (str=1tok, tsr=2tok)
-        // split → keep as-is (split=1tok, spl=1tok — wash, but split is more readable)
+        "sort" | "sorted" | "sortedBy" | "sort_by_key" => "sort",
+        "split" => "split",
+        "strip" | "trim" => "strip",
+        "first" => "find",
+        "to_string" | "toString" | "str" => "str",
         _ => name,
     }
 }
@@ -1050,6 +2488,36 @@ mod python {
 
             "expression_statement" => {
                 if let Some(child) = node.named_child(0) {
+                    // Docstring detection: standalone triple-quoted string
+                    // literals become // comment blocks, not string literals.
+                    // Nebula has no triple-quote syntax.
+                    if child.kind() == "string" {
+                        let raw = text(&child, src);
+                        if raw.starts_with("\"\"\"") || raw.starts_with("'''") {
+                            let inner = raw
+                                .trim_start_matches("\"\"\"")
+                                .trim_start_matches("'''")
+                                .trim_end_matches("\"\"\"")
+                                .trim_end_matches("'''");
+                            let mut buf = String::new();
+                            for (i, doc_line) in inner.lines().enumerate() {
+                                if i > 0 {
+                                    buf.push('\n');
+                                }
+                                buf.push_str(&ind);
+                                buf.push_str("// ");
+                                buf.push_str(doc_line.trim());
+                            }
+                            return buf;
+                        }
+                    }
+                    // Statement-shaped children (assignment, augmented_assignment)
+                    // are dispatched back into emit so they get the `lt`
+                    // prefix and proper statement formatting. Everything
+                    // else is an expression statement.
+                    if matches!(child.kind(), "assignment" | "augmented_assignment") {
+                        return emit(&child, src, depth);
+                    }
                     format!("{}{}", ind, emit_expr(&child, src))
                 } else {
                     String::new()
@@ -1131,8 +2599,21 @@ mod python {
             "for_statement" => {
                 let left = node.child_by_field_name("left")
                     .map(|n| text(&n, src)).unwrap_or("_");
-                let right = node.child_by_field_name("right")
+                let mut right = node.child_by_field_name("right")
                     .map(|n| emit_expr(&n, src)).unwrap_or_default();
+                // Nebula's `fo i, x in collection` already implies enumeration,
+                // and the codegen re-wraps with enumerate(...) on to-py. Strip
+                // an explicit `enumerate(...)` / `enu(...)` here so we don't
+                // double-wrap on round-trip.
+                if left.contains(',') {
+                    let stripped = right
+                        .strip_prefix("enumerate(")
+                        .or_else(|| right.strip_prefix("enu("))
+                        .and_then(|rest| rest.strip_suffix(')'));
+                    if let Some(inner) = stripped {
+                        right = inner.to_string();
+                    }
+                }
                 let body = node.child_by_field_name("body")
                     .map(|n| emit_block(&n, src, depth))
                     .unwrap_or_else(|| format!(" {{\n{}}}", ind));
@@ -1149,10 +2630,36 @@ mod python {
             }
 
             "return_statement" => {
-                if let Some(expr) = node.named_child(0) {
-                    format!("{}rt {}", ind, emit_expr(&expr, src))
-                } else {
-                    format!("{}rt", ind)
+                // Python `return a, b` emits an expression_list child, which
+                // our emit_expr fallback treats as a tuple. But sometimes
+                // tree-sitter surfaces the values as multiple direct named
+                // children on return_statement itself — collect both cases.
+                let mut cursor = node.walk();
+                let children: Vec<Node> = node.named_children(&mut cursor).collect();
+                match children.len() {
+                    0 => format!("{}rt", ind),
+                    1 => {
+                        let c = &children[0];
+                        if c.kind() == "expression_list" {
+                            let mut inner_cursor = c.walk();
+                            let parts: Vec<String> = c
+                                .named_children(&mut inner_cursor)
+                                .map(|n| emit_expr(&n, src))
+                                .collect();
+                            if parts.len() > 1 {
+                                format!("{}rt ({})", ind, parts.join(", "))
+                            } else {
+                                format!("{}rt {}", ind, parts.join(", "))
+                            }
+                        } else {
+                            format!("{}rt {}", ind, emit_expr(c, src))
+                        }
+                    }
+                    _ => {
+                        let parts: Vec<String> =
+                            children.iter().map(|c| emit_expr(c, src)).collect();
+                        format!("{}rt ({})", ind, parts.join(", "))
+                    }
                 }
             }
 
@@ -1160,28 +2667,119 @@ mod python {
             "break_statement" => format!("{}bk", ind),
             "continue_statement" => format!("{}ct", ind),
 
-            "import_statement" | "import_from_statement" => {
-                let raw = text(node, src).trim();
-                format!("{}// {}", ind, raw)
+            "import_statement" => {
+                // `import math` / `import a.b [as x]`
+                let mut cursor = node.walk();
+                let mut parts = Vec::new();
+                for child in node.named_children(&mut cursor) {
+                    if child.kind() == "dotted_name" {
+                        let name = text(&child, src).trim();
+                        if name.starts_with("typing") {
+                            parts.push(format!("// import {}", name));
+                        } else {
+                            parts.push(format!("use {}", name));
+                        }
+                    } else if child.kind() == "aliased_import" {
+                        let mod_name = child
+                            .named_child(0)
+                            .map(|n| text(&n, src).trim().to_string())
+                            .unwrap_or_default();
+                        let alias = child
+                            .child_by_field_name("alias")
+                            .map(|n| text(&n, src).trim().to_string());
+                        if let Some(a) = alias {
+                            parts.push(format!("use {} as {}", mod_name, a));
+                        } else {
+                            parts.push(format!("use {}", mod_name));
+                        }
+                    }
+                }
+                if parts.is_empty() {
+                    return format!("{}// {}", ind, text(node, src).trim());
+                }
+                parts
+                    .into_iter()
+                    .map(|p| format!("{}{}", ind, p))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }
+
+            "import_from_statement" => {
+                // `from X import A, B` → `use X.{A, B}`
+                // `from X import A as a` → supported by Nebula? Fall back to
+                // comment if there's any `as` alias inside.
+                let module = node
+                    .child_by_field_name("module_name")
+                    .map(|n| text(&n, src).trim().to_string())
+                    .unwrap_or_default();
+                if module.is_empty() || module.starts_with("typing") {
+                    return format!("{}// {}", ind, text(node, src).trim().replace('\n', " "));
+                }
+                let mut cursor = node.walk();
+                let mut items = Vec::new();
+                let mut has_alias = false;
+                for child in node.children(&mut cursor) {
+                    if !child.is_named() { continue; }
+                    let kind = child.kind();
+                    if kind == "dotted_name" {
+                        let t = text(&child, src).trim().to_string();
+                        if t != module {
+                            items.push(t);
+                        }
+                    } else if kind == "aliased_import" {
+                        has_alias = true;
+                        break;
+                    } else if kind == "wildcard_import" {
+                        return format!("{}// from {} import *", ind, module);
+                    }
+                }
+                if has_alias || items.is_empty() {
+                    return format!(
+                        "{}// {}",
+                        ind,
+                        text(node, src).trim().replace('\n', " ")
+                    );
+                }
+                format!("{}use {}.{{{}}}", ind, module, items.join(", "))
             }
 
             "assignment" => {
                 let left_node = node.child_by_field_name("left");
+                let right_node = node.child_by_field_name("right");
+
+                // Tuple-target assignment: `a, b = expr`. Nebula doesn't have
+                // reassignment destructuring, so expand into a temp-destructure
+                // plus per-name reassignment. Covers the Python tuple-swap
+                // idiom `a, b = b, a`.
+                if let Some(ln) = left_node {
+                    if matches!(ln.kind(), "pattern_list" | "tuple_pattern" | "expression_list") {
+                        let mut lcursor = ln.walk();
+                        let targets: Vec<String> = ln
+                            .named_children(&mut lcursor)
+                            .map(|n| emit_expr(&n, src))
+                            .collect();
+                        let right_text = right_node
+                            .map(|n| emit_expr(&n, src))
+                            .unwrap_or_default();
+                        // Emit direct tuple assignment: a, b = b, a + b
+                        return format!("{}{} = {}", ind, targets.join(", "), right_text);
+                    }
+                }
+
                 let left = left_node.as_ref()
                     .map(|n| emit_expr(n, src)).unwrap_or_default();
-                let right = node.child_by_field_name("right")
+                let right = right_node
                     .map(|n| emit_expr(&n, src)).unwrap_or_default();
 
-                // Don't add `lt` for attribute/subscript assignments (e.g. self.x = val)
-                let is_simple = left_node.map(|n| n.kind() == "identifier").unwrap_or(false);
+                // For Python round-trip: always emit bare `name = expr`. The
+                // Nebula parser accepts bare assignment, and Python has no
+                // distinction between first-binding and reassignment. A later
+                // pass in postprocess_python inserts `lt` on the first
+                // occurrence of each name within each function body so the
+                // code still parses as Nebula.
                 let type_node = node.child_by_field_name("type");
                 let type_ann = type_node.map(|n| format!(": {}", emit_type(&n, src)));
-
-                if is_simple {
-                    format!("{}lt {}{} = {}", ind, left, type_ann.unwrap_or_default(), right)
-                } else {
-                    format!("{}{} = {}", ind, left, right)
-                }
+                format!("{}{}{} = {}", ind, left, type_ann.unwrap_or_default(), right)
             }
 
             "augmented_assignment" => {
@@ -1318,8 +2916,29 @@ mod python {
             "subscript" => {
                 let val = node.child_by_field_name("value")
                     .map(|n| emit_expr(&n, src)).unwrap_or_default();
-                let sub = node.child_by_field_name("subscript")
-                    .map(|n| emit_expr(&n, src)).unwrap_or_default();
+                // If the subscript is a Python slice node, translate to a
+                // Nebula method call that the codegen maps back to slice
+                // syntax. This avoids parser changes for open-ended ranges.
+                let mut cursor = node.walk();
+                for child in node.children(&mut cursor) {
+                    if !child.is_named() { continue; }
+                    if child.kind() == "slice" {
+                        return emit_python_slice(&val, &child, src);
+                    }
+                }
+                // Plain indexing — collect all subscript-field children.
+                let mut subs = Vec::new();
+                let mut cursor = node.walk();
+                for child in node.children(&mut cursor) {
+                    if !child.is_named() { continue; }
+                    if child.kind() == "slice" { continue; }
+                    // Skip the value field.
+                    if let Some(vc) = node.child_by_field_name("value") {
+                        if child.id() == vc.id() { continue; }
+                    }
+                    subs.push(emit_expr(&child, src));
+                }
+                let sub = subs.join(", ");
                 format!("{}[{}]", val, sub)
             }
 
@@ -1339,25 +2958,59 @@ mod python {
             }
 
             "comparison_operator" => {
-                // Can have chained comparisons: a < b < c
-                let mut parts = Vec::new();
+                // Walk children in order. Operators are unnamed tokens; named
+                // children are the operands. A binary `in` / `not in` gets
+                // rewritten as `rhs.con(lhs)` because Nebula doesn't have an
+                // `in` expression operator (only `fo x in iterable`).
+                let mut operands: Vec<String> = Vec::new();
+                let mut ops: Vec<String> = Vec::new();
+                let mut prev_unnamed: Option<String> = None;
                 let mut cursor = node.walk();
                 for child in node.children(&mut cursor) {
                     if child.is_named() {
-                        parts.push(emit_expr(&child, src));
+                        // Flush any pending unnamed operator (e.g. "is" in
+                        // `x is None`) before the right-hand operand.
+                        if let Some(prev) = prev_unnamed.take() {
+                            ops.push(prev);
+                        }
+                        operands.push(emit_expr(&child, src));
                     } else {
-                        let op = text(&child, src);
-                        let op = match op {
-                            "is" => "==",
-                            "is not" => "!=",
-                            "in" => "in",
-                            "not in" => "not in",
-                            other => other,
-                        };
-                        parts.push(op.to_string());
+                        let t = text(&child, src).to_string();
+                        // Combine "is not" or "not in" into a single op token.
+                        if let Some(prev) = prev_unnamed.take() {
+                            ops.push(format!("{} {}", prev, t));
+                        } else if t == "not" || t == "is" {
+                            prev_unnamed = Some(t);
+                        } else {
+                            ops.push(t);
+                        }
                     }
                 }
-                parts.join(" ")
+                if let Some(prev) = prev_unnamed.take() {
+                    ops.push(prev);
+                }
+                if operands.len() == 2 && ops.len() == 1 {
+                    let lhs = &operands[0];
+                    let rhs = &operands[1];
+                    match ops[0].as_str() {
+                        "in" => return format!("{}.con({})", rhs, lhs),
+                        "not in" => return format!("not {}.con({})", rhs, lhs),
+                        "is" => return format!("{} == {}", lhs, rhs),
+                        "is not" => return format!("{} != {}", lhs, rhs),
+                        _ => {}
+                    }
+                }
+                // Chained comparisons: interleave operands and ops.
+                let mut out = String::new();
+                for (i, operand) in operands.iter().enumerate() {
+                    if i > 0 && i - 1 < ops.len() {
+                        out.push(' ');
+                        out.push_str(&ops[i - 1]);
+                        out.push(' ');
+                    }
+                    out.push_str(operand);
+                }
+                out
             }
 
             "boolean_operator" => {
@@ -1378,10 +3031,14 @@ mod python {
             }
 
             "unary_operator" => {
+                // tree-sitter-python uses field "argument" for the operand.
                 let op = node.child_by_field_name("operator")
                     .map(|n| text(&n, src)).unwrap_or("-");
-                let operand = node.child_by_field_name("operand")
-                    .map(|n| emit_expr(&n, src)).unwrap_or_default();
+                let operand = node.child_by_field_name("argument")
+                    .or_else(|| node.child_by_field_name("operand"))
+                    .or_else(|| node.named_child(0))
+                    .map(|n| emit_expr(&n, src))
+                    .unwrap_or_default();
                 format!("{}{}", op, operand)
             }
 
@@ -1450,13 +3107,17 @@ mod python {
                 }
             }
 
-            "list_comprehension" => {
+            "list_comprehension"
+            | "set_comprehension"
+            | "dictionary_comprehension"
+            | "generator_expression" => {
                 // [expr for x in iter if cond] → iter.fl(|x| cond).mp(|x| expr)
-                // [expr for x in iter] → iter.mp(|x| expr)
+                // {expr for x in iter} → same, wrapped in to_set()
+                // {k: v for x in iter} → same, key/value pair
+                // (expr for x in iter) → generator, same as list comp for our purposes
                 let mut cursor = node.walk();
                 let children: Vec<_> = node.named_children(&mut cursor).collect();
 
-                // First child is the expression, rest are for_in_clause / if_clause
                 let expr = children.first().map(|n| emit_expr(n, src)).unwrap_or_default();
                 let mut binding = String::new();
                 let mut iterable = String::new();
@@ -1478,16 +3139,30 @@ mod python {
                     }
                 }
 
-                if let Some(cond) = condition {
+                // Multi-target binding: tree-sitter emits "x, y" as the text of
+                // a pattern_list. Nebula lambda params accept `|x, y|`.
+                let _ = &binding;
+
+                let core = if let Some(cond) = condition {
                     format!("{}.fl(|{}| {}).mp(|{}| {})", iterable, binding, cond, binding, expr)
                 } else {
                     format!("{}.mp(|{}| {})", iterable, binding, expr)
+                };
+                match node.kind() {
+                    "set_comprehension" => format!("{}.to_set()", core),
+                    "dictionary_comprehension" => {
+                        // Dict comp: expr is a `pair` node; we already emitted
+                        // it above as "k: v" — wrap the result in to_map().
+                        format!("{}.to_map()", core)
+                    }
+                    _ => core,
                 }
             }
 
             "slice" => {
-                let raw = text(node, src);
-                raw.to_string()
+                // Direct slice emission (rare — usually handled inside
+                // `subscript` which dispatches to `emit_python_slice`).
+                text(node, src).to_string()
             }
 
             "keyword_argument" => {
@@ -1574,13 +3249,88 @@ mod python {
         params.join(", ")
     }
 
+    /// Translate a Python slice subscript into a Nebula method call.
+    /// `s[a:b]`   → `s.slc(a, b)`
+    /// `s[:b]`    → `s.slc(0, b)`
+    /// `s[a:]`    → `s.slc_from(a)`
+    /// `s[::-1]`  → `s.rev()`
+    /// `s[:-1]`   → `s.slc(0, -1)`
+    /// PythonGen maps these method names back to Python slice syntax.
+    fn emit_python_slice(val: &str, slice_node: &Node, src: &[u8]) -> String {
+        // Walk children, separating by top-level colons.
+        let mut parts: Vec<Option<String>> = vec![None, None, None];
+        let mut pos = 0usize;
+        let mut cursor = slice_node.walk();
+        for child in slice_node.children(&mut cursor) {
+            if child.is_named() {
+                if pos < 3 {
+                    parts[pos] = Some(emit_expr(&child, src));
+                }
+            } else if text(&child, src) == ":" {
+                pos += 1;
+            }
+        }
+        let start = parts[0].as_deref();
+        let stop = parts[1].as_deref();
+        let step = parts[2].as_deref();
+        // `s[::-1]` → reverse
+        if step == Some("-1") && start.is_none() && stop.is_none() {
+            return format!("{}.rev()", val);
+        }
+        // Step not supported outside reverse — fall back to slc with hint.
+        if step.is_some() && step != Some("1") {
+            return format!("{}.slc_step({}, {}, {})", val,
+                start.unwrap_or("0"), stop.unwrap_or("-1"), step.unwrap_or("1"));
+        }
+        match (start, stop) {
+            (Some(a), Some(b)) => format!("{}.slc({}, {})", val, a, b),
+            (Some(a), None) => format!("{}.slc_from({})", val, a),
+            (None, Some(b)) => format!("{}.slc(0, {})", val, b),
+            (None, None) => format!("{}.slc()", val),
+        }
+    }
+
     fn emit_args(node: &Node, src: &[u8]) -> String {
-        let mut args = Vec::new();
+        // Collect named children, but watch for the paren-less generator
+        // pattern: `sum(expr for x in iter)`. In tree-sitter-python this
+        // surfaces as an argument_list whose children are the expression
+        // and a for_in_clause sibling — not wrapped in a generator_expression
+        // node. Fold those back into a `.mp(|x| expr)` form.
+        let mut children: Vec<Node> = Vec::new();
         let mut cursor = node.walk();
         for child in node.named_children(&mut cursor) {
-            args.push(emit_expr(&child, src));
+            children.push(child);
         }
-        args.join(", ")
+
+        // Single-expression call with trailing for/if clauses → generator.
+        let has_for = children.iter().any(|c| c.kind() == "for_in_clause");
+        if has_for && children.len() >= 2 {
+            let expr = emit_expr(&children[0], src);
+            let mut binding = String::new();
+            let mut iterable = String::new();
+            let mut condition = None;
+            for child in &children[1..] {
+                match child.kind() {
+                    "for_in_clause" => {
+                        binding = child.child_by_field_name("left")
+                            .map(|n| text(&n, src).to_string()).unwrap_or_default();
+                        iterable = child.child_by_field_name("right")
+                            .map(|n| emit_expr(&n, src)).unwrap_or_default();
+                    }
+                    "if_clause" => {
+                        condition = child.named_child(0).map(|n| emit_expr(&n, src));
+                    }
+                    _ => {}
+                }
+            }
+            return if let Some(cond) = condition {
+                format!("{}.fl(|{}| {}).mp(|{}| {})", iterable, binding, cond, binding, expr)
+            } else {
+                format!("{}.mp(|{}| {})", iterable, binding, expr)
+            };
+        }
+
+        children.iter().map(|c| emit_expr(c, src)).collect::<Vec<_>>().join(", ")
     }
 
     fn emit_block(node: &Node, src: &[u8], depth: usize) -> String {
@@ -4402,5 +6152,85 @@ mod c {
         let inner = emit_children_as_statements(node, src, depth + 1, emit);
         let ind = indent(depth);
         format!(" {{\n{}{}}}", inner, ind)
+    }
+}
+
+#[cfg(test)]
+mod canon_tests {
+    use super::*;
+
+    #[test]
+    fn test_to_snake_case() {
+        assert_eq!(to_snake_case("camelCase"), "camel_case");
+        assert_eq!(to_snake_case("PascalCase"), "pascal_case");
+        assert_eq!(to_snake_case("nextId"), "next_id");
+        assert_eq!(to_snake_case("ID"), "id");
+        assert_eq!(to_snake_case("Done"), "done");
+        assert_eq!(to_snake_case("Tasks"), "tasks");
+        assert_eq!(to_snake_case("TaskManager"), "task_manager");
+        assert_eq!(to_snake_case("byPriority"), "by_priority");
+        assert_eq!(to_snake_case("NewTaskManager"), "new_task_manager");
+    }
+
+    #[test]
+    fn test_should_convert() {
+        let empty_types = std::collections::HashSet::new();
+        // "Done" after "sf." should convert
+        let line = "if sf.Done {";
+        let chars: Vec<char> = line.chars().collect();
+        assert!(should_convert_to_snake_case("Done", "if sf.", &chars, 10, &empty_types),
+            "Done after sf. should convert");
+
+        // "Tasks" after "sf." should convert
+        let line2 = "fo _, t in sf.Tasks {";
+        let chars2: Vec<char> = line2.chars().collect();
+        assert!(should_convert_to_snake_case("Tasks", "fo _, t in sf.", &chars2, 19, &empty_types),
+            "Tasks after sf. should convert");
+    }
+
+    #[test]
+    fn test_canonicalize_go_fields() {
+        let input = "    if sf.Done {\n      sf.Tasks = filtered";
+        let result = canonicalize(input);
+        assert!(result.contains("self.done"), "sf.Done should become self.done, got: {}", result);
+        assert!(result.contains("self.tasks"), "sf.Tasks should become self.tasks, got: {}", result);
+    }
+
+    #[test]
+    fn test_normalize_identifiers() {
+        assert_eq!(
+            normalize_identifiers("if sf.Done {"),
+            "if sf.done {"
+        );
+        assert_eq!(
+            normalize_identifiers("sf.Tasks = filtered"),
+            "sf.tasks = filtered"
+        );
+        assert_eq!(
+            normalize_identifiers("lt task = Task(id, title)"),
+            "lt task = Task(id, title)"
+        );
+    }
+
+    #[test]
+    fn test_canonicalize_methods() {
+        // sf → self, .fl → .filter, .mp → .map
+        assert_eq!(
+            canonicalize("sf.tasks.fl(|t| t.id)"),
+            "self.tasks.filter(|t| t.id)"
+        );
+        assert_eq!(
+            canonicalize("sf.tasks.mp(|t| t.id)"),
+            "self.tasks.map(|t| t.id)"
+        );
+    }
+
+    #[test]
+    fn test_normalize_keywords() {
+        assert_eq!(normalize_keywords("fn foo() {"), "def foo() {");
+        assert_eq!(normalize_keywords("rt 42"), "return 42");
+        assert_eq!(normalize_keywords("lt x = 1"), "x := 1");   // let → walrus
+        assert_eq!(normalize_keywords("mt x = 1"), "x = 1");    // mut → bare
+        assert_eq!(normalize_keywords("fo x in items {"), "for x in items {");
     }
 }

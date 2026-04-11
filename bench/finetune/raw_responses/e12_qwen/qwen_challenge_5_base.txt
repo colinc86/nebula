@@ -1,0 +1,94 @@
+```nebula
+im Matrix {
+  fn Multiply(sf, other: Ptr<Matrix>) -> (Ptr<Matrix>, error) {
+    if sf.Cols != other.Rows {
+      rt (nil, fmt.Errorf("dimension mismatch"))
+    }
+    mt result = NewMatrix(sf.Rows, other.Cols)
+mt i = 0
+    wl i < sf.Rows {
+mt j = 0
+      wl j < other.Cols {
+        mt sum = go_var("float64")
+mt k = 0
+        wl k < sf.Cols {
+          sum += sf.Data[i][k] * other.Data[k][j]
+          k += 1
+        }
+        result.Data[i][j] = sum
+        j += 1
+      }
+      i += 1
+    }
+    rt (result, nil)
+  }
+}
+im Matrix {
+  fn Transpose(sf) -> Ptr<Matrix> {
+    mt transposed = NewMatrix(sf.Cols, sf.Rows)
+mt i = 0
+    wl i < sf.Rows {
+mt j = 0
+      wl j < sf.Cols {
+        transposed.Data[j][i] = sf.Data[i][j]
+        j += 1
+      }
+      i += 1
+    }
+    rt transposed
+  }
+}
+im Matrix {
+  fn Determinant(sf) -> (float64, error) {
+    if sf.Rows != sf.Cols {
+      rt (0.0, fmt.Errorf("non-square matrix"))
+    }
+    if sf.Rows == 2 {
+      rt (sf.Data[0][0] * sf.Data[1][1] - sf.Data[0][1] * sf.Data[1][0], nil)
+    }
+    mt det = go_var("float64")
+mt i = 0
+    wl i < sf.Rows {
+      mt submatrix = NewMatrix(sf.Rows - 1, sf.Cols - 1)
+mt j = 1
+      wl j < sf.Cols {
+        mt k = 0
+        wl k < sf.Rows {
+          if k != i {
+            submatrix.Data[k - (k >= i)][j - 1] = sf.Data[k][j]
+          }
+          k += 1
+        }
+        j += 1
+      }
+      det += math.Pow(-1, float64(i)) * sf.Data[i][0] * go_var("submatrix").Determinant().(float64)
+      i += 1
+    }
+    rt (det, nil)
+  }
+}
+fn LinearRegression(xs: List<float64>, ys: List<float64>) -> (float64, float64, error) {
+  if ln(xs) != ln(ys) or ln(xs) == 0 {
+    rt (0.0, 0.0, fmt.Errorf("invalid input"))
+  }
+mt n = go_var("int")
+mt sum_x = go_var("float64")
+mt sum_y = go_var("float64")
+mt sum_xy = go_var("float64")
+mt sum_xx = go_var("float64")
+n = ln(xs)
+sum_x = 0
+sum_y = 0
+sum_xy = 0
+sum_xx = 0
+fo i in xs {
+  sum_x += xs[i]
+  sum_y += ys[i]
+  sum_xy += xs[i] * ys[i]
+  sum_xx += xs[i] * xs[i]
+}
+mt slope = (n * sum_xy - sum_x * sum_y) / (n * sum_xx - sum_x * sum_x)
+mt intercept = (sum_y - slope * sum_x) / n
+rt (slope, intercept, nil)
+}
+```

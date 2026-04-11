@@ -1,0 +1,78 @@
+```nebula
+fn ParseCSV(input: string) -> (Ptr<Table>, error) {
+  mt table = NewTable()
+  fo _, line in NonEmptyLines(input) {
+    if ln(table.Headers) == 0 {
+      table.Headers = Tokenize(line)
+      continue
+    }
+    mt fields = []string{}
+    fo field in Tokenize(line) {
+      if strings.HasPrefix(field, "\"") and strings.HasSuffix(field, "\"") {
+        fields = psh(fields, strings.Trim(field, "\""))
+      } else {
+        fields = psh(fields, field)
+      }
+    }
+    table.AddRow(sf { Fields: fields })
+  }
+  rt (table, nil)
+}
+
+fn WordFrequency(text: string) -> Map<string, int> {
+  mt freq = map[string]int{}
+  fo _, word in Tokenize(strings.ToLower(text)) {
+    if strings.TrimSpace(word) != "" {
+      freq[word] += 1
+    }
+  }
+  rt freq
+}
+
+fn FormatTable(t: Ptr<Table>) -> string {
+  mt headers = t.Headers
+  mt headerStr = strings.Join(headers, "|")
+  mt rows = t.Rows
+  mt rowStrs = []string{}
+  fo _, row in rows {
+    mt fields = row.Fields
+    mt rowFields = make([]string, ln(fields))
+    fo i, field in fields {
+      rowFields[i] = field
+    }
+    mt rowStr = strings.Join(rowFields, "|")
+    rowStrs = psh(rowStrs, rowStr)
+  }
+  rt strings.Join(append([]string{headerStr}, rowStrs...), "\n")
+}
+
+fn FindAllMatches(text: string, pattern: string) -> List<int> {
+  mt matches = []int{}
+  fo i in range(ln(text)) {
+    if matchPattern(text[i..], pattern) {
+      matches = psh(matches, i)
+    }
+  }
+  rt matches
+}
+
+fn matchPattern(s: string, pattern: string) -> bool {
+  if pattern == "" {
+    return s == ""
+  }
+  if ln(pattern) > 1 and (pattern[0] == "?" or pattern[0] == "*") {
+    if pattern[0] == "?" {
+      return len(s) > 0 and matchPattern(s[1..], pattern[1:])
+    } else { // pattern[0] == '*'
+      for i in range(ln(s)+1) {
+        if matchPattern(s[i..], pattern[1:]) {
+          return true
+        }
+      }
+      return false
+    }
+  } else {
+    return len(s) > 0 and s[0] == pattern[0] and matchPattern(s[1..], pattern[1:])
+  }
+}
+```

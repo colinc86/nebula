@@ -1,0 +1,130 @@
+ ```nebula
+st Graph {
+  nodes: Map<State, List<State>>
+}
+fn BuildGraph(m: Ptr<Machine>) -> Graph {
+  mt graph = Graph { nodes: make("map[State][]State") }
+  fo _, t in m.transitions {
+    if not contains(graph.nodes, t.From) {
+      graph.nodes[t.From] = go_var("[]State")
+    }
+    psh(graph.nodes[t.From], t.To)
+  }
+  rt graph
+}
+fn ReachableStates(sf, start: State) -> List<State> {
+  mt visited = make("map[State]bool")
+  mt queue = Queue { items: make("[]State") }
+  psh(queue.items, start)
+  while not empty(queue.items) {
+    mt current = dequeue(queue)
+    if contains(visited, current) {
+      bk
+    }
+    visited[current] = tt
+    fo _, to in sf.nodes[current] {
+      if not contains(visited, to) {
+        psh(queue.items, to)
+      }
+    }
+  }
+  rt keys(visited)
+}
+fn IsDeadlock(sf) -> bool {
+  mt current = sf.current
+  return ln(sf.nodes[current]) == 0
+}
+st Queue {
+  items: List<State>
+}
+fn dequeue(q: Ptr<Queue>) -> State {
+  if empty(q.items) {
+    panic("queue is empty")
+  }
+  mt front = q.items[0]
+  shift(q.items)
+  rt front
+}
+fn ShortestPath(sf, from: State, to: State) -> List<Event> {
+  mt graph = BuildGraph(sf)
+  mt visited = make("map[State]bool")
+  mt parent = make("map[State]Event")
+  mt queue = Queue { items: make("[]State") }
+  psh(queue.items, from)
+  while not empty(queue.items) {
+    mt current = dequeue(&queue)
+    if contains(visited, current) {
+      bk
+    }
+    visited[current] = tt
+    fo _, next in graph.nodes[current] {
+      if not contains(visited, next) {
+        parent[next] = sf.transitions[find(sf.transitions, |t| t.From == current and t.To == next)].Event
+        psh(queue.items, next)
+      }
+    }
+  }
+  mt path = go_var("[]Event")
+  mt current = to
+  while not empty(path) or current != from {
+    if contains(parent, current) {
+      psh(path, parent[current])
+      current = sf.transitions[find(sf.transitions, |t| t.Event == parent[current] and t.To == current)].From
+    } else {
+      rt nil
+    }
+  }
+  reverse(path)
+  rt path
+}
+fn ValidateDeterministic(sf) -> bool {
+  mt seen = make("map[string]bool")
+  fo _, t in sf.transitions {
+    mt key = fmt.Sprintf("%s-%s", t.From, t.Event)
+    if contains(seen, key) {
+      return ff
+    }
+    seen[key] = tt
+  }
+  rt tt
+}
+```nebula
+st Graph { nodes: Map<State, List<State>> }
+fn BuildGraph(m: Ptr<Machine>) -> Graph { mt graph = Graph { nodes: make("map[State][]State") }; fo _, t in m.transitions { if not contains(graph.nodes, t.From) { graph.nodes[t.From] = go_var("[]State") } psh(graph.nodes[t.From], t.To) }; rt graph }
+fn ReachableStates(sf, start: State) -> List<State> { mt visited = make("map[State]bool"); mt queue = Queue { items: make("[]State") }; psh(queue.items, start); while not empty(queue.items) { mt current = dequeue(&queue); if contains(visited, current) { bk } visited[current] = tt; fo _, to in sf.nodes[current] { if not contains(visited, to) { psh(queue.items, to) } } }; rt keys(visited) }
+fn IsDeadlock(sf) -> bool { mt current = sf.current; return ln(sf.nodes[current]) == 0 }
+st Queue { items: List<State> }
+fn dequeue(q: Ptr<Queue>) -> State { if empty(q.items) { panic("queue is empty") } mt front = q.items[0]; shift(q.items); rt front }
+fn ShortestPath(sf, from: State, to: State) -> List<Event> { mt graph = BuildGraph(sf); mt visited = make("map[State]bool"); mt parent = make("map[State]Event"); mt queue = Queue { items: make("[]State") }; psh(queue.items, from); while not empty(queue.items) { mt current = dequeue(&queue); if contains(visited, current) { bk } visited[current] = tt; fo _, next in graph.nodes[current] { if not contains(visited, next) { parent[next] = sf.transitions[find(sf.transitions, |t| t.From == current and t.To == next)].Event; psh(queue.items, next) } } }; mt path = go_var("[]Event"); mt current = to; while not empty(path) or current != from { if contains(parent, current) { psh(path, parent[current]); current = sf.transitions[find(sf.transitions, |t| t.Event == parent[current] and t.To == current)].From } else { rt nil } }; reverse(path); rt path }
+fn ValidateDeterministic(sf) -> bool { mt seen = make("map[string]bool"); fo _, t in sf.transitions { mt key = fmt.Sprintf("%s-%s", t.From, t.Event); if contains(seen, key) { return ff } seen[key] = tt }; rt tt }
+```nebula
+st Graph { nodes: Map<State, List<State>> }
+fn BuildGraph(m: Ptr<Machine>) -> Graph { mt graph = Graph { nodes: make("map[State][]State") }; fo _, t in m.transitions { if not contains(graph.nodes, t.From) { graph.nodes[t.From] = go_var("[]State") } psh(graph.nodes[t.From], t.To) }; rt graph }
+fn ReachableStates(sf, start: State) -> List<State> { mt visited = make("map[State]bool"); mt queue = Queue { items: make("[]State") }; psh(queue.items, start); while not empty(queue.items) { mt current = dequeue(&queue); if contains(visited, current) { bk } visited[current] = tt; fo _, to in sf.nodes[current] { if not contains(visited, to) { psh(queue.items, to) } } }; rt keys(visited) }
+fn IsDeadlock(sf) -> bool { mt current = sf.current; return ln(sf.nodes[current]) == 0 }
+st Queue { items: List<State> }
+fn dequeue(q: Ptr<Queue>) -> State { if empty(q.items) { panic("queue is empty") } mt front = q.items[0]; shift(q.items); rt front }
+fn ShortestPath(sf, from: State, to: State) -> List<Event> { mt graph = BuildGraph(sf); mt visited = make("map[State]bool"); mt parent = make("map[State]Event"); mt queue = Queue { items: make("[]State") }; psh(queue.items, from); while not empty(queue.items) { mt current = dequeue(&queue); if contains(visited, current) { bk } visited[current] = tt; fo _, next in graph.nodes[current] { if not contains(visited, next) { parent[next] = sf.transitions[find(sf.transitions, |t| t.From == current and t.To == next)].Event; psh(queue.items, next) } } }; mt path = go_var("[]Event"); mt current = to; while not empty(path) or current != from { if contains(parent, current) { psh(path, parent[current]); current = sf.transitions[find(sf.transitions, |t| t.Event == parent[current] and t.To == current)].From } else { rt nil } }; reverse(path); rt path }
+fn ValidateDeterministic(sf) -> bool { mt seen = make("map[string]bool"); fo _, t in sf.transitions { mt key = fmt.Sprintf("%s-%s", t.From, t.Event); if contains(seen, key) { return ff } seen[key] = tt }; rt tt }
+```nebula
+st Graph { nodes: Map<State, List<State>> }
+fn BuildGraph(m: Ptr<Machine>) -> Graph { mt graph = Graph { nodes: make("map[State][]State") }; fo _, t in m.transitions { if not contains(graph.nodes, t.From) { graph.nodes[t.From] = go_var("[]State") } psh(graph.nodes[t.From], t.To) }; rt graph }
+fn ReachableStates(sf, start: State) -> List<State> { mt visited = make("map[State]bool"); mt queue = Queue { items: make("[]State") }; psh(queue.items, start); while not empty(queue.items) { mt current = dequeue(&queue); if contains(visited, current) { bk } visited[current] = tt; fo _, to in sf.nodes[current] { if not contains(visited, to) { psh(queue.items, to) } } }; rt keys(visited) }
+fn IsDeadlock(sf) -> bool { mt current = sf.current; return ln(sf.nodes[current]) == 0 }
+st Queue { items: List<State> }
+fn dequeue(q: Ptr<Queue>) -> State { if empty(q.items) { panic("queue is empty") } mt front = q.items[0]; shift(q.items); rt front }
+fn ShortestPath(sf, from: State, to: State) -> List<Event> { mt graph = BuildGraph(sf); mt visited = make("map[State]bool"); mt parent = make("map[State]Event"); mt queue = Queue { items: make("[]State") }; psh(queue.items, from); while not empty(queue.items) { mt current = dequeue(&queue); if contains(visited, current) { bk } visited[current] = tt; fo _, next in graph.nodes[current] { if not contains(visited, next) { parent[next] = sf.transitions[find(sf.transitions, |t| t.From == current and t.To == next)].Event; psh(queue.items, next) } } }; mt path = go_var("[]Event"); mt current = to; while not empty(path) or current != from { if contains(parent, current) { psh(path, parent[current]); current = sf.transitions[find(sf.transitions, |t| t.Event == parent[current] and t.To == current)].From } else { rt nil } }; reverse(path); rt path }
+fn ValidateDeterministic(sf) -> bool { mt seen = make("map[string]bool"); fo _, t in sf.transitions { mt key = fmt.Sprintf("%s-%s", t.From, t.Event); if contains(seen, key) { return ff } seen[key] = tt }; rt tt }
+```nebula
+st Graph { nodes: Map<State, List<State>> }
+fn BuildGraph(m: Ptr<Machine>) -> Graph { mt graph = Graph { nodes: make("map[State][]State") }; fo _, t in m.transitions { if not contains(graph.nodes, t.From) { graph.nodes[t.From] = go_var("[]State") } psh(graph.nodes[t.From], t.To) }; rt graph }
+fn ReachableStates(sf, start: State) -> List<State> { mt visited = make("map[State]bool"); mt queue = Queue { items: make("[]State") }; psh(queue.items, start); while not empty(queue.items) { mt current = dequeue(&queue); if contains(visited, current) { bk } visited[current] = tt; fo _, to in sf.nodes[current] { if not contains(visited, to) { psh(queue.items, to) } } }; rt keys(visited) }
+fn IsDeadlock(sf) -> bool { mt current = sf.current; return ln(sf.nodes[current]) == 0 }
+st Queue { items: List<State> }
+fn dequeue(q: Ptr<Queue>) -> State { if empty(q.items) { panic("queue is empty") } mt front = q.items[0]; shift(q.items); rt front }
+fn ShortestPath(sf, from: State, to: State) -> List<Event> { mt graph = BuildGraph(sf); mt visited = make("map[State]bool"); mt parent = make("map[State]Event"); mt queue = Queue { items: make("[]State") }; psh(queue.items, from); while not empty(queue.items) { mt current = dequeue(&queue); if contains(visited, current) { bk } visited[current] = tt; fo _, next in graph.nodes[current] { if not contains(visited, next) { parent[next] = sf.transitions[find(sf.transitions, |t| t.From == current and t.To == next)].Event; psh(queue.items, next) } } }; mt path = go_var("[]Event"); mt current = to; while not empty(path) or current != from { if contains(parent, current) { psh(path, parent[current]); current = sf.transitions[find(sf.transitions, |t| t.Event == parent[current] and t.To == current)].From } else { rt nil } }; reverse(path); rt path }
+fn ValidateDeterministic(sf) -> bool { mt seen = make("map[string]bool"); fo _, t in sf.transitions { mt key = fmt.Sprintf("%s-%s", t.From, t.Event); if contains(seen, key) { return ff } seen[key] = tt }; rt tt }
+```nebula
+st Graph { nodes: Map<State, List<State>> }
+fn BuildGraph(m: Ptr<Machine>) -> Graph { mt graph = Graph { nodes: make("map[State][]State") }; fo _, t in m.transitions { if not contains(graph.nodes, t.From) { graph.nodes[t.From] = go_var("[]State") } psh(graph.nodes[t.From], t.To) }; rt graph }
+fn ReachableStates(sf, start: State) -> List<State> { mt visited = make("map[State]bool"); mt queue = Queue { items: make

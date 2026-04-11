@@ -172,7 +172,7 @@ impl PythonGen {
                     format!("{}def {}({}):", self.ind(), name, all_params.join(", "));
                 out.push('\n');
                 self.indent += 1;
-                out.push_str(&self.gen_block_body(body));
+                out.push_str(&self.gen_fn_body(body));
                 self.indent -= 1;
                 out
             }
@@ -243,7 +243,7 @@ impl PythonGen {
                             }
                         ));
                         self.indent += 1;
-                        out.push_str(&self.gen_block_body(body));
+                        out.push_str(&self.gen_fn_body(body));
                         self.indent -= 1;
                         out.push('\n');
                     }
@@ -281,8 +281,15 @@ impl PythonGen {
                     self.gen_expr(value)
                 )
             }
-            Statement::Use { path, .. } => {
-                format!("{}import {}", self.ind(), path.join("."))
+            Statement::Use { path, items, alias } => {
+                let module = path.join(".");
+                if let Some(items) = items {
+                    format!("{}from {} import {}", self.ind(), module, items.join(", "))
+                } else if let Some(alias) = alias {
+                    format!("{}import {} as {}", self.ind(), module, alias)
+                } else {
+                    format!("{}import {}", self.ind(), module)
+                }
             }
             Statement::LetDestructure { names, value, .. } => {
                 format!("{}{} = {}", self.ind(), names.join(", "), self.gen_expr(value))
@@ -299,6 +306,18 @@ impl PythonGen {
     }
 
     fn gen_block_body(&mut self, block: &Block) -> String {
+        self.gen_block_inner(block, false)
+    }
+
+    /// Function-body variant: wraps a trailing `block.expr` in `return` so
+    /// Nebula's implicit "last expression is the value" rule round-trips
+    /// correctly. Inner blocks (for/while/if bodies) use `gen_block_body`
+    /// which emits trailing exprs as plain statements.
+    fn gen_fn_body(&mut self, block: &Block) -> String {
+        self.gen_block_inner(block, true)
+    }
+
+    fn gen_block_inner(&mut self, block: &Block, is_fn_body: bool) -> String {
         let mut out = String::new();
         if block.statements.is_empty() && block.expr.is_none() {
             out.push_str(&format!("{}pass\n", self.ind()));
@@ -309,9 +328,49 @@ impl PythonGen {
             out.push('\n');
         }
         if let Some(expr) = &block.expr {
-            out.push_str(&format!("{}return {}\n", self.ind(), self.gen_expr(expr)));
+            if PythonGen::is_statement_expr(expr) {
+                // Control-flow "expressions" in Nebula translate to statements
+                // in Python — for/while/loop return unit, and multi-line
+                // if/match can't be wrapped in `return`.
+                out.push_str(&self.ind());
+                out.push_str(&self.gen_expr(expr));
+                if !out.ends_with('\n') {
+                    out.push('\n');
+                }
+            } else if is_fn_body {
+                // Only the top-level function body turns a trailing expression
+                // into an explicit `return`.
+                out.push_str(&format!("{}return {}\n", self.ind(), self.gen_expr(expr)));
+            } else {
+                // Inner block: trailing expression is an expression statement.
+                out.push_str(&format!("{}{}\n", self.ind(), self.gen_expr(expr)));
+            }
         }
         out
+    }
+
+    /// Returns true if the expression should be emitted as a Python statement
+    /// (no `return` wrapping) rather than an inline expression.
+    fn is_statement_expr(expr: &Expr) -> bool {
+        match expr {
+            Expr::For { .. }
+            | Expr::While { .. }
+            | Expr::Loop { .. }
+            | Expr::TryCatch { .. } => true,
+            // Multi-line if/match can't be wrapped in `return`. The ternary
+            // fast-path in gen_expr handles pure-value ifs before we get here.
+            Expr::If { then_block, else_block, .. } => {
+                let then_is_value = then_block.statements.is_empty()
+                    && then_block.expr.is_some();
+                let else_is_value = else_block
+                    .as_ref()
+                    .map(|eb| eb.statements.is_empty() && eb.expr.is_some())
+                    .unwrap_or(false);
+                !(then_is_value && else_is_value)
+            }
+            Expr::Match { .. } => true,
+            _ => false,
+        }
     }
 
     fn gen_expr(&mut self, expr: &Expr) -> String {
@@ -414,7 +473,14 @@ impl PythonGen {
                     "tsr" | "to_string" => "str",
                     "toi" | "to_int" => "int",
                     "tof" | "to_float" => "float",
-                    "typ" | "type_of" => "type",
+                    "typ" | "type_of" => {
+                        // type(x) takes 1 arg; isinstance(x, T) takes 2+.
+                        if args_str.len() >= 2 {
+                            "isinstance"
+                        } else {
+                            "type"
+                        }
+                    }
                     "rng" | "range" => "range",
                     other => other,
                 };
@@ -429,30 +495,99 @@ impl PythonGen {
                 let args_str: Vec<String> =
                     args.iter().map(|a| self.gen_expr(&a.value)).collect();
                 let obj = self.gen_expr(object);
-                // Resolve Nebula method names (including short aliases) to Python
+                // Several Nebula methods don't map to Python methods — they
+                // are top-level functions or operators.
+                match method.as_str() {
+                    "slc" => {
+                        return match args_str.len() {
+                            0 => format!("{}[:]", obj),
+                            1 => format!("{}[{}:]", obj, args_str[0]),
+                            2 => format!("{}[{}:{}]", obj, args_str[0], args_str[1]),
+                            _ => format!("{}[{}]", obj, args_str.join(":")),
+                        };
+                    }
+                    "slc_from" => {
+                        return format!("{}[{}:]", obj, args_str.join(", "));
+                    }
+                    "slc_step" => {
+                        return match args_str.len() {
+                            3 => format!("{}[{}:{}:{}]", obj, args_str[0], args_str[1], args_str[2]),
+                            _ => format!("{}[{}]", obj, args_str.join(":")),
+                        };
+                    }
+                    "mp" | "map" => {
+                        // If the callback is a multi-param lambda, use a list
+                        // comprehension instead of `map` — Python's `map`
+                        // passes the whole tuple as a single argument which
+                        // breaks `lambda x, y: ...`.
+                        if let Some(Expr::Lambda { params, body }) = args.first().map(|a| &a.value) {
+                            if params.len() > 1 {
+                                let names: Vec<&str> =
+                                    params.iter().map(|p| p.name.as_str()).collect();
+                                return format!(
+                                    "[{} for {} in {}]",
+                                    self.gen_expr(body),
+                                    names.join(", "),
+                                    obj,
+                                );
+                            }
+                        }
+                        return format!("list(map({}, {}))", args_str.join(", "), obj);
+                    }
+                    "fl" | "filter" => {
+                        if let Some(Expr::Lambda { params, body }) = args.first().map(|a| &a.value) {
+                            if params.len() > 1 {
+                                let names: Vec<&str> =
+                                    params.iter().map(|p| p.name.as_str()).collect();
+                                return format!(
+                                    "[({}, ) for {} in {} if {}]",
+                                    names.join(", "),
+                                    names.join(", "),
+                                    obj,
+                                    self.gen_expr(body),
+                                );
+                            }
+                        }
+                        return format!("list(filter({}, {}))", args_str.join(", "), obj);
+                    }
+                    "fd" | "fold" | "rd" | "reduce" => {
+                        // functools.reduce(f, iter [, init])
+                        return format!(
+                            "__import__('functools').reduce({}, {})",
+                            args_str.join(", "),
+                            obj,
+                        );
+                    }
+                    "ln" | "len" => return format!("len({})", obj),
+                    "con" | "contains" => {
+                        // obj.con(x)  →  x in obj
+                        if args_str.len() == 1 {
+                            return format!("({} in {})", args_str[0], obj);
+                        }
+                    }
+                    "is_empty" => return format!("(len({}) == 0)", obj),
+                    "to_set" => return format!("set({})", obj),
+                    "to_map" => return format!("dict({})", obj),
+                    "rev" | "reverse" => {
+                        // `[::-1]` works for both strings and lists, unlike
+                        // `list(reversed(x))` which returns a list even for
+                        // string input (breaks type).
+                        return format!("{}[::-1]", obj);
+                    }
+                    "srt" | "sort" => return format!("sorted({})", obj),
+                    "unq" | "unique" => return format!("list(dict.fromkeys({}))", obj),
+                    _ => {}
+                }
                 let py_method = match method.as_str() {
-                    "mp" | "map" => "map",
-                    "fl" | "filter" => "filter",
-                    "fd" | "fold" => "fold",
-                    "rd" | "reduce" => "reduce",
-                    "srt" | "sort" => "sort",
-                    "rv" | "reverse" => "reverse",
                     "jn" | "join" => "join",
                     "psh" | "push" => "append",
-                    "con" | "contains" => "contains",
-                    "ck" | "contains_key" => "contains_key",
-                    "ln" | "len" => "len",
-                    "unq" | "unique" => "unique",
+                    "clr" | "clear" => "clear",
+                    "ck" | "contains_key" => "__contains__",
                     "cnt" | "count" => "count",
-                    "to_upper" => "upper",
-                    "to_lower" => "lower",
-                    "is_empty" => "is_empty",
+                    "to_upper" | "upper" => "upper",
+                    "to_lower" | "lower" => "lower",
                     other => other,
                 };
-                // len() is a global function in Python
-                if py_method == "len" {
-                    return format!("len({})", obj);
-                }
                 format!(
                     "{}.{}({})",
                     obj,
@@ -497,7 +632,8 @@ impl PythonGen {
                     }
                 }
 
-                // Multi-line if
+                // Multi-line if — caller is responsible for prepending the
+                // starting indent (via Statement::Expr or gen_block_body).
                 let mut out = format!("if {}:\n", self.gen_expr(condition));
                 self.indent += 1;
                 out.push_str(&self.gen_block_body(then_block));
@@ -646,14 +782,9 @@ impl PythonGen {
                 };
                 let enumerate = index_binding.is_some();
                 let mut out = if enumerate {
-                    format!(
-                        "{}for {} in enumerate({}):\n",
-                        self.ind(),
-                        binding_str,
-                        iter_expr
-                    )
+                    format!("for {} in enumerate({}):\n", binding_str, iter_expr)
                 } else {
-                    format!("{}for {} in {}:\n", self.ind(), binding_str, iter_expr)
+                    format!("for {} in {}:\n", binding_str, iter_expr)
                 };
                 self.indent += 1;
                 out.push_str(&self.gen_block_body(body));
@@ -662,7 +793,7 @@ impl PythonGen {
             }
 
             Expr::While { condition, body } => {
-                let mut out = format!("{}while {}:\n", self.ind(), self.gen_expr(condition));
+                let mut out = format!("while {}:\n", self.gen_expr(condition));
                 self.indent += 1;
                 out.push_str(&self.gen_block_body(body));
                 self.indent -= 1;
@@ -670,7 +801,7 @@ impl PythonGen {
             }
 
             Expr::Loop { body } => {
-                let mut out = format!("{}while True:\n", self.ind());
+                let mut out = String::from("while True:\n");
                 self.indent += 1;
                 out.push_str(&self.gen_block_body(body));
                 self.indent -= 1;

@@ -1,0 +1,88 @@
+```nebula
+fn ParseCSV(input: string) -> (Ptr<Table>, error) {
+  mt table = NewTable()
+  fo line in NonEmptyLines(input) {
+    if ln(table.Headers) == 0 {
+      table.Headers = Tokenize(line)
+    } el {
+      mt fields = []string{}
+      mt current = ""
+      wl i < ln(line) {
+        if line[i] == ',' and current == "" {
+          fields = psh(fields, "")
+        } el {
+          if line[i] == '"' {
+            mt j = i + 1
+            while j < ln(line) and line[j] != '"' {
+              current += line[j]
+              j++
+            }
+            if j < ln(line) {
+              current += line[j+1..strings.Index(line[j+1..], "\n")]
+              fields = psh(fields, current)
+              current = ""
+            } el {
+              break
+            }
+          } el {
+            if line[i] == ',' and current != "" {
+              fields = psh(fields, current)
+              current = ""
+            } el {
+              current += line[i]
+            }
+          }
+        }
+        i++
+      }
+      table.AddRow(fields...)
+    }
+  }
+  rt (table, nil)
+}
+
+fn WordFrequency(text: string) -> Map<string, int> {
+  mt freq = map[string]int{}
+  fo word in Tokenize(strings.ToLower(text)) {
+    if _, ok := freq[word]; not ok {
+      freq[word] = 1
+    } el {
+      freq[word]++
+    }
+  }
+  rt freq
+}
+
+fn FormatTable(t: Ptr<Table>) -> string {
+  mt headers = strings.Join(t.Headers, " | ")
+  mt rows = ""
+  fo row in t.Rows {
+    mt fields = []
+    fo field in row.Fields {
+      fields = psh(fields, field)
+    }
+    rows += strings.Join(fields, " | ") + "\n"
+  }
+  rt headers + "\n" + rows
+}
+
+fn FindAllMatches(text: string, pattern: string) -> List<int> {
+  mt matches = []
+  mt i = 0
+  wl i < ln(text) {
+    if text[i] == pattern[0] or (pattern[0] == '?' and i < ln(text)) {
+      mt j = i + 1
+      mt k = 1
+      while k < ln(pattern) and (text[j] == pattern[k] or pattern[k] == '?') {
+        j++
+        k++
+      }
+      if k == ln(pattern) {
+        matches = psh(matches, i)
+      }
+    }
+    i++
+  }
+  rt matches
+}
+```

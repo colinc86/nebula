@@ -1,0 +1,96 @@
+```nebula
+im Graph {
+  fn ShortestPath(sf, from: int, to: int) -> (List<int>, float64, error) {
+    mt visited = make("map[int]bool")
+    mt distances = make("map[int]float64")
+    mt previous = make("map[int]int")
+mt queue = [from]
+    distances[from] = 0
+    wl ln(queue) > 0 {
+      mt node = queue[0]
+      queue = queue[1..]
+      if visited[node] {
+        ct
+      }
+      visited[node] = tt
+      fo _, n in sf.Neighbors(node) {
+        mt alt = distances[node] + sf.edges[n].Cost
+        if not visited[n] or alt < distances[n] {
+          distances[n] = alt
+          previous[n] = node
+          queue = psh(queue, n)
+        }
+      }
+    }
+mt path = go_var("[]int")
+    mt cost = float64(0)
+    if not visited[to] {
+      rt (nil, ErrNoPath(from, to))
+    }
+    mt current = to
+    wl current != from {
+      path = psh(path, current)
+      current = previous[current]
+    }
+    path = psh(path, from)
+    cost = distances[to]
+    rt (path[ln(path)..], cost, nil)
+  }
+}
+im Graph {
+  fn ConnectedComponents(sf) -> List<List<int>> {
+    mt visited = make("map[int]bool")
+    mt components = go_var("[]List[int]")
+mt stack = [1]
+    wl ln(stack) > 0 {
+      mt node = stack[ln(stack)-1]
+      stack = stack[..ln(stack)-1]
+      if not visited[node] {
+        mt component = go_var("[]int")
+        fo _ in sf.Neighbors(node) {
+          component = psh(component, n)
+          stack = psh(stack, n)
+        }
+        components = psh(components, component)
+        visited[node] = tt
+      }
+    }
+    rt components
+  }
+}
+im Graph {
+  fn DetectCycles(sf) -> bool {
+    mt visited = make("map[int]bool")
+    mt recursionStack = go_var("[]int")
+mt stack = [1]
+    wl ln(stack) > 0 {
+      mt node = stack[ln(stack)-1]
+      stack = stack[..ln(stack)-1]
+      if not visited[node] {
+        visited[node] = tt
+        recursionStack = psh(recursionStack, node)
+        fo _, n in sf.Neighbors(node) {
+          if ln(recursionStack) > 0 and recursionStack[ln(recursionStack)-1] == n {
+            rt tt
+          }
+          stack = psh(stack, n)
+        }
+      } else if ln(recursionStack) > 0 and node == recursionStack[ln(recursionStack)-1] {
+        rt tt
+      }
+    }
+    rt ff
+  }
+}
+im Graph {
+  fn FilterByTag(sf, tag: string) -> List<Edge> {
+    mt result = go_var("[]Edge")
+mt fo _, e in sf.edges {
+      if ln(e.Tags) > 0 and e.Tags[0] == tag {
+        result = psh(result, e)
+      }
+    }
+    rt result
+  }
+}
+```

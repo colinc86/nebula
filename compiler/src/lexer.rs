@@ -92,6 +92,7 @@ pub enum Token {
     DotDot,       // ..
     DotDotEq,     // ..=
     Colon,        // :
+    ColonAssign,  // :=
     ColonColon,   // ::
     Arrow,        // ->
     FatArrow,     // =>
@@ -104,6 +105,8 @@ pub enum Token {
 
     // Special
     Newline,
+    Indent,       // Increase in indentation level
+    Dedent,       // Decrease in indentation level
     Eof,
 }
 
@@ -145,6 +148,7 @@ impl fmt::Display for LexError {
 
 struct Lexer {
     chars: Vec<char>,
+    source: String,
     pos: usize,
     line: usize,
     col: usize,
@@ -154,6 +158,7 @@ impl Lexer {
     fn new(source: &str) -> Self {
         Lexer {
             chars: source.chars().collect(),
+            source: source.to_string(),
             pos: 0,
             line: 1,
             col: 1,
@@ -198,7 +203,20 @@ impl Lexer {
                 '0'..='9' => self.read_number()?,
                 '"' => self.read_string()?,
                 '\'' => self.read_char()?,
-                'a'..='z' | 'A'..='Z' | '_' => self.read_ident_or_keyword(),
+                'a'..='z' | 'A'..='Z' | '_' => {
+                    let tok = self.read_ident_or_keyword();
+                    // elif → Else + If (two tokens)
+                    if let Token::Ident(ref name) = tok {
+                        if name == "elif" {
+                            tokens.push(SpannedToken { token: Token::Else, line, col });
+                            Token::If
+                        } else {
+                            tok
+                        }
+                    } else {
+                        tok
+                    }
+                }
 
                 '+' => {
                     self.advance();
@@ -341,6 +359,9 @@ impl Lexer {
                     if self.peek() == ':' {
                         self.advance();
                         Token::ColonColon
+                    } else if self.peek() == '=' {
+                        self.advance();
+                        Token::ColonAssign
                     } else {
                         Token::Colon
                     }
@@ -388,6 +409,11 @@ impl Lexer {
             line: self.line,
             col: self.col,
         });
+
+        // Post-pass: desugar colon-indent blocks into brace blocks.
+        // "def foo():" + indent → "def foo() {" ... "}"
+        // This lets the parser handle both brace and indent forms uniformly.
+        let tokens = desugar_indent_blocks(tokens, &self.source);
 
         Ok(tokens)
     }
@@ -774,42 +800,43 @@ impl Lexer {
         }
 
         match name.as_str() {
-            "lt" => Token::Let,
-            "mt" => Token::Mut,
-            "cn" => Token::Const,
-            "fn" => Token::Fn,
-            "rt" => Token::Return,
+            // Short (compact) and long (canonical) keyword forms
+            "lt" | "let" => Token::Let,
+            "mt" | "mut" => Token::Mut,
+            "cn" | "const" => Token::Const,
+            "fn" | "def" => Token::Fn,
+            "rt" | "return" => Token::Return,
             "if" => Token::If,
-            "el" => Token::Else,
-            "mc" => Token::Match,
-            "fo" => Token::For,
-            "wl" => Token::While,
-            "lp" => Token::Loop,
-            "bk" => Token::Break,
-            "ct" => Token::Continue,
-            "st" => Token::Struct,
-            "en" => Token::Enum,
-            "tr" => Token::Trait,
-            "im" => Token::Impl,
+            "el" | "else" => Token::Else,
+            "mc" | "match" => Token::Match,
+            "fo" | "for" => Token::For,
+            "wl" | "while" => Token::While,
+            "lp" | "loop" => Token::Loop,
+            "bk" | "break" => Token::Break,
+            "ct" | "continue" => Token::Continue,
+            "st" | "struct" | "class" => Token::Struct,
+            "en" | "enum" => Token::Enum,
+            "tr" | "trait" => Token::Trait,
+            "im" | "impl" => Token::Impl,
             "use" => Token::Use,
-            "md" => Token::Module,
-            "pb" => Token::Pub,
-            "sf" => Token::SelfValue,
-            "Sf" => Token::SelfType,
-            "ty" => Token::Type,
-            "ac" => Token::Async,
-            "aw" => Token::Await,
-            "sp" => Token::Spawn,
+            "md" | "module" => Token::Module,
+            "pb" | "pub" => Token::Pub,
+            "sf" | "self" => Token::SelfValue,
+            "Sf" | "Self" => Token::SelfType,
+            "ty" | "type" => Token::Type,
+            "ac" | "async" => Token::Async,
+            "aw" | "await" => Token::Await,
+            "sp" | "spawn" => Token::Spawn,
             "try" => Token::Try,
-            "ch" => Token::Catch,
+            "ch" | "catch" | "except" => Token::Catch,
             "and" => Token::And,
             "or" => Token::Or,
             "not" => Token::Not,
             "in" => Token::In,
             "as" => Token::As,
-            "tt" => Token::Bool(true),
-            "ff" => Token::Bool(false),
-            "nil" => Token::Nil,
+            "tt" | "True" => Token::Bool(true),
+            "ff" | "False" => Token::Bool(false),
+            "nil" | "None" => Token::Nil,
             _ => Token::Ident(name),
         }
     }
@@ -821,6 +848,133 @@ impl Lexer {
             col: self.col,
         }
     }
+}
+
+/// Desugar indent-based blocks into brace blocks.
+///
+/// When the token stream contains `Colon Newline` followed by an increased
+/// indentation level, insert `LeftBrace` and track the indent level. When
+/// indentation decreases back, insert `RightBrace` tokens.
+///
+/// This allows both `def foo(): <indent>body<dedent>` and `def foo() { body }`
+/// to produce identical token streams for the parser.
+fn desugar_indent_blocks(tokens: Vec<SpannedToken>, source: &str) -> Vec<SpannedToken> {
+    // Quick check: does the source contain any colon-at-end-of-line patterns?
+    // If not, skip the whole pass (pure brace-mode source).
+    let has_colon_blocks = source.lines().any(|line| {
+        let trimmed = line.trim();
+        trimmed.ends_with(':') && !trimmed.ends_with("::") && !trimmed.starts_with("//")
+            && !trimmed.starts_with('#')
+    });
+    if !has_colon_blocks {
+        return tokens;
+    }
+
+    // Build a map of line → indentation level (number of leading spaces)
+    let line_indents: Vec<usize> = source.lines()
+        .map(|line| line.len() - line.trim_start().len())
+        .collect();
+
+    let mut result = Vec::with_capacity(tokens.len() + 32);
+    let mut indent_stack: Vec<usize> = vec![0]; // stack of indent levels
+    let mut i = 0;
+
+    while i < tokens.len() {
+        let tok = &tokens[i];
+
+        // Detect Colon + Newline → open indent block
+        if tok.token == Token::Colon {
+            // Check if this colon is at the end of a statement (followed by Newline or EOF)
+            let next_is_newline = i + 1 < tokens.len() && tokens[i + 1].token == Token::Newline;
+            let next_is_eof = i + 1 < tokens.len() && tokens[i + 1].token == Token::Eof;
+            if next_is_newline || next_is_eof {
+                // Check if the next non-empty line has increased indentation
+                let colon_line = tok.line;
+                let next_indent = if colon_line < line_indents.len() {
+                    // Find next non-empty line
+                    let mut nl = colon_line; // lines are 1-indexed, vec is 0-indexed
+                    while nl < line_indents.len() {
+                        let line_text = source.lines().nth(nl).unwrap_or("");
+                        if !line_text.trim().is_empty() {
+                            break;
+                        }
+                        nl += 1;
+                    }
+                    if nl < line_indents.len() { line_indents[nl] } else { 0 }
+                } else {
+                    0
+                };
+
+                let current_indent = *indent_stack.last().unwrap();
+                if next_indent > current_indent {
+                    // Replace Colon with LeftBrace, skip the Newline
+                    result.push(SpannedToken {
+                        token: Token::LeftBrace,
+                        line: tok.line,
+                        col: tok.col,
+                    });
+                    indent_stack.push(next_indent);
+                    i += 1; // skip colon
+                    if i < tokens.len() && tokens[i].token == Token::Newline {
+                        i += 1; // skip newline after colon
+                    }
+                    continue;
+                }
+            }
+            // If colon is NOT a block opener (e.g., type annotation), keep it
+        }
+
+        // At Newline tokens, check for dedent
+        if tok.token == Token::Newline && indent_stack.len() > 1 {
+            let tok_line = tok.line; // this newline is at end of tok_line
+            // Find the indentation of the NEXT non-empty line
+            let mut next_line_idx = tok_line; // 0-indexed: line after tok_line
+            while next_line_idx < line_indents.len() {
+                let line_text = source.lines().nth(next_line_idx).unwrap_or("");
+                if !line_text.trim().is_empty() {
+                    break;
+                }
+                next_line_idx += 1;
+            }
+            let next_indent = if next_line_idx < line_indents.len() {
+                line_indents[next_line_idx]
+            } else {
+                0 // EOF — close all blocks
+            };
+
+            // Emit RightBrace for each level we dedent
+            while indent_stack.len() > 1 && next_indent < *indent_stack.last().unwrap() {
+                indent_stack.pop();
+                result.push(SpannedToken {
+                    token: Token::RightBrace,
+                    line: tok.line,
+                    col: 0,
+                });
+                result.push(SpannedToken {
+                    token: Token::Newline,
+                    line: tok.line,
+                    col: 0,
+                });
+            }
+        }
+
+        result.push(tok.clone());
+        i += 1;
+    }
+
+    // Close any remaining open indent blocks before EOF
+    while indent_stack.len() > 1 {
+        indent_stack.pop();
+        // Insert before EOF
+        let eof_pos = result.len().saturating_sub(1);
+        result.insert(eof_pos, SpannedToken {
+            token: Token::RightBrace,
+            line: 0,
+            col: 0,
+        });
+    }
+
+    result
 }
 
 #[cfg(test)]
