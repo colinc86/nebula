@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "nebula": {
+      "command": "/Users/colin/Local Documents/Programming/Misc/nebula/compiler/target/release/nebula",
+      "args": ["mcp"],
+      "env": {
+        "NEBULA_OLLAMA_URL": "http://192.168.68.94:11434",
+        "NEBULA_OLLAMA_MODEL": "nebula-8lang-7b:latest"
+      }
+    }
+  }
+}

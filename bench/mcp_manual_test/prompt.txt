@@ -1,0 +1,23 @@
+Implement the function bodies in this Go package so that `go test ./...` passes. The package contains three files (strings_util.go, slice_util.go, map_util.go) with stub functions you need to fill in.
+
+Functions to implement:
+
+strings_util.go:
+- Reverse(s string) string — return s with its runes in reverse order
+- TitleCase(s string) string — uppercase the first rune of each whitespace-separated word and lowercase the remaining runes
+- CountRunes(s string) int — return the number of runes in s (not bytes)
+- IsPalindrome(s string) bool — case-insensitive palindrome check that ignores any non-letter runes
+
+slice_util.go:
+- Unique(xs []int) []int — return distinct elements in first-occurrence order
+- Chunk(xs []int, size int) [][]int — split into consecutive sub-slices of length size; final chunk may be shorter; return nil if size <= 0 or xs is empty
+- Contains(xs []int, target int) bool
+- ReverseInts(xs []int) []int — return a reversed copy without modifying xs
+
+map_util.go:
+- Keys(m map[string]int) []string
+- Values(m map[string]int) []int
+- Merge(a, b map[string]int) map[string]int — b wins on conflicting keys
+- Invert(m map[string]int) map[int]string
+
+When you are done, run `go test ./...` to confirm all 12 tests pass. If any fail, fix them and re-run.

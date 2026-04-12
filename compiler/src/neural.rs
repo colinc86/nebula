@@ -6,12 +6,20 @@
 
 use serde_json::{json, Value};
 
-const OLLAMA_URL: &str = "http://localhost:11434";
-const DEFAULT_MODEL: &str = "nebula-8lang-7b";
+const FALLBACK_OLLAMA_URL: &str = "http://localhost:11434";
+const FALLBACK_MODEL: &str = "nebula-8lang-7b";
+
+fn ollama_url() -> String {
+    std::env::var("NEBULA_OLLAMA_URL").unwrap_or_else(|_| FALLBACK_OLLAMA_URL.to_string())
+}
+
+fn default_model() -> String {
+    std::env::var("NEBULA_OLLAMA_MODEL").unwrap_or_else(|_| FALLBACK_MODEL.to_string())
+}
 
 /// Check if Ollama is running and reachable.
 pub fn is_available() -> bool {
-    ureq::get(&format!("{}/api/tags", OLLAMA_URL))
+    ureq::get(&format!("{}/api/tags", ollama_url()))
         .timeout(std::time::Duration::from_secs(2))
         .call()
         .is_ok()
@@ -19,7 +27,8 @@ pub fn is_available() -> bool {
 
 /// Generate target language code from Nebula source using Ollama.
 pub fn generate(nebula_code: &str, target_lang: &str, model: Option<&str>) -> Result<String, String> {
-    let model = model.unwrap_or(DEFAULT_MODEL);
+    let default = default_model();
+    let model = model.unwrap_or(&default);
     let system = format!(
         "You are a code translator. Given code in Nebula (a universal intermediate language), \
          produce the equivalent idiomatic {} code. Output only the {} code, no explanations.",
@@ -37,7 +46,7 @@ pub fn generate(nebula_code: &str, target_lang: &str, model: Option<&str>) -> Re
         }
     });
 
-    let resp = ureq::post(&format!("{}/api/generate", OLLAMA_URL))
+    let resp = ureq::post(&format!("{}/api/generate", ollama_url()))
         .timeout(std::time::Duration::from_secs(60))
         .send_json(&payload)
         .map_err(|e| format!("Ollama request failed: {}", e))?;
@@ -72,7 +81,8 @@ pub fn clean_output(output: &str) -> String {
 
     // Truncate at hallucination markers
     for marker in &["<|im_start|>", "<|im_end|>", "<|endoftext|>",
-                     "BitFields", "Translate this", "\nuser\n", "\nassistant\n"] {
+                     "BitFields", "Translate this", "\nuser\n", "\nassistant\n",
+                     "\nYou are a code translator", "You are a code translator"] {
         if let Some(idx) = s.find(marker) {
             if idx > 0 {
                 s = s[..idx].to_string();

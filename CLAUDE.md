@@ -87,7 +87,7 @@ cd ../bench && ../.venv/bin/python3 run_bench.py  # Run token compression benchm
 
 ## When Working on This Project
 
-- Run `cargo test` after every change (auto-runs via PostToolUse hook)
+- Run `cargo test` after every code change
 - The spec at `spec/LANGUAGE.md` is the design authority
 - **Token-first design** — every syntax choice must be validated by cl100k_base audit. Run `bench/token_audit.py` to verify. Never use a form that costs more tokens than the alternative.
 - Zero compiler warnings policy — build must be clean

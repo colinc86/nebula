@@ -6,12 +6,94 @@
 /// - search_code: Search codebase with results in Nebula
 
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::fs;
 use std::path::Path;
+use std::sync::{Mutex, OnceLock};
+use std::time::SystemTime;
 
 use crate::lang_detect;
 use crate::neural;
+
+/// Files at or below this many lines are returned raw (uncompressed). Below this
+/// threshold the MCP primer + tool-call overhead exceeds the compression saving,
+/// AND the model's verification instinct (Bash cat to confirm raw bytes before
+/// patching) wipes out any read-side win. 100 covers most "normal" source files;
+/// large files where compression actually pays go through the Nebula path.
+const SMALL_FILE_THRESHOLD: usize = 100;
+
+/// Number of leading raw-source lines to prepend as a "native preview" header
+/// when serving compressed Nebula. Lets the host model anchor on the literal
+/// package/imports/style without needing a Bash cat to verify before patching.
+const PREVIEW_LINES: usize = 5;
+
+#[derive(Clone)]
+struct CacheEntry {
+    mtime: SystemTime,
+    raw: String,
+    nebula_with_comments: String,
+}
+
+fn source_cache() -> &'static Mutex<HashMap<String, CacheEntry>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, CacheEntry>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Read a source file with mtime-keyed caching, returning (raw_source, nebula_with_comments).
+/// On cache hit the file isn't re-stat'd beyond mtime; on miss it's read, ingested, and stored.
+fn read_source_cached(path: &str) -> Result<(String, String), String> {
+    let metadata = fs::metadata(path)
+        .map_err(|e| format!("Failed to stat '{}': {}", path, e))?;
+    let mtime = metadata.modified()
+        .map_err(|e| format!("Failed to read mtime for '{}': {}", path, e))?;
+
+    if let Ok(cache) = source_cache().lock() {
+        if let Some(entry) = cache.get(path) {
+            if entry.mtime == mtime {
+                return Ok((entry.raw.clone(), entry.nebula_with_comments.clone()));
+            }
+        }
+    }
+
+    let raw = fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read '{}': {}", path, e))?;
+    let lang = lang_detect::detect(path);
+    let nebula = lang_detect::to_nebula_with_opts(&raw, lang, true);
+
+    if let Ok(mut cache) = source_cache().lock() {
+        cache.insert(path.to_string(), CacheEntry {
+            mtime,
+            raw: raw.clone(),
+            nebula_with_comments: nebula.clone(),
+        });
+    }
+
+    Ok((raw, nebula))
+}
+
+fn invalidate_cache(path: &str) {
+    if let Ok(mut cache) = source_cache().lock() {
+        cache.remove(path);
+    }
+}
+
+const NEBULA_PRIMER: &str = "\
+This server reads files in Nebula (a compact canonical form spanning Python, JS, \
+TS, Go, Swift, Kotlin, Rust, C). Small files (≤100 lines) come back as raw source. \
+Larger files come back as Nebula with a 5-line native preview header showing real \
+syntax — that preview is enough to anchor your edits, no need to Bash-cat the file.\n\
+\n\
+Workflow: read_code to view, patch_code to edit, write_code only for new files \
+or full rewrites. patch_code is byte-level on the raw source bytes, so old_str / \
+new_str must be in the file's NATIVE language (Go, Python, etc.) — NOT Nebula. \
+Use replace_all=true for renames and other repetitive substitutions.\n\
+\n\
+Nebula syntax: `fn name(a: Int) -> Int:` indent body / `rt x` / `fo i in 0..n:` / \
+`x := 5` immutable, `x = 5` mutable / `\"hi {name}\"` interpolation / `|x| x+1` \
+lambdas / `xs.map { it.v }` trailing closures / `and or not ??  |>` / `True False None`. \
+Both short (`fn rt fo`) and long (`def return for`) keyword forms are 1 token.\
+";
 
 /// Entry point: run the MCP server on stdin/stdout.
 pub fn serve() {
@@ -59,7 +141,8 @@ fn handle_request(request: &Value) -> Option<Value> {
                 "serverInfo": {
                     "name": "nebula",
                     "version": "0.2.0"
-                }
+                },
+                "instructions": NEBULA_PRIMER
             })))
         }
 
@@ -131,6 +214,32 @@ fn handle_request(request: &Value) -> Option<Value> {
                         }
                     },
                     {
+                        "name": "patch_code",
+                        "description": "Edit a file by replacing a snippet. Send `old_str` and `new_str` in the file's NATIVE LANGUAGE (not Nebula) — this is a byte-level replace, not a round-trip. Use this instead of write_code for any change smaller than the whole file. Token cost is just the diff, not the whole file. By default `old_str` must appear exactly once; pass `replace_all=true` to replace every occurrence.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "path": {
+                                    "type": "string",
+                                    "description": "Absolute path to the file to edit"
+                                },
+                                "old_str": {
+                                    "type": "string",
+                                    "description": "Existing snippet to replace, in the file's native language (Go, Python, etc.). Must match the source byte-for-byte including indentation."
+                                },
+                                "new_str": {
+                                    "type": "string",
+                                    "description": "Replacement snippet, in the file's native language"
+                                },
+                                "replace_all": {
+                                    "type": "boolean",
+                                    "description": "If true, replace every occurrence; if false (default), require exactly one match"
+                                }
+                            },
+                            "required": ["path", "old_str", "new_str"]
+                        }
+                    },
+                    {
                         "name": "translate_code",
                         "description": "Translate code between languages via Nebula IL. Tries neural translation (Ollama) first, falls back to rule-based codegen.",
                         "inputSchema": {
@@ -164,6 +273,7 @@ fn handle_request(request: &Value) -> Option<Value> {
             let result = match tool_name {
                 "read_code" => tool_read_code(&args),
                 "write_code" => tool_write_code(&args),
+                "patch_code" => tool_patch_code(&args),
                 "search_code" => tool_search_code(&args),
                 "translate_code" => tool_translate_code(&args),
                 _ => Err(format!("Unknown tool: {tool_name}")),
@@ -191,17 +301,22 @@ fn tool_read_code(args: &Value) -> Result<String, String> {
         .and_then(|v| v.as_str())
         .ok_or("Missing required parameter: path")?;
 
-    let source = fs::read_to_string(path)
-        .map_err(|e| format!("Failed to read '{}': {}", path, e))?;
-
+    let (raw, nebula) = read_source_cached(path)?;
     let lang = lang_detect::detect(path);
-    let nebula = lang_detect::to_nebula(&source, lang);
 
-    // Apply offset/limit if specified
     let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
     let limit = args.get("limit").and_then(|v| v.as_u64());
 
-    let lines: Vec<&str> = nebula.lines().collect();
+    // Small files: return raw source verbatim. The MCP primer overhead exceeds
+    // any compression saving on files this small, so just hand the model the
+    // bytes it would otherwise need to cat anyway.
+    let raw_line_count = raw.lines().count();
+    let bypass_compression = raw_line_count <= SMALL_FILE_THRESHOLD
+        || lang == lang_detect::Language::Nebula
+        || lang == lang_detect::Language::Unknown;
+
+    let body = if bypass_compression { &raw } else { &nebula };
+    let lines: Vec<&str> = body.lines().collect();
     let total = lines.len();
 
     let start = if offset > 0 { offset.saturating_sub(1) } else { 0 }; // 1-indexed
@@ -214,13 +329,31 @@ fn tool_read_code(args: &Value) -> Result<String, String> {
     let numbered: Vec<String> = sliced.iter().enumerate()
         .map(|(i, line)| format!("{}\t{}", start + i + 1, line))
         .collect();
+    let body_text = numbered.join("\n");
 
-    let mut result = numbered.join("\n");
-    if lang != lang_detect::Language::Nebula && lang != lang_detect::Language::Unknown {
-        result = format!("// source: {} ({})\n{}", path, lang.name(), result);
+    if bypass_compression {
+        // Raw mode: skip the Nebula primer header so the model knows this isn't compressed.
+        if lang != lang_detect::Language::Nebula && lang != lang_detect::Language::Unknown {
+            Ok(format!("// source: {} ({}, raw — file under {} lines)\n{}",
+                       path, lang.name(), SMALL_FILE_THRESHOLD, body_text))
+        } else {
+            Ok(body_text)
+        }
+    } else {
+        // Compressed mode: prepend a short native-source preview so the host model
+        // can anchor on the literal package/imports/indentation style without
+        // having to shell out to cat. The cost is a few dozen tokens; the saving
+        // is the verification roundtrip we saw in earlier runs.
+        let preview = raw.lines()
+            .take(PREVIEW_LINES)
+            .map(|l| format!("// {}", l))
+            .collect::<Vec<_>>()
+            .join("\n");
+        Ok(format!(
+            "// source: {} ({}, Nebula form — preview of native first {} lines below)\n{}\n// === Nebula form ===\n{}",
+            path, lang.name(), PREVIEW_LINES, preview, body_text
+        ))
     }
-
-    Ok(result)
 }
 
 fn tool_write_code(args: &Value) -> Result<String, String> {
@@ -248,8 +381,65 @@ fn tool_write_code(args: &Value) -> Result<String, String> {
 
     fs::write(path, &output)
         .map_err(|e| format!("Failed to write '{}': {}", path, e))?;
+    invalidate_cache(path);
 
     Ok(format!("Wrote {} bytes to {} ({})", output.len(), path, lang_name))
+}
+
+fn tool_patch_code(args: &Value) -> Result<String, String> {
+    let path = args.get("path")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: path")?;
+    let old_str = args.get("old_str")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: old_str")?;
+    let new_str = args.get("new_str")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: new_str")?;
+    let replace_all = args.get("replace_all")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    if old_str.is_empty() {
+        return Err("old_str must not be empty".to_string());
+    }
+
+    let (source, _nebula) = read_source_cached(path)?;
+    let lang = lang_detect::detect(path);
+    let lang_name = lang.name();
+
+    let occurrences = source.matches(old_str).count();
+    if occurrences == 0 {
+        return Err(format!(
+            "patch_code: old_str not found in {}. Note: patch_code expects native-language source (e.g. Go, Python), not Nebula. Read the file with the standard tools or check whitespace/indentation.",
+            path
+        ));
+    }
+    if occurrences > 1 && !replace_all {
+        return Err(format!(
+            "patch_code: old_str matches {} locations in {}. Pass replace_all=true or extend old_str with more context to disambiguate.",
+            occurrences, path
+        ));
+    }
+
+    let output = if replace_all {
+        source.replace(old_str, new_str)
+    } else {
+        source.replacen(old_str, new_str, 1)
+    };
+
+    fs::write(path, &output)
+        .map_err(|e| format!("Failed to write '{}': {}", path, e))?;
+    invalidate_cache(path);
+
+    Ok(format!(
+        "Patched {} in {} ({} {} replaced, {} bytes)",
+        path,
+        lang_name,
+        occurrences,
+        if occurrences == 1 { "occurrence" } else { "occurrences" },
+        output.len()
+    ))
 }
 
 fn tool_search_code(args: &Value) -> Result<String, String> {
@@ -273,7 +463,7 @@ fn tool_search_code(args: &Value) -> Result<String, String> {
             return;
         }
 
-        let path_str = file_path.to_string_lossy();
+        let path_str = file_path.to_string_lossy().to_string();
 
         // Apply glob filter if specified
         if let Some(pattern) = glob_pattern {
@@ -292,31 +482,63 @@ fn tool_search_code(args: &Value) -> Result<String, String> {
             Err(_) => return,
         };
 
-        // Check for binary content
+        // Skip binary files
         if source.bytes().take(512).any(|b| b == 0) {
             return;
         }
 
         let lines: Vec<&str> = source.lines().collect();
-        for (i, line) in lines.iter().enumerate() {
-            if results.len() >= max_results {
-                break;
-            }
 
+        // ── Pass 1: raw source substring match (literal target-language hits) ──
+        let mut raw_match_lines: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        for (i, line) in lines.iter().enumerate() {
+            if results.len() >= max_results { break; }
             if line.to_lowercase().contains(&query_lower) {
-                // Extract context: 3 lines before and after
                 let start = i.saturating_sub(3);
                 let end = (i + 4).min(lines.len());
                 let snippet: String = lines[start..end].join("\n");
-
-                let nebula_snippet = lang_detect::to_nebula(&snippet, lang);
-
+                raw_match_lines.insert(i + 1);
                 results.push(json!({
                     "path": path_str,
                     "line": i + 1,
+                    "match_form": "raw",
                     "language": lang.name(),
-                    "snippet": nebula_snippet
+                    "snippet": snippet
                 }));
+            }
+        }
+
+        // ── Pass 2: Nebula canonical form substring match (cross-language hits) ──
+        // Catches matches that survived snake_case / method-alias / type-name normalization
+        // but not the literal source. E.g., querying "reverse(" finds Go's `Reverse(` too.
+        if results.len() < max_results
+            && !matches!(lang, lang_detect::Language::Nebula | lang_detect::Language::Unknown)
+        {
+            let nebula_canonical = lang_detect::to_nebula_with_opts(&source, lang, false);
+            let nebula_lines: Vec<&str> = nebula_canonical.lines().collect();
+            for (i, line) in nebula_lines.iter().enumerate() {
+                if results.len() >= max_results { break; }
+                if line.to_lowercase().contains(&query_lower) {
+                    // Approximate source line (rough heuristic — Nebula lines roughly
+                    // correspond to source lines minus brace-only lines collapsed by
+                    // braces_to_indent). Clamp to file length.
+                    let approx_source_line = (i + 1).min(lines.len()).max(1);
+                    // Skip if a raw match already covered roughly this region
+                    if raw_match_lines.iter().any(|&l| l.abs_diff(approx_source_line) <= 2) {
+                        continue;
+                    }
+                    let start = i.saturating_sub(2);
+                    let end = (i + 3).min(nebula_lines.len());
+                    let snippet: String = nebula_lines[start..end].join("\n");
+                    results.push(json!({
+                        "path": path_str,
+                        "approx_line": approx_source_line,
+                        "match_form": "nebula",
+                        "language": lang.name(),
+                        "snippet": snippet,
+                        "note": "matched canonical Nebula form — read_code the file for exact source line"
+                    }));
+                }
             }
         }
     });

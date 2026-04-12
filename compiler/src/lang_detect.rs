@@ -55,15 +55,22 @@ pub fn detect(path: &str) -> Language {
 
 /// Convert source code to Nebula using the appropriate ingester.
 pub fn to_nebula(source: &str, lang: Language) -> String {
+    to_nebula_with_opts(source, lang, false)
+}
+
+/// Convert source to Nebula with optional comment preservation.
+/// `keep_comments=true` retains `//` comment lines so the host model can read docstrings;
+/// the canonical compression form (used by the benchmark) keeps it `false`.
+pub fn to_nebula_with_opts(source: &str, lang: Language, keep_comments: bool) -> String {
     match lang {
-        Language::Python => ingest::from_python(source),
-        Language::JavaScript => ingest::from_javascript(source),
-        Language::TypeScript => ingest::from_typescript(source),
-        Language::Go => ingest::from_go(source),
-        Language::Swift => ingest::from_swift(source),
-        Language::Kotlin => ingest::from_kotlin(source),
-        Language::Rust => ingest::from_rust(source),
-        Language::C => ingest::from_c(source),
+        Language::Python => ingest::from_python_with_opts(source, keep_comments),
+        Language::JavaScript => ingest::from_javascript_with_opts(source, keep_comments),
+        Language::TypeScript => ingest::from_typescript_with_opts(source, keep_comments),
+        Language::Go => ingest::from_go_with_opts(source, keep_comments),
+        Language::Swift => ingest::from_swift_with_opts(source, keep_comments),
+        Language::Kotlin => ingest::from_kotlin_with_opts(source, keep_comments),
+        Language::Rust => ingest::from_rust_with_opts(source, keep_comments),
+        Language::C => ingest::from_c_with_opts(source, keep_comments),
         Language::Nebula | Language::Unknown => source.to_string(),
     }
 }
@@ -106,54 +113,69 @@ pub fn from_nebula_lenient(nebula: &str, lang: Language) -> Result<String, Strin
 }
 
 /// Best-effort text-level translation from Nebula to a target language.
-/// Not AST-aware — just keyword and syntax replacement.
+/// Not AST-aware, but token-boundary-aware: replacements only fire at word
+/// boundaries and skip the interiors of string literals. This is what stops
+/// `("rt ", "return ")` from mangling `import` into `imporeturn`.
 fn text_level_translate(nebula: &str, lang: Language) -> String {
-    let mut output = nebula.to_string();
-
-    // Common keyword replacements
+    // Replacements are now bare keywords (no trailing space) so the word-boundary
+    // logic can decide whether to fire on its own.
     let replacements: &[(&str, &str)] = match lang {
         Language::Python => &[
-            ("rt ", "return "), ("fo ", "for "), ("wl ", "while "),
-            ("fn ", "def "), ("sf.", "self."), ("sf,", "self,"),
-            ("tt", "True"), ("ff", "False"), ("lt ", ""),
-            ("mt ", ""), (":= ", "= "),
+            ("rt", "return"), ("fo", "for"), ("wl", "while"),
+            ("fn", "def"), ("sf", "self"),
+            ("tt", "True"), ("ff", "False"),
+            ("lt", ""), ("mt", ""),
         ],
         Language::Go => &[
-            ("def ", "func "), ("rt ", "return "), ("fo ", "for "),
-            ("wl ", "while "), ("sf.", "this."), ("fn ", "func "),
+            ("def", "func"), ("fn", "func"),
+            ("rt", "return"), ("fo", "for"), ("wl", "for"),
+            ("sf", "this"),
             ("True", "true"), ("False", "false"), ("None", "nil"),
+            ("Str", "string"), ("Int", "int"), ("Bool", "bool"), ("Float", "float64"),
         ],
         Language::JavaScript | Language::TypeScript => &[
-            ("def ", "function "), ("rt ", "return "), ("fo ", "for "),
-            ("wl ", "while "), ("sf.", "this."), ("fn ", "function "),
+            ("def", "function"), ("fn", "function"),
+            ("rt", "return"), ("fo", "for"), ("wl", "while"),
+            ("sf", "this"),
             ("True", "true"), ("False", "false"), ("None", "null"),
-            ("and ", "&& "), ("or ", "|| "), ("not ", "!"),
+            ("and", "&&"), ("or", "||"), ("not", "!"),
         ],
         Language::Rust => &[
-            ("def ", "fn "), ("rt ", "return "), ("fo ", "for "),
-            ("wl ", "while "), ("sf.", "self."), ("sf,", "self,"),
-            ("True", "true"), ("False", "false"), ("None", "None"),
+            ("def", "fn"),
+            ("rt", "return"), ("fo", "for"), ("wl", "while"),
+            ("sf", "self"),
+            ("True", "true"), ("False", "false"),
+            ("Str", "String"), ("Int", "i64"), ("Bool", "bool"), ("Float", "f64"),
         ],
         Language::C => &[
-            ("def ", ""), ("rt ", "return "), ("fo ", "for "),
-            ("wl ", "while "), ("True", "1"), ("False", "0"),
-            ("None", "NULL"), ("fn ", ""),
+            ("def", ""), ("fn", ""),
+            ("rt", "return"), ("fo", "for"), ("wl", "while"),
+            ("True", "1"), ("False", "0"), ("None", "NULL"),
         ],
         Language::Swift => &[
-            ("def ", "func "), ("rt ", "return "), ("fo ", "for "),
-            ("wl ", "while "), ("sf.", "self."), ("fn ", "func "),
+            ("def", "func"), ("fn", "func"),
+            ("rt", "return"), ("fo", "for"), ("wl", "while"),
+            ("sf", "self"),
             ("True", "true"), ("False", "false"), ("None", "nil"),
         ],
         Language::Kotlin => &[
-            ("def ", "fun "), ("rt ", "return "), ("fo ", "for "),
-            ("wl ", "while "), ("sf.", "this."), ("fn ", "fun "),
+            ("def", "fun"), ("fn", "fun"),
+            ("rt", "return"), ("fo", "for"), ("wl", "while"),
+            ("sf", "this"),
             ("True", "true"), ("False", "false"), ("None", "null"),
         ],
         _ => &[],
     };
 
+    let mut output = nebula.to_string();
     for (from, to) in replacements {
-        output = output.replace(from, to);
+        output = replace_word_outside_strings(&output, from, to);
+    }
+
+    // Walrus binding `:=` is Nebula-only — drop it for Python (bare assignment),
+    // keep it for Go (which uses := natively).
+    if matches!(lang, Language::Python) {
+        output = output.replace(" := ", " = ");
     }
 
     // Convert indent blocks to braces for brace-based languages
@@ -163,6 +185,104 @@ fn text_level_translate(nebula: &str, lang: Language) -> String {
     }
 
     output
+}
+
+#[inline]
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// Replace `from` with `to` only at token boundaries and only outside string
+/// literals. A token boundary means the character before the match is not a
+/// word char (or the match is at the start of input), and the character after
+/// the match is not a word char (or end of input). String literals are
+/// detected by `"`/`'` quote pairs with `\` escaping.
+fn replace_word_outside_strings(text: &str, from: &str, to: &str) -> String {
+    if from.is_empty() {
+        return text.to_string();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let from_chars: Vec<char> = from.chars().collect();
+    let mut out = String::with_capacity(text.len());
+
+    let mut in_str = false;
+    let mut str_char = '"';
+    let mut i = 0;
+
+    while i < chars.len() {
+        let c = chars[i];
+
+        if in_str {
+            out.push(c);
+            if c == '\\' && i + 1 < chars.len() {
+                out.push(chars[i + 1]);
+                i += 2;
+                continue;
+            }
+            if c == str_char {
+                in_str = false;
+            }
+            i += 1;
+            continue;
+        }
+
+        if c == '"' || c == '\'' {
+            in_str = true;
+            str_char = c;
+            out.push(c);
+            i += 1;
+            continue;
+        }
+
+        // Try to match `from` here
+        if i + from_chars.len() <= chars.len()
+            && chars[i..i + from_chars.len()] == from_chars[..]
+        {
+            let prev_is_word = i > 0 && is_word_char(chars[i - 1]);
+            let next_pos = i + from_chars.len();
+            let next_is_word = next_pos < chars.len() && is_word_char(chars[next_pos]);
+            // Both ends of `from` are checked: only fire if neither neighbor
+            // extends the match into a longer identifier.
+            if !prev_is_word && !next_is_word {
+                out.push_str(to);
+                i = next_pos;
+                continue;
+            }
+        }
+
+        out.push(c);
+        i += 1;
+    }
+
+    out
+}
+
+#[cfg(test)]
+mod text_translate_tests {
+    use super::*;
+
+    #[test]
+    fn rt_does_not_mangle_import() {
+        let input = "import \"unicode\"\nfn foo():\n    rt 1";
+        let output = text_level_translate(input, Language::Go);
+        assert!(output.contains("import \"unicode\""), "import should survive: {}", output);
+        assert!(output.contains("return 1"), "rt should still translate: {}", output);
+    }
+
+    #[test]
+    fn replacements_skip_string_literals() {
+        let input = "fn foo():\n    return \"rt is a keyword\"";
+        let output = replace_word_outside_strings(input, "rt", "return");
+        assert!(output.contains("\"rt is a keyword\""), "string content should be untouched");
+    }
+
+    #[test]
+    fn word_boundary_protects_partial_matches() {
+        // "fn" should not match inside "function" or "fnord"
+        let input = "function fnord";
+        let output = replace_word_outside_strings(input, "fn", "def");
+        assert_eq!(output, "function fnord");
+    }
 }
 
 /// Convert indent-based blocks to brace-based blocks (best-effort).

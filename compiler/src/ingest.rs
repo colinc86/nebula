@@ -8,7 +8,16 @@ use tree_sitter::{Node, Parser};
 
 // ── Public API ──
 
-pub fn from_python(source: &str) -> String {
+pub fn from_python(source: &str) -> String { from_python_with_opts(source, false) }
+pub fn from_javascript(source: &str) -> String { from_javascript_with_opts(source, false) }
+pub fn from_typescript(source: &str) -> String { from_typescript_with_opts(source, false) }
+pub fn from_go(source: &str) -> String { from_go_with_opts(source, false) }
+pub fn from_swift(source: &str) -> String { from_swift_with_opts(source, false) }
+pub fn from_kotlin(source: &str) -> String { from_kotlin_with_opts(source, false) }
+pub fn from_rust(source: &str) -> String { from_rust_with_opts(source, false) }
+pub fn from_c(source: &str) -> String { from_c_with_opts(source, false) }
+
+pub fn from_python_with_opts(source: &str, keep_comments: bool) -> String {
     let mut parser = Parser::new();
     parser.set_language(&tree_sitter_python::LANGUAGE.into()).expect("Failed to set Python language");
     let tree = match parser.parse(source, None) {
@@ -17,33 +26,24 @@ pub fn from_python(source: &str) -> String {
     };
     let root = tree.root_node();
     let nebula = python::emit(&root, source.as_bytes(), 0);
-    // Python-specific postprocess: no Go/Rust regex, no ternary munging (the
-    // ingester's `conditional_expression` arm already handles ternaries on the
-    // AST level, and running the line-based ternary fix over Python output
-    // corrupts docstrings).
-    // Python-specific: skip insert_lt_on_first_assignment since Python
-    // doesn't distinguish declaration vs reassignment. Bare assignment is cheaper.
     let nebula = postprocess_python_no_lt(&nebula);
     let nebula = strip_semicolons(&nebula);
-    // Python output preserves indentation; skip minify's block-flattening.
-    let nebula = strip_comments_and_blanks(&nebula);
-    let nebula = canonicalize(&nebula);
-    // Convert brace blocks to indent blocks (Python-native form is cheaper)
+    let nebula = strip_comments_and_blanks(&nebula, keep_comments);
+    let nebula = if keep_comments { canonicalize_keep_comments(&nebula) } else { canonicalize(&nebula) };
     let nebula = braces_to_indent(&nebula);
-    // Strip remaining := back to = for Python (no declaration distinction needed)
     let nebula = nebula.replace(" := ", " = ");
     nebula.trim_end().to_string()
 }
 
-pub fn from_javascript(source: &str) -> String {
-    convert_with_language(source, tree_sitter_javascript::LANGUAGE.into(), js::emit)
+pub fn from_javascript_with_opts(source: &str, keep_comments: bool) -> String {
+    convert_with_language(source, tree_sitter_javascript::LANGUAGE.into(), js::emit, keep_comments)
 }
 
-pub fn from_typescript(source: &str) -> String {
-    convert_with_language(source, tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(), ts::emit)
+pub fn from_typescript_with_opts(source: &str, keep_comments: bool) -> String {
+    convert_with_language(source, tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(), ts::emit, keep_comments)
 }
 
-pub fn from_go(source: &str) -> String {
+pub fn from_go_with_opts(source: &str, keep_comments: bool) -> String {
     let mut parser = Parser::new();
     parser.set_language(&tree_sitter_go::LANGUAGE.into()).expect("Failed to set Go language");
     let tree = match parser.parse(source, None) {
@@ -52,44 +52,39 @@ pub fn from_go(source: &str) -> String {
     };
     let root = tree.root_node();
     let nebula = go::emit(&root, source.as_bytes(), 0);
-    // Go-specific postprocess: skip fix_generics (Go emitter handles types properly)
     let nebula = postprocess_go(&nebula);
     let nebula = strip_semicolons(&nebula);
-    let nebula = minify(&nebula);
-    let nebula = canonicalize(&nebula);
+    let nebula = minify(&nebula, keep_comments);
+    let nebula = if keep_comments { canonicalize_keep_comments(&nebula) } else { canonicalize(&nebula) };
     braces_to_indent(&nebula)
 }
 
-pub fn from_swift(source: &str) -> String {
-    // Swift uses pattern-based conversion (tree-sitter-swift has inconsistent
-    // field names causing duplicate output)
+pub fn from_swift_with_opts(source: &str, keep_comments: bool) -> String {
     let nebula = swift::convert_swift_raw(source, 0);
     let nebula = postprocess(&nebula);
     let nebula = strip_semicolons(&nebula);
-    let nebula = minify(&nebula);
+    let nebula = minify(&nebula, keep_comments);
     let nebula = fix_raw_keywords(&nebula);
-    let nebula = canonicalize(&nebula);
+    let nebula = if keep_comments { canonicalize_keep_comments(&nebula) } else { canonicalize(&nebula) };
     braces_to_indent(&nebula)
 }
 
-pub fn from_kotlin(source: &str) -> String {
-    // Kotlin uses pattern-based conversion (tree-sitter-kotlin depends on
-    // tree-sitter 0.20 which conflicts with 0.26 at link time)
+pub fn from_kotlin_with_opts(source: &str, keep_comments: bool) -> String {
     let nebula = kotlin::convert_kotlin_raw(source, 0);
     let nebula = postprocess(&nebula);
     let nebula = strip_semicolons(&nebula);
-    let nebula = minify(&nebula);
+    let nebula = minify(&nebula, keep_comments);
     let nebula = fix_raw_keywords(&nebula);
-    let nebula = canonicalize(&nebula);
+    let nebula = if keep_comments { canonicalize_keep_comments(&nebula) } else { canonicalize(&nebula) };
     braces_to_indent(&nebula)
 }
 
-pub fn from_rust(source: &str) -> String {
-    convert_with_language(source, tree_sitter_rust::LANGUAGE.into(), rust::emit)
+pub fn from_rust_with_opts(source: &str, keep_comments: bool) -> String {
+    convert_with_language(source, tree_sitter_rust::LANGUAGE.into(), rust::emit, keep_comments)
 }
 
-pub fn from_c(source: &str) -> String {
-    convert_with_language(source, tree_sitter_c::LANGUAGE.into(), c::emit)
+pub fn from_c_with_opts(source: &str, keep_comments: bool) -> String {
+    convert_with_language(source, tree_sitter_c::LANGUAGE.into(), c::emit, keep_comments)
 }
 
 // ── Core ──
@@ -98,6 +93,7 @@ fn convert_with_language(
     source: &str,
     language: tree_sitter::Language,
     emitter: fn(&Node, &[u8], usize) -> String,
+    keep_comments: bool,
 ) -> String {
     let mut parser = Parser::new();
     parser.set_language(&language).expect("Failed to set language");
@@ -113,12 +109,13 @@ fn convert_with_language(
     let nebula = postprocess(&nebula);
     // Strip trailing semicolons (Nebula doesn't use them)
     let nebula = strip_semicolons(&nebula);
-    // Minify: strip comments, blank lines, compact indentation
-    let nebula = minify(&nebula);
+    // Minify: blank-line collapse + compact indentation; keep_comments controls whether // lines survive
+    let nebula = minify(&nebula, keep_comments);
     // Final keyword cleanup (runs AFTER minify so whitespace is normalized)
     let nebula = fix_raw_keywords(&nebula);
     // Canonical normalization: snake_case, Python-native method names, etc.
-    let nebula = canonicalize(&nebula);
+    // When preserving comments, run a wrapper that excludes // lines from the pass.
+    let nebula = if keep_comments { canonicalize_keep_comments(&nebula) } else { canonicalize(&nebula) };
     // Convert brace blocks to indent blocks (saves ~1 token per block boundary)
     let nebula = braces_to_indent(&nebula);
     // Strip orphan closing braces at end of file ONLY if braces are unbalanced
@@ -359,9 +356,10 @@ fn apply_safe_python_rewrites(line: &str) -> String {
     line.to_string()
 }
 
-/// Minimal cleanup for Python output: strip comments and blank lines but
-/// preserve indentation (unlike `minify`, which flattens nested blocks).
-fn strip_comments_and_blanks(source: &str) -> String {
+/// Minimal cleanup for Python output: strip blank lines but preserve indentation.
+/// `keep_comments=false` drops `//` comment-only lines (the canonical/benchmark form).
+/// `keep_comments=true` retains them (for MCP read_code, where the model needs docstrings).
+fn strip_comments_and_blanks(source: &str, keep_comments: bool) -> String {
     let mut out = String::with_capacity(source.len());
     for line in source.lines() {
         let trimmed = line.trim_start();
@@ -369,9 +367,10 @@ fn strip_comments_and_blanks(source: &str) -> String {
             continue;
         }
         if trimmed.starts_with("//") {
-            // Keep // comments — they may be real code comments.
-            out.push_str(line);
-            out.push('\n');
+            if keep_comments || trimmed.starts_with("// @") {
+                out.push_str(line);
+                out.push('\n');
+            }
             continue;
         }
         out.push_str(line);
@@ -1174,14 +1173,18 @@ fn fix_raw_keywords(source: &str) -> String {
     }).collect::<Vec<_>>().join("\n")
 }
 
-/// Minify ingested code: strip comments, blank lines, compact indentation.
+/// Minify ingested code: blank lines + compact indentation; comments stripped unless `keep_comments`.
 /// Based on LLMLingua's principle of removing low-information-density tokens.
-fn minify(source: &str) -> String {
+fn minify(source: &str, keep_comments: bool) -> String {
     source.lines()
         .filter(|line| {
             let trimmed = line.trim();
-            // Remove comment-only lines and blank lines (preserve @-annotations)
-            !trimmed.is_empty() && (!trimmed.starts_with("//") || trimmed.starts_with("// @"))
+            if trimmed.is_empty() { return false; }
+            // Comments: drop unless keep_comments is set, with @-annotations always preserved
+            if trimmed.starts_with("//") && !trimmed.starts_with("// @") && !keep_comments {
+                return false;
+            }
+            true
         })
         .map(|line| {
             // Compact indentation: 4-space → 2-space
@@ -1302,6 +1305,38 @@ fn braces_to_indent(source: &str) -> String {
     }
 
     out.join("\n")
+}
+
+/// Run `canonicalize` while preserving lines that begin with `//` verbatim.
+/// Used by MCP read paths so docstrings don't get snake_cased into oblivion.
+/// Comment lines are split out before canonicalize runs and re-inserted at the
+/// same positions afterward, so the rest of the pipeline is unchanged.
+fn canonicalize_keep_comments(source: &str) -> String {
+    let mut out_lines: Vec<String> = Vec::new();
+    let mut buffer: Vec<&str> = Vec::new();
+
+    for line in source.lines() {
+        if line.trim_start().starts_with("//") {
+            if !buffer.is_empty() {
+                let chunk = buffer.join("\n");
+                for cl in canonicalize(&chunk).lines() {
+                    out_lines.push(cl.to_string());
+                }
+                buffer.clear();
+            }
+            out_lines.push(line.to_string());
+        } else {
+            buffer.push(line);
+        }
+    }
+    if !buffer.is_empty() {
+        let chunk = buffer.join("\n");
+        for cl in canonicalize(&chunk).lines() {
+            out_lines.push(cl.to_string());
+        }
+    }
+
+    out_lines.join("\n")
 }
 
 /// Canonical normalization pass. Runs after all language-specific postprocessing
