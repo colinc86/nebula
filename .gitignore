@@ -16,8 +16,17 @@ __pycache__/
 # Secrets
 *.env
 
-# Model data
-bench/finetune/
+# Model weights and training data (published to HuggingFace)
+# - Models:   electrocampbell/nebula-8lang-{1.5b,7b,14b}
+# - Datasets: electrocampbell/nebula-8lang-{68k,203k}
+bench/finetune/data/
+bench/finetune/models/
+bench/finetune/*.jsonl
+
+# Large archives and binaries
+*.tar.gz
+*.tar.zst
+bench/challenge2/challenge2
 
 # External tool repos (cloned separately)
 bench/external/
