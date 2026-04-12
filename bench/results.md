@@ -42,14 +42,23 @@ All 8 languages compress. Mean: 15.8%. Best: Rust (20.7%). Least: Python (3.2%).
 | Single-target (3-epoch) | 1.5B | Python | 80/164 | **48.8%** |
 | **8-lang (production)** | **1.5B** | **8 langs** | **74/164** | **45.1%** |
 | **8-lang (production)** | **7B** | **8 langs** | **111/164** | **67.7%** |
+| **8-lang (production)** | **14B** | **8 langs** | **146/164** | **89.0%** |
 
-The 7B 8-language model achieves 67.7% Pass@1 on Nebula→Python — matching published Qwen-2.5-7B results on raw Python (~60-70%) while also handling 7 additional languages.
+The 14B 8-language model achieves **89.0% raw Pass@1** on Nebula→Python (on proper hardware), significantly exceeding published Qwen-2.5-14B results on raw Python (~70-80%). Note: requires 48GB+ VRAM; degrades to 57.9% with CPU offloading on 24GB GPUs.
 
 ## Phase 6: Error Correction Pipeline
 
 **Benchmark:** HumanEval (164 problems) | **Max retries:** 3 | **Fallback:** rule-based `nebula to-python`
 
-### 7B 8-language (production):
+### 14B 8-language (hosted, 2x H100):
+
+| Condition | Passed | Pass@1 |
+|---|---|---|
+| No correction | 146/164 | **89.0%** |
+| + Error correction retries | 148/164 | **90.2%** |
+| + Rule-based fallback | 153/164 | **93.3%** |
+
+### 7B 8-language (local, 3090):
 
 | Condition | Passed | Pass@1 |
 |---|---|---|

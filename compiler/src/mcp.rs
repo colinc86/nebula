@@ -237,11 +237,13 @@ fn tool_write_code(args: &Value) -> Result<String, String> {
     // Try neural translation first (produces more idiomatic output)
     let output = if neural::is_available() {
         match neural::generate(code, lang_name, None) {
-            Ok(neural_output) if !neural_output.is_empty() => neural_output,
-            _ => lang_detect::from_nebula(code, lang)?,
+            Ok(ref neural_output) if neural::validate_output(neural_output, lang_name, code) => {
+                neural_output.clone()
+            }
+            _ => lang_detect::from_nebula_lenient(code, lang)?,
         }
     } else {
-        lang_detect::from_nebula(code, lang)?
+        lang_detect::from_nebula_lenient(code, lang)?
     };
 
     fs::write(path, &output)
@@ -343,14 +345,16 @@ fn tool_translate_code(args: &Value) -> Result<String, String> {
 
     // Try neural translation first
     if neural::is_available() {
-        if let Ok(output) = neural::generate(&nebula, target_language, None) {
-            return Ok(output);
+        if let Ok(ref output) = neural::generate(&nebula, target_language, None) {
+            if neural::validate_output(output, target_language, &nebula) {
+                return Ok(output.clone());
+            }
         }
     }
 
-    // Fall back to rule-based codegen
+    // Fall back to lenient rule-based codegen
     let tgt_lang = lang_detect::detect(&format!("file.{}", lang_ext(target_language)));
-    lang_detect::from_nebula(&nebula, tgt_lang)
+    lang_detect::from_nebula_lenient(&nebula, tgt_lang)
 }
 
 /// Map language name to a file extension for lang_detect::detect().

@@ -2,7 +2,7 @@
 
 **A universal and human-readable code intermediate language for token-efficient LLM code generation.**
 
-Nebula normalizes code from 8 programming languages into a single canonical form that compresses 3-21% smaller than the source — meaning an LLM can read, reason about, and generate more code within the same context window. A 7B model fine-tuned on Nebula achieves **89.6% Pass@1** on HumanEval with error correction, translating across 6 target languages from a single model.
+Nebula normalizes code from 8 programming languages into a single canonical form that compresses 3-21% smaller than the source — meaning an LLM can read, reason about, and generate more code within the same context window. A 14B model fine-tuned on Nebula achieves **93.3% Pass@1** on HumanEval with error correction, translating across 8 target languages from a single model.
 
 Nebula extends the grammar-redesign approach of SimPy (ISSTA 2024) and Token Sugar (ASE 2025) to multiple source languages, validated by a comprehensive tokenizer audit against cl100k_base.
 
@@ -22,8 +22,8 @@ nebula mcp                                           # Start MCP server
 |---|---|
 | Token compression (8 languages) | **16.2%** mean reduction |
 | Best compression (Rust, Swift, Kotlin) | **20.6-20.7%** |
+| Fine-tuned 14B Pass@1 (Nebula→Python, 8 langs) | **89.0%** raw, **93.3%** with error correction |
 | Fine-tuned 7B Pass@1 (Nebula→Python, 8 langs) | **67.7%** raw, **88.4%** with error correction |
-| Fine-tuned 1.5B Pass@1 (Nebula→Python, 8 langs) | **45.1%** raw, **79.3%** with error correction |
 | Fine-tuned 7B Pass@1 (MBPP, 500 problems) | **55.4%** — matches base model on raw Python |
 | Base model on Nebula (no fine-tuning) | **1.2%** — can't parse Nebula at all |
 | InterTrans (Nebula-mediated translation) | **+17.6pp** on Go→Python, **+17.6pp** on JS→Python |

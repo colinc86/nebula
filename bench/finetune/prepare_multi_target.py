@@ -29,6 +29,7 @@ NEBULA_BIN = REPO_ROOT / "compiler" / "target" / "debug" / "nebula"
 
 MIN_FUNC_SIZE = 50
 MAX_FUNC_SIZE = 2000
+MAX_GROUP_SIZE = 4000  # Larger limit for multi-function groups
 
 # Language name -> (StarCoder data_dir, file extension, from-* subcommand)
 LANG_CONFIG = {
@@ -317,6 +318,32 @@ EXTRACTORS = {
 }
 
 
+def extract_function_groups(source, lang, group_size_range=(2, 5)):
+    """Extract groups of consecutive functions from the same file.
+
+    Returns multi-function code blocks suitable for training the model
+    on longer, more realistic inputs.
+    """
+    extractor = EXTRACTORS.get(lang)
+    if not extractor:
+        return []
+
+    functions = extractor(source)
+    if len(functions) < 2:
+        return []
+
+    groups = []
+    min_group, max_group = group_size_range
+
+    for start in range(0, len(functions) - 1):
+        for end in range(start + min_group, min(start + max_group + 1, len(functions) + 1)):
+            group = "\n\n".join(functions[start:end])
+            if MIN_FUNC_SIZE <= len(group) <= MAX_GROUP_SIZE:
+                groups.append(group)
+
+    return groups
+
+
 # ---------------------------------------------------------------------------
 # Nebula conversion
 # ---------------------------------------------------------------------------
@@ -364,16 +391,25 @@ def is_valid_pair(source_code, nebula_code):
 # Download functions from StarCoderData (with CodeSearchNet fallback)
 # ---------------------------------------------------------------------------
 
-def download_functions(lang, output_path, count=10000):
-    """Download functions for a single language."""
+def download_functions(lang, output_path, count=10000, multi_ratio=0.0):
+    """Download functions for a single language.
+
+    Args:
+        multi_ratio: fraction of examples that should be multi-function groups (0.0-1.0)
+    """
     hf_token = load_hf_token()
     extractor = EXTRACTORS[lang]
     data_dir = LANG_CONFIG[lang][0]
     collected = 0
+    multi_count = 0
+    target_multi = int(count * multi_ratio)
+    target_single = count - target_multi
 
     with open(output_path, "w") as f:
         # Primary source: StarCoderData
         print(f"  [{lang}] Trying StarCoderData ({data_dir})...")
+        if multi_ratio > 0:
+            print(f"    Target: {target_single} single + {target_multi} multi-function")
         try:
             from datasets import load_dataset
             ds = load_dataset(
@@ -390,17 +426,31 @@ def download_functions(lang, output_path, count=10000):
                 content = sample.get("content", "")
                 if not content or len(content) < MIN_FUNC_SIZE:
                     continue
+
+                # Extract single functions
                 functions = extractor(content)
                 for func in functions:
+                    if collected >= target_single + multi_count:
+                        break
                     if MIN_FUNC_SIZE <= len(func) <= MAX_FUNC_SIZE:
-                        f.write(json.dumps({"code": func, "lang": lang}) + "\n")
+                        f.write(json.dumps({"code": func, "lang": lang, "type": "single"}) + "\n")
                         collected += 1
                         hf_count += 1
-                        if collected >= count:
+
+                # Extract multi-function groups
+                if multi_count < target_multi and len(functions) >= 2:
+                    groups = extract_function_groups(content, lang)
+                    for group in groups[:2]:  # max 2 groups per file
+                        if multi_count >= target_multi:
                             break
+                        f.write(json.dumps({"code": group, "lang": lang, "type": "multi"}) + "\n")
+                        collected += 1
+                        multi_count += 1
+                        hf_count += 1
+
                 if hf_count > 0 and hf_count % 1000 == 0:
-                    print(f"    {hf_count} functions from StarCoderData ({collected} total)...")
-            print(f"    {hf_count} functions from StarCoderData")
+                    print(f"    {hf_count} from StarCoderData ({collected} total, {multi_count} multi)...")
+            print(f"    {hf_count} functions from StarCoderData ({multi_count} multi-function)")
         except Exception as e:
             print(f"    StarCoderData unavailable: {e}")
 
@@ -585,7 +635,7 @@ def run_download(languages, count, output_dir):
             download_functions(lang, raw_path, count=count)
 
 
-def run_all(languages, count, output_dir):
+def run_all(languages, count, output_dir, multi_ratio=0.0):
     """Run the full pipeline: download -> generate pairs -> merge -> split."""
     os.makedirs(output_dir, exist_ok=True)
 
@@ -599,7 +649,7 @@ def run_all(languages, count, output_dir):
             existing = sum(1 for _ in open(raw_path))
             print(f"[{lang}] Using existing {raw_path} ({existing} functions)")
         else:
-            download_functions(lang, raw_path, count=count)
+            download_functions(lang, raw_path, count=count, multi_ratio=multi_ratio)
 
     # Step 2: Generate pairs
     print("\n" + "=" * 60)
@@ -641,6 +691,8 @@ def main():
                      help="Output directory")
     al.add_argument("--languages", default="python,javascript,typescript,go,rust,c",
                      help="Comma-separated list of target languages")
+    al.add_argument("--multi-ratio", type=float, default=0.0,
+                     help="Fraction of examples that are multi-function groups (0.0-1.0)")
 
     # download: just download
     dl = sub.add_parser("download", help="Download functions only")
@@ -658,7 +710,8 @@ def main():
                       f"Supported: {', '.join(LANG_CONFIG.keys())}")
                 return
         if args.command == "all":
-            run_all(languages, args.count, args.output_dir)
+            multi_ratio = getattr(args, 'multi_ratio', 0.0)
+            run_all(languages, args.count, args.output_dir, multi_ratio=multi_ratio)
         else:
             run_download(languages, args.count, args.output_dir)
     else:
