@@ -1,0 +1,14 @@
+{
+  "id": "explain_python_py_lists",
+  "type": "explain",
+  "language": "python",
+  "package": "py_lists",
+  "prompt": "Read all the source files in this python package and write a one-paragraph summary of what it does. Mention each public function by name. Do not edit any files \u2014 your final response should be the summary itself.",
+  "verify_cmd": "true",
+  "expected_keywords_in_final": [
+    "flatten",
+    "chunk",
+    "unique",
+    "main"
+  ]
+}

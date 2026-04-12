@@ -1,0 +1,11 @@
+{
+  "id": "bugfix_go_math_basic_a03c315b",
+  "type": "bugfix",
+  "language": "go",
+  "package": "math_basic",
+  "bug_description": "Fibonacci uses subtraction instead of addition",
+  "expected_old_line": "a, b = b, a+b",
+  "expected_new_line": "a, b = b, a-b",
+  "prompt": "This go package has a failing test. Run the tests to see the failure, then fix the bug in the source file (not the test file). Stop when the tests pass.",
+  "verify_cmd": "go test ./..."
+}

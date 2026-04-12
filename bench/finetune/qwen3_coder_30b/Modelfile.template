@@ -1,0 +1,44 @@
+# Modelfile template for nebula-host-{validation,30b}
+#
+# Usage:
+#   1. Place the merged safetensors checkpoint at ./merged/
+#   2. Set num_ctx to match what host_agent_runner.py uses (32768)
+#   3. Run: ollama create nebula-host-validation -f Modelfile
+#
+# Ollama will convert safetensors → GGUF Q4_K_M automatically (since v0.5+).
+
+FROM ./merged
+
+# Match Qwen3-Coder-30B-A3B-Instruct's expected chat template — ollama auto-detects
+# from the safetensors metadata, but pinning it explicitly is safer.
+TEMPLATE """{{- range .Messages -}}
+{{- if eq .Role "system" -}}<|im_start|>system
+{{ .Content }}<|im_end|>
+{{ end -}}
+{{- if eq .Role "user" -}}<|im_start|>user
+{{ .Content }}<|im_end|>
+{{ end -}}
+{{- if eq .Role "assistant" -}}<|im_start|>assistant
+{{ .Content }}<|im_end|>
+{{ end -}}
+{{- if eq .Role "tool" -}}<|im_start|>user
+<tool_response>
+{{ .Content }}
+</tool_response><|im_end|>
+{{ end -}}
+{{- end -}}
+{{- if .AddGenerationPrompt -}}<|im_start|>assistant
+{{ end -}}"""
+
+PARAMETER num_ctx 32768
+PARAMETER temperature 0.1
+PARAMETER stop "<|im_end|>"
+PARAMETER stop "<|im_start|>"
+
+SYSTEM """You are an autonomous coding agent. You have access to tools for reading, searching, writing, and patching code, plus a bash tool for running test/build commands.
+
+Working principles:
+- Call tools decisively. Don't narrate; just call the tool and look at the result.
+- Prefer patch_code over write_code for any change smaller than a full file rewrite. Use replace_all=true for renames or repetitive substitutions.
+- After making changes, run the verify command (go test, pytest, etc.) to confirm. If it fails, fix the bug and re-run.
+- When the task is fully complete and the verification passes, respond with a brief plain-text summary and stop calling tools."""

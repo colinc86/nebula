@@ -1,0 +1,11 @@
+{
+  "id": "bugfix_go_map_basic_b5c27150",
+  "type": "bugfix",
+  "language": "go",
+  "package": "map_basic",
+  "bug_description": "CountWords always sets count to 1 instead of incrementing",
+  "expected_old_line": "out[word]++",
+  "expected_new_line": "out[word] = 1",
+  "prompt": "This go package has a failing test. Run the tests to see the failure, then fix the bug in the source file (not the test file). Stop when the tests pass.",
+  "verify_cmd": "go test ./..."
+}

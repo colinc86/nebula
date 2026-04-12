@@ -1,0 +1,10 @@
+{
+  "id": "refact_go_strings_basic_countvowels_to_tallyvowels",
+  "type": "refactor",
+  "language": "go",
+  "package": "strings_basic",
+  "old_name": "CountVowels",
+  "new_name": "TallyVowels",
+  "prompt": "Rename the identifier `CountVowels` to `TallyVowels` throughout this go package, in every file that references it (including test files). Use the file-editing tools \u2014 don't shell out to sed or perl. After the rename is complete, run the tests to confirm everything still passes.",
+  "verify_cmd": "go test ./..."
+}

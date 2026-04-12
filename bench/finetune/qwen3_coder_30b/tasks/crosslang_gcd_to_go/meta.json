@@ -1,0 +1,9 @@
+{
+  "id": "crosslang_gcd_to_go",
+  "type": "cross_lang",
+  "source_language": "python",
+  "target_language": "go",
+  "function": "gcd",
+  "prompt": "Port the Python function `gcd` (Euclidean greatest common divisor) to Go in a new file `gcd.go`. Use the signature `func Gcd(a, b int) int`. Handle negative inputs as absolute values. Then write a Go test in `gcd_test.go` covering at least 4 cases including a negative input. Run `go test ./...` to verify.",
+  "verify_cmd": "go test ./..."
+}

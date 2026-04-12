@@ -1,0 +1,9 @@
+{
+  "id": "impl_go_math_basic_fib",
+  "type": "implement",
+  "language": "go",
+  "package": "math_basic",
+  "function": "Fib",
+  "prompt": "Implement the function `Fib` in this go package so that the existing tests pass. Signature: `Fib(n int) int)`. Behavior: nth Fibonacci with Fib(0)=0, Fib(1)=1; return 0 for negative n.\n\nUse the file-editing tools, then run the tests to confirm. Stop when the tests pass.",
+  "verify_cmd": "go test ./..."
+}

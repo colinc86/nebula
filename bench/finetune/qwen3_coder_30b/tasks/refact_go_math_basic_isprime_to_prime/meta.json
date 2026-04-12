@@ -1,0 +1,10 @@
+{
+  "id": "refact_go_math_basic_isprime_to_prime",
+  "type": "refactor",
+  "language": "go",
+  "package": "math_basic",
+  "old_name": "IsPrime",
+  "new_name": "Prime",
+  "prompt": "Rename the identifier `IsPrime` to `Prime` throughout this go package, in every file that references it (including test files). Use the file-editing tools \u2014 don't shell out to sed or perl. After the rename is complete, run the tests to confirm everything still passes.",
+  "verify_cmd": "go test ./..."
+}

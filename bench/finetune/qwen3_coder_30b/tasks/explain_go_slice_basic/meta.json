@@ -1,0 +1,16 @@
+{
+  "id": "explain_go_slice_basic",
+  "type": "explain",
+  "language": "go",
+  "package": "slice_basic",
+  "prompt": "Read all the source files in this go package and write a one-paragraph summary of what it does. Mention each public function by name. Do not edit any files \u2014 your final response should be the summary itself.",
+  "verify_cmd": "true",
+  "expected_keywords_in_final": [
+    "Sum",
+    "Max",
+    "Filter",
+    "TestSum",
+    "TestMax",
+    "TestFilter"
+  ]
+}

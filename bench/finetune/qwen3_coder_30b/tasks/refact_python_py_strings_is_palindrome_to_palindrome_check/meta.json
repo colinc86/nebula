@@ -1,0 +1,10 @@
+{
+  "id": "refact_python_py_strings_is_palindrome_to_palindrome_check",
+  "type": "refactor",
+  "language": "python",
+  "package": "py_strings",
+  "old_name": "is_palindrome",
+  "new_name": "palindrome_check",
+  "prompt": "Rename the function `is_palindrome` to `palindrome_check` throughout this python package, in every file that references it (including test files). Use the file-editing tools \u2014 don't shell out to sed or perl. After the rename is complete, run the tests to confirm everything still passes.",
+  "verify_cmd": "python3 test_*.py"
+}

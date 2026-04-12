@@ -1,0 +1,20 @@
+{
+  "phase": "phase4_validation",
+  "job_id": "ft-ff666e8a-0684",
+  "model": "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+  "train_file": "file-e404380b-4f3f-4a6d-b09f-6bf115ce2a5e",
+  "params": {
+    "model": "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+    "n_epochs": 2,
+    "learning_rate": 5e-05,
+    "batch_size": 2,
+    "warmup_ratio": 0.05,
+    "suffix": "nebula-host-validation",
+    "lora": true,
+    "lora_r": 16,
+    "lora_alpha": 16,
+    "lora_dropout": 0.05,
+    "lora_trainable_modules": "q_proj,k_proj,v_proj,o_proj"
+  },
+  "submitted_at": "2026-04-12 02:52:44"
+}

@@ -932,6 +932,13 @@ fn fix_braceless_if(source: &str) -> String {
                 // Find matching ) for the if condition
                 if let Some(close_paren) = trimmed[if_pos + 3..].find(") ") {
                     let actual_close = if_pos + 3 + close_paren;
+                    // Bail out if the close-paren actually lives AFTER the `el` token
+                    // (e.g. C/Go else-if-with-parens like `} el if (foo->bar) {`).
+                    // Without this guard the slice below underflows.
+                    if actual_close >= el_pos {
+                        out.push(line.to_string());
+                        continue;
+                    }
                     // Only if there's no { between ) and el (braceless)
                     let between = &trimmed[actual_close..el_pos];
                     if !between.contains('{') {

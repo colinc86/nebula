@@ -1,0 +1,11 @@
+{
+  "id": "bugfix_go_strings_basic_3d68a395",
+  "type": "bugfix",
+  "language": "go",
+  "package": "strings_basic",
+  "bug_description": "comparison flipped (returns false for matching anagrams)",
+  "expected_old_line": "if len(ca) != len(cb) {",
+  "expected_new_line": "if len(ca) == len(cb) {",
+  "prompt": "This go package has a failing test. Run the tests to see the failure, then fix the bug in the source file (not the test file). Stop when the tests pass.",
+  "verify_cmd": "go test ./..."
+}

@@ -1,0 +1,11 @@
+{
+  "id": "bugfix_go_slice_basic_88ed7faa",
+  "type": "bugfix",
+  "language": "go",
+  "package": "slice_basic",
+  "bug_description": "Sum multiplies instead of adds",
+  "expected_old_line": "s += v",
+  "expected_new_line": "s *= v",
+  "prompt": "This go package has a failing test. Run the tests to see the failure, then fix the bug in the source file (not the test file). Stop when the tests pass.",
+  "verify_cmd": "go test ./..."
+}

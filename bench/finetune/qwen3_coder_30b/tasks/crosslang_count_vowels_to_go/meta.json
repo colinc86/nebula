@@ -1,0 +1,9 @@
+{
+  "id": "crosslang_count_vowels_to_go",
+  "type": "cross_lang",
+  "source_language": "python",
+  "target_language": "go",
+  "function": "count_vowels",
+  "prompt": "Port the Python function `count_vowels` (counts vowels in a string, case-insensitive) to Go in a new file `vowels.go`. Use the signature `func CountVowels(s string) int`. Then write a Go test in `vowels_test.go` that checks at least 4 cases. Run `go test ./...` to verify.",
+  "verify_cmd": "go test ./..."
+}

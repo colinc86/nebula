@@ -1,0 +1,11 @@
+{
+  "id": "bugfix_go_strings_basic_641392f3",
+  "type": "bugfix",
+  "language": "go",
+  "package": "strings_basic",
+  "bug_description": "swap is a no-op (Reverse no longer reverses)",
+  "expected_old_line": "runes[i], runes[j] = runes[j], runes[i]",
+  "expected_new_line": "runes[i], runes[j] = runes[i], runes[j]",
+  "prompt": "This go package has a failing test. Run the tests to see the failure, then fix the bug in the source file (not the test file). Stop when the tests pass.",
+  "verify_cmd": "go test ./..."
+}

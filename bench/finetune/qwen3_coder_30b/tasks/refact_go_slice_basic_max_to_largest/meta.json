@@ -1,0 +1,10 @@
+{
+  "id": "refact_go_slice_basic_max_to_largest",
+  "type": "refactor",
+  "language": "go",
+  "package": "slice_basic",
+  "old_name": "Max",
+  "new_name": "Largest",
+  "prompt": "Rename the identifier `Max` to `Largest` throughout this go package, in every file that references it (including test files). Use the file-editing tools \u2014 don't shell out to sed or perl. After the rename is complete, run the tests to confirm everything still passes.",
+  "verify_cmd": "go test ./..."
+}

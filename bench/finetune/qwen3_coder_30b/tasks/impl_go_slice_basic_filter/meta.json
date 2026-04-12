@@ -1,0 +1,9 @@
+{
+  "id": "impl_go_slice_basic_filter",
+  "type": "implement",
+  "language": "go",
+  "package": "slice_basic",
+  "function": "Filter",
+  "prompt": "Implement the function `Filter` in this go package so that the existing tests pass. Signature: `Filter(xs []int, keep func(int) bool) []int)`. Behavior: return new slice with elements where keep returns true.\n\nUse the file-editing tools, then run the tests to confirm. Stop when the tests pass.",
+  "verify_cmd": "go test ./..."
+}

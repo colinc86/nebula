@@ -1,0 +1,9 @@
+{
+  "id": "impl_python_py_lists_flatten",
+  "type": "implement",
+  "language": "python",
+  "package": "py_lists",
+  "function": "flatten",
+  "prompt": "Implement the function `flatten` in this python package so that the existing tests pass. Signature: `flatten(nested) -> list)`. Behavior: flatten one level of nesting.\n\nUse the file-editing tools, then run the tests to confirm. Stop when the tests pass.",
+  "verify_cmd": "python3 test_*.py"
+}

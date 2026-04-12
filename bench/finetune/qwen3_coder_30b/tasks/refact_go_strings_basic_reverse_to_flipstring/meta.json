@@ -1,0 +1,10 @@
+{
+  "id": "refact_go_strings_basic_reverse_to_flipstring",
+  "type": "refactor",
+  "language": "go",
+  "package": "strings_basic",
+  "old_name": "Reverse",
+  "new_name": "FlipString",
+  "prompt": "Rename the identifier `Reverse` to `FlipString` throughout this go package, in every file that references it (including test files). Use the file-editing tools \u2014 don't shell out to sed or perl. After the rename is complete, run the tests to confirm everything still passes.",
+  "verify_cmd": "go test ./..."
+}
