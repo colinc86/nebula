@@ -41,6 +41,8 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -84,6 +86,235 @@ def run_claude_p(task_dir, prompt, output_jsonl, max_budget=2.0):
             timeout=600,
         )
     return proc.returncode == 0, proc.stderr.decode(errors="replace")[:1000]
+
+
+# ── Together AI / Qwen3-Coder-480B teacher driver ─────────────────────────
+
+TOGETHER_URL = "https://api.together.xyz/v1/chat/completions"
+TOGETHER_MODEL = "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8"
+
+
+def _load_together_key():
+    env = REPO_ROOT / ".env"
+    if env.exists():
+        for line in env.read_text().splitlines():
+            if line.startswith("TOGETHER_API_KEY="):
+                return line.split("=", 1)[1].strip().strip('"').strip("'")
+    return os.environ.get("TOGETHER_API_KEY", "")
+
+
+class MCPSession:
+    """Persistent Nebula MCP subprocess for one task. JSON-RPC over stdio."""
+
+    def __init__(self, cwd):
+        self.proc = subprocess.Popen(
+            [str(NEBULA_BIN), "mcp"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            cwd=cwd, bufsize=0,
+        )
+        self._next_id = 1
+        self._send({"jsonrpc": "2.0", "id": self._next_id, "method": "initialize", "params": {}})
+        self._next_id += 1
+        self._recv_until(1)
+        self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+
+    def _send(self, obj):
+        self.proc.stdin.write((json.dumps(obj) + "\n").encode())
+        self.proc.stdin.flush()
+
+    def _recv_until(self, want_id):
+        while True:
+            line = self.proc.stdout.readline()
+            if not line:
+                return None
+            try:
+                msg = json.loads(line)
+            except Exception:
+                continue
+            if msg.get("id") == want_id:
+                return msg
+
+    def call_tool(self, name, arguments):
+        rid = self._next_id
+        self._next_id += 1
+        self._send({
+            "jsonrpc": "2.0",
+            "id": rid,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments},
+        })
+        resp = self._recv_until(rid)
+        if resp is None:
+            return "ERROR: MCP process died"
+        if "error" in resp:
+            err = resp["error"]
+            return f"ERROR: {err.get('message', str(err))}"
+        result = resp.get("result", {})
+        content = result.get("content") or []
+        parts = []
+        for c in content:
+            if isinstance(c, dict) and c.get("type") == "text":
+                parts.append(c.get("text", ""))
+        if result.get("isError"):
+            return "ERROR: " + "\n".join(parts)
+        return "\n".join(parts) if parts else json.dumps(result)
+
+    def close(self):
+        try:
+            self.proc.stdin.close()
+        except Exception:
+            pass
+        try:
+            self.proc.terminate()
+            self.proc.wait(timeout=3)
+        except Exception:
+            try:
+                self.proc.kill()
+            except Exception:
+                pass
+
+
+def _run_bash(command, cwd, timeout=120):
+    try:
+        p = subprocess.run(
+            command, shell=True, cwd=cwd,
+            capture_output=True, text=True, timeout=timeout,
+        )
+        out = (p.stdout + p.stderr)[-4000:]
+        if not out:
+            out = f"(exit {p.returncode}, no output)"
+        return out
+    except subprocess.TimeoutExpired:
+        return f"ERROR: command timed out after {timeout}s"
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+def _together_chat(api_key, messages, tools, max_retries=3):
+    body = {
+        "model": TOGETHER_MODEL,
+        "messages": messages,
+        "tools": tools,
+        "tool_choice": "auto",
+        "temperature": 0.1,
+        "max_tokens": 2048,
+    }
+    data = json.dumps(body).encode()
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "User-Agent": "nebula-distill/1.0 (phase-11-teacher-swap)",
+        "Accept": "application/json",
+    }
+    for attempt in range(max_retries):
+        try:
+            req = urllib.request.Request(TOGETHER_URL, data=data, headers=headers, method="POST")
+            with urllib.request.urlopen(req, timeout=180) as resp:
+                return json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            body_text = ""
+            try:
+                body_text = e.read().decode(errors="replace")[:500]
+            except Exception:
+                pass
+            if e.code in (429, 500, 502, 503, 504) and attempt < max_retries - 1:
+                time.sleep(2 ** attempt)
+                continue
+            raise RuntimeError(f"Together HTTP {e.code}: {body_text}")
+        except Exception as e:
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)
+                continue
+            raise
+    raise RuntimeError("Together retries exhausted")
+
+
+def run_teacher_together(work_dir, prompt, canonical_tools, max_turns=30, system_prompt_variant="default"):
+    """Drive Qwen3-Coder-480B through the Nebula MCP agent loop.
+
+    Returns (messages, final_text, stats). `messages` is the full list in
+    OpenAI-chat format (system, user, assistant-with-tool_calls, tool, ...),
+    which feeds directly into to_qwen_chat_format.
+    """
+    api_key = _load_together_key()
+    if not api_key:
+        raise RuntimeError("TOGETHER_API_KEY not set")
+
+    mcp = MCPSession(work_dir)
+    try:
+        # The system prompt is added to the teacher request but NOT returned in
+        # the messages list — to_qwen_chat_format adds the training-time system
+        # prompt itself, so we'd end up with two copies otherwise.
+        system_msg = {"role": "system", "content": SYSTEM_PROMPT_VARIANTS[system_prompt_variant]}
+        messages = [{"role": "user", "content": prompt}]
+        stats = {"turns": 0, "tool_calls": 0, "input_tokens": 0, "output_tokens": 0}
+        final_text = ""
+
+        for turn in range(max_turns):
+            stats["turns"] = turn + 1
+            resp = _together_chat(api_key, [system_msg] + messages, canonical_tools)
+            usage = resp.get("usage") or {}
+            stats["input_tokens"] += usage.get("prompt_tokens", 0)
+            stats["output_tokens"] += usage.get("completion_tokens", 0)
+
+            choice = (resp.get("choices") or [{}])[0]
+            msg = choice.get("message") or {}
+            content = msg.get("content") or ""
+            tool_calls = msg.get("tool_calls") or []
+
+            assistant_msg = {"role": "assistant", "content": content}
+            if tool_calls:
+                # Normalize tool_calls to the shape parse_stream_json produces
+                norm_tcs = []
+                for tc in tool_calls:
+                    fn = tc.get("function") or {}
+                    args_raw = fn.get("arguments", "")
+                    if isinstance(args_raw, dict):
+                        args_raw = json.dumps(args_raw)
+                    norm_tcs.append({
+                        "id": tc.get("id") or f"call_{turn}_{len(norm_tcs)}",
+                        "type": "function",
+                        "function": {
+                            "name": fn.get("name", ""),
+                            "arguments": args_raw,
+                        },
+                    })
+                assistant_msg["tool_calls"] = norm_tcs
+            messages.append(assistant_msg)
+
+            if not tool_calls:
+                final_text = content
+                break
+
+            # Dispatch each tool call and append a tool message
+            for tc in assistant_msg["tool_calls"]:
+                stats["tool_calls"] += 1
+                fn = tc["function"]
+                name = fn["name"]
+                try:
+                    args = json.loads(fn["arguments"]) if fn["arguments"] else {}
+                    if not isinstance(args, dict):
+                        args = {}
+                except Exception:
+                    args = {}
+
+                if name == "Bash":
+                    result = _run_bash(args.get("command", ""), cwd=work_dir)
+                elif name.startswith("mcp__nebula__"):
+                    mcp_name = name[len("mcp__nebula__"):]
+                    result = mcp.call_tool(mcp_name, args)
+                else:
+                    result = f"ERROR: unknown tool {name}"
+
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "content": result[:8000],
+                })
+
+        return messages, final_text, stats
+    finally:
+        mcp.close()
 
 
 def run_verify(verify_cmd, task_dir, timeout=120):
@@ -179,13 +410,43 @@ def parse_stream_json(stream_path):
     return messages, tools, final_text, final_usage
 
 
+RENAME_DISCIPLINE_BLOCK = """
+
+## Rename-task discipline
+
+If the user's task is to rename a symbol (type, function, method, variable, constant) — whether the symbol appears in a single file or across many — you MUST:
+
+1. Use `search_code` with the old name to discover every file that references it.
+2. For each file in the results, call `patch_code` exactly ONCE with `replace_all=true`. The `old_str` should be the bare symbol name (or a minimally distinguishing snippet) and `new_str` the replacement name.
+3. Do NOT emit individual `patch_code` calls against the same file. Even if a file has only one reference, prefer one `replace_all=true` call over a hand-crafted single-occurrence patch.
+4. After all files are patched, run the verification command (go build / go test / etc.) ONCE and respond with a brief final summary.
+
+A rename of N references across M files is exactly M `patch_code(replace_all=true)` calls, not N individual patches. For a single-file rename with 4 references, that is 1 `patch_code(replace_all=true)` call, not 4."""
+
+
 QWEN_TRAINING_SYSTEM_PROMPT = """You are an autonomous coding agent. You have access to tools for reading, searching, writing, and patching code, plus a bash tool for running test/build commands.
+
+IMPORTANT — about read_code and patch_code:
+- For large files (>100 lines), read_code returns source in Nebula form — a compact canonical IL you can recognize by `fn`, `rt`, `fo`, `def`, `:=`, indent blocks instead of braces, and `Str`/`Int`/`Bool` type names. Small files come back as raw native source.
+- patch_code ALWAYS matches against the native source bytes (Go, Python, etc.), NEVER Nebula. If read_code showed you Nebula for a file, you must mentally translate each `old_str` back to the native syntax before calling patch_code. If you see `fn Foo(s: Str) -> Str:` in the Nebula read, your `old_str` must be the native Go form `func Foo(s string) string {` — with real braces, real types, and real indentation.
+- If patch_code returns `old_str not found`, do NOT retry the same old_str. Re-think: you probably copied from a Nebula read. Use bash `cat` (or run the test to see the raw error) to confirm the native syntax, then try again.
 
 Working principles:
 - Call tools decisively. Don't narrate; just call the tool and look at the result.
-- Prefer patch_code over write_code for any change smaller than a full file rewrite. Use replace_all=true for renames or repetitive substitutions.
+- Prefer patch_code over write_code for any change smaller than a full file rewrite.
+- For ANY rename across multiple files, use exactly one `patch_code` call per affected file with `replace_all=true`. That's almost always 5-15 tool calls total, not 30+. Individual patches without replace_all are only correct when the symbol appears in just one or two places total OR when you need surgical context-specific control.
 - After making changes, run the verify command (go test, pytest, etc.) to confirm. If it fails, fix the bug and re-run.
+- BEFORE responding with your final summary, run the verification command one last time. A green build is the ONLY signal that you're done — if `go build` or the tests still fail, you have more work to do, not a summary to write.
 - When the task is fully complete and the verification passes, respond with a brief plain-text summary and stop calling tools."""
+
+
+QWEN_REPLACE_ALL_SYSTEM_PROMPT = QWEN_TRAINING_SYSTEM_PROMPT + RENAME_DISCIPLINE_BLOCK
+
+
+SYSTEM_PROMPT_VARIANTS = {
+    "default": QWEN_TRAINING_SYSTEM_PROMPT,
+    "replace_all_mandatory": QWEN_REPLACE_ALL_SYSTEM_PROMPT,
+}
 
 
 def fetch_mcp_tools_as_openai_schema():
@@ -347,6 +608,18 @@ def main():
     p.add_argument("--max-tasks", type=int, default=200)
     p.add_argument("--skip-existing", action="store_true")
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--teacher", choices=["sonnet", "qwen3-coder-480b"], default="qwen3-coder-480b",
+                   help="Which teacher model to use for distillation")
+    p.add_argument("--only-task", default=None,
+                   help="Run just one task (by task_id) — for smoke testing")
+    p.add_argument("--only-tasks", default=None,
+                   help="Comma-separated list of task_ids to run (for phase 12 refactor-only rerun)")
+    p.add_argument("--only-type", default=None,
+                   choices=["implement", "refactor", "bugfix", "explain", "cross_lang"],
+                   help="Only run tasks of this type")
+    p.add_argument("--system-prompt-variant", default="default",
+                   choices=list(SYSTEM_PROMPT_VARIANTS.keys()),
+                   help="Which teacher system prompt to use")
     args = p.parse_args()
 
     tasks_root = Path(args.tasks)
@@ -371,8 +644,26 @@ def main():
     else:
         all_ids = sorted(d.name for d in tasks_root.iterdir() if d.is_dir())
 
-    pending = [t for t in all_ids if t not in existing][:args.max_tasks]
-    print(f"Distillation: {len(pending)} tasks pending (output: {out_path})", flush=True)
+    if args.only_task:
+        pending = [args.only_task] if args.only_task in all_ids else []
+    elif args.only_tasks:
+        wanted = set(t.strip() for t in args.only_tasks.split(","))
+        pending = [t for t in all_ids if t in wanted]
+    else:
+        pending = [t for t in all_ids if t not in existing]
+        if args.only_type:
+            filtered = []
+            for tid in pending:
+                meta_path = tasks_root / tid / "meta.json"
+                if meta_path.exists():
+                    try:
+                        if json.loads(meta_path.read_text()).get("type") == args.only_type:
+                            filtered.append(tid)
+                    except Exception:
+                        pass
+            pending = filtered
+        pending = pending[:args.max_tasks]
+    print(f"Distillation: teacher={args.teacher} variant={args.system_prompt_variant}, {len(pending)} tasks pending (output: {out_path})", flush=True)
     if not pending:
         return
 
@@ -405,26 +696,40 @@ def main():
             shutil.copytree(seed, trial / "work", dirs_exist_ok=False)
             work_dir = trial / "work"
 
-            stream_path = trial / "stream.jsonl"
             print(f"[{i}/{len(pending)}] {task_id} ({meta['type']})", flush=True)
 
             t0 = time.time()
-            ok, stderr = run_claude_p(work_dir, prompt, stream_path)
-            wall = time.time() - t0
-
-            if not ok and not stream_path.exists():
-                stats["claude_fail"] += 1
-                _log_failure(fail_log, task_id, "claude_p_failed", stderr)
-                continue
+            if args.teacher == "qwen3-coder-480b":
+                try:
+                    messages, final_text, teacher_stats = run_teacher_together(
+                        work_dir, prompt, canonical_tools, max_turns=30,
+                        system_prompt_variant=args.system_prompt_variant,
+                    )
+                    wall = time.time() - t0
+                    print(f"    teacher: turns={teacher_stats['turns']} "
+                          f"tools={teacher_stats['tool_calls']} "
+                          f"in={teacher_stats['input_tokens']} "
+                          f"out={teacher_stats['output_tokens']}", flush=True)
+                except Exception as e:
+                    stats["claude_fail"] += 1
+                    _log_failure(fail_log, task_id, "teacher_failed", str(e))
+                    continue
+            else:
+                stream_path = trial / "stream.jsonl"
+                ok, stderr = run_claude_p(work_dir, prompt, stream_path)
+                wall = time.time() - t0
+                if not ok and not stream_path.exists():
+                    stats["claude_fail"] += 1
+                    _log_failure(fail_log, task_id, "claude_p_failed", stderr)
+                    continue
+                try:
+                    messages, tools, final_text, usage = parse_stream_json(stream_path)
+                except Exception as e:
+                    stats["exception"] += 1
+                    _log_failure(fail_log, task_id, "parse_exception", str(e))
+                    continue
 
             v_ok, v_out = run_verify(verify_cmd, work_dir)
-
-            try:
-                messages, tools, final_text, usage = parse_stream_json(stream_path)
-            except Exception as e:
-                stats["exception"] += 1
-                _log_failure(fail_log, task_id, "parse_exception", str(e))
-                continue
 
             if meta["type"] == "explain":
                 if not check_explain_keywords(messages, meta.get("expected_keywords_in_final", [])):

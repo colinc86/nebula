@@ -1,9 +1,0 @@
-{
-  "id": "crosslang_flatten_to_go",
-  "type": "cross_lang",
-  "source_language": "python",
-  "target_language": "go",
-  "function": "flatten",
-  "prompt": "Port the Python function `flatten` (which flattens one level of an iterable of iterables) to Go in a new file `flatten.go`. Use the signature `func Flatten(nested [][]int) []int`. Then write a Go test in `flatten_test.go` that checks at least 3 cases including the empty case. Run `go test ./...` to verify.",
-  "verify_cmd": "go test ./..."
-}

@@ -1,9 +1,0 @@
-{
-  "id": "impl_python_py_lists_unique",
-  "type": "implement",
-  "language": "python",
-  "package": "py_lists",
-  "function": "unique",
-  "prompt": "Implement the function `unique` in this python package so that the existing tests pass. Signature: `unique(xs) -> list)`. Behavior: distinct elements in first-occurrence order.\n\nUse the file-editing tools, then run the tests to confirm. Stop when the tests pass.",
-  "verify_cmd": "python3 test_*.py"
-}

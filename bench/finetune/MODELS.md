@@ -4,9 +4,9 @@ Model registry and training history. All models trained via Together AI with QLo
 
 ## Model Registry
 
-### Production Models (8 languages)
+### Production Models
 
-All published on HuggingFace:
+**Nebula→target translators** (used by the MCP `write_code` and `translate_code` tools):
 
 | Model | Base | Data | HuggingFace |
 |---|---|---|---|
@@ -14,7 +14,19 @@ All published on HuggingFace:
 | `nebula-8lang-7b` | Qwen-2.5-7B | [68K pairs](https://huggingface.co/datasets/electrocampbell/nebula-8lang-68k) | [electrocampbell/nebula-8lang-7b](https://huggingface.co/electrocampbell/nebula-8lang-7b) |
 | `nebula-8lang-14b` | Qwen-2.5-14B | [203K pairs (30K/lang, +multi-func)](https://huggingface.co/datasets/electrocampbell/nebula-8lang-203k) | [electrocampbell/nebula-8lang-14b](https://huggingface.co/electrocampbell/nebula-8lang-14b) |
 
-*14B raw score limited by CPU/GPU split on 3090 (24GB). Needs 48GB+ GPU for full performance.
+*14B raw score limited by CPU/GPU split on 3090 (24GB). Needs 48GB+ GPU for full performance.*
+
+**Agent model** (host coding agent that drives the Nebula MCP — calls `read_code`, `patch_code`, etc., and lets the translator above handle the final code generation):
+
+| Model | Base | Data | HuggingFace |
+|---|---|---|---|
+| `nebula-host-30b` | Qwen3-Coder-30B-A3B-Instruct | [138 distilled agent traces](https://huggingface.co/datasets/electrocampbell/nebula-host-30b-traces) (Qwen3-Coder-480B teacher through the Nebula MCP; 47 refactor traces use a `replace_all=true`-mandatory prompt variant) | [electrocampbell/nebula-host-30b-gguf](https://huggingface.co/electrocampbell/nebula-host-30b-gguf) |
+
+`nebula-host-30b` is a LoRA fine-tune (r=16, attention-only) trained on 138 agent traces where **Qwen3-Coder-480B-A35B-Instruct** drove the Nebula MCP on implement/refactor/bugfix/explain tasks. Teacher chosen for license compatibility (Apache 2.0 permits distillation) and same-family tokenizer/tool-call/architecture match with the 30B-A3B student.
+
+The current checkpoint is **Phase 12** — 47 of the 138 training traces are refactor tasks re-distilled with a system prompt that makes `patch_code(replace_all=true)` mandatory for rename tasks. This fixed a brute-force refactor failure mode in the original Phase 11 checkpoint (Round 9: 55 individual patches and 176 s wall clock for the 10-file `KVCache → SnapCache` rename). Phase 12 runs the same task in 14 `patch_code(replace_all=true)` calls and 69 s wall clock — 61% faster, 72% fewer output tokens, still 12/12 tests passing. Implement behavior is unchanged (91 of 138 traces are the Phase 11 implement/bugfix/explain/cross-lang traces verbatim). It runs on a single RTX 3090 at Q4_K_M (18 GB) via Ollama and is designed to replace `claude -p` for agentic coding sessions with no API cost.
+
+Paired with `bench/finetune/host_agent_runner.py` (the Python agent loop with runtime nudges) it passes both the round-9 implement test (19 turns, 12/12 tests) and the round-9 refactor test (57 turns, 12/12 tests), where stock Qwen3-Coder regresses on refactor without the runner nudges. See `bench/finetune/qwen3_coder_30b/USAGE.md` for end-to-end setup.
 
 ### Earlier Models (6 languages, superseded)
 

@@ -17,11 +17,19 @@ __pycache__/
 *.env
 
 # Model weights and training data (published to HuggingFace)
-# - Models:   electrocampbell/nebula-8lang-{1.5b,7b,14b}
+# - Models:   electrocampbell/nebula-8lang-{1.5b,7b,14b}, electrocampbell/nebula-host-30b-gguf
 # - Datasets: electrocampbell/nebula-8lang-{68k,203k}
 bench/finetune/data/
 bench/finetune/models/
 bench/finetune/*.jsonl
+
+# Distillation/training corpus and Together job metadata (regenerated from
+# generate_tasks.py + the training briefs; not source code). The training
+# corpus is published at https://huggingface.co/datasets/electrocampbell/nebula-host-30b-traces
+# and the task directories are deterministically recreated by generate_tasks.py.
+bench/finetune/qwen3_coder_30b/data/
+bench/finetune/qwen3_coder_30b/tasks/
+bench/finetune/qwen3_coder_30b/phase*_job.json
 
 # Large archives and binaries
 *.tar.gz

@@ -1,9 +1,0 @@
-{
-  "id": "impl_python_py_lists_chunk",
-  "type": "implement",
-  "language": "python",
-  "package": "py_lists",
-  "function": "chunk",
-  "prompt": "Implement the function `chunk` in this python package so that the existing tests pass. Signature: `chunk(xs, size) -> list)`. Behavior: split into sublists of length size; empty if size <= 0.\n\nUse the file-editing tools, then run the tests to confirm. Stop when the tests pass.",
-  "verify_cmd": "python3 test_*.py"
-}

@@ -1,9 +1,0 @@
-{
-  "id": "impl_go_strings_basic_countvowels",
-  "type": "implement",
-  "language": "go",
-  "package": "strings_basic",
-  "function": "CountVowels",
-  "prompt": "Implement the function `CountVowels` in this go package so that the existing tests pass. Signature: `CountVowels(s string) int)`. Behavior: count vowels (a/e/i/o/u, case-insensitive).\n\nUse the file-editing tools, then run the tests to confirm. Stop when the tests pass.",
-  "verify_cmd": "go test ./..."
-}

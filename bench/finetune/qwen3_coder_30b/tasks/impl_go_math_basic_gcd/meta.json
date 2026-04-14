@@ -1,9 +1,0 @@
-{
-  "id": "impl_go_math_basic_gcd",
-  "type": "implement",
-  "language": "go",
-  "package": "math_basic",
-  "function": "Gcd",
-  "prompt": "Implement the function `Gcd` in this go package so that the existing tests pass. Signature: `Gcd(a, b int) int)`. Behavior: GCD via Euclid's algorithm; treat both inputs as absolute values.\n\nUse the file-editing tools, then run the tests to confirm. Stop when the tests pass.",
-  "verify_cmd": "go test ./..."
-}

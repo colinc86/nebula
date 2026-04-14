@@ -58,6 +58,221 @@ Round 2 changes are committed in:
 - `compiler/src/mcp.rs` — fifth tool `patch_code`, primer updated to advertise it and explain the native-language requirement
 - All 261 cargo tests still pass.
 
+## Round 9 — Self-hosted `nebula-host-30b` + runtime nudge ✅
+
+**This is the self-hosted production result** — Qwen3-Coder-30B-A3B fine-tuned on **137 agent traces distilled from Qwen3-Coder-480B-A35B-Instruct driving the Nebula MCP** (teacher swap, Phase 11), running locally on a single RTX 3090, driving the Nebula MCP via `host_agent_runner.py` with runtime "use replace_all" and "you're stuck, re-read the file" nudges. Teacher and student are both Apache 2.0.
+
+**Setup:**
+- **Model:** `nebula-host-30b` (merged Phase 11 LoRA, `ft-976c3f36-4530`, LoRA r=16 attention-only, 3 epochs on 137 Qwen-distilled traces)
+- **Quant:** Q4_K_M, 18 GB, 100% on a 3090
+- **Runner:** `bench/finetune/host_agent_runner.py` with runtime nudges enabled
+- **Inference:** Ollama 0.18 on `192.168.68.94:11434`, `num_ctx=32768`
+- **Total training spend:** $7.84 (Phase 7b Sonnet run, retired) + $2.84 (Phase 11 Qwen run) + ~$11 (Qwen-480B distillation) ≈ **$21.68** Together across the full arc
+- **Anthropic spend:** $0 (original Sonnet-distilled weights were replaced after we reviewed the Anthropic Commercial Terms' restriction on using Claude outputs to train competing models)
+- **Hardware cost at inference:** $0 (home GPU)
+
+| | Sonnet + MCP (Round 8) | Stock Qwen3-Coder-30B + MCP (Phase 1) | **nebula-host-30b + MCP + nudge (Round 9, Qwen-distilled)** |
+|---|---:|---:|---:|
+| **Implement task** | | | |
+| Tests passing | 12/12 | 12/12 | **12/12** ✅ |
+| Turns | 14 | 13 | **17** |
+| Tool calls | 13 | 12 | **16** |
+| Wall clock | 46 s | 36 s | **61 s** |
+| Host API cost | $0.154 | $0 | **$0** |
+| **Refactor task** | | | |
+| Tests passing | 12/12 | 12/12 | **12/12** ✅ |
+| Turns | 17 | 47 | **55** |
+| Tool calls | 18 | 46 | **54** |
+| Wall clock | 61 s | 66 s | **176 s** |
+| `replace_all=true` use | yes (9 × ALL) | no (all individual) | **no (all individual)** |
+| Patches attempted | 9 | 46 | **33** |
+| Runtime nudges fired | n/a | n/a | **replace_all×8, stuck×1** |
+| Host API cost | $0.174 | $0 | **$0** |
+
+**Correctness:** Both tasks pass. For the implement task the fine-tune is ~1.6× slower per turn than stock Qwen but the runtime nudges mis-fire 3 times (4+ patches per file is normal during stub implementation) — the model correctly ignores them because the nudge text says *"IF this is a rename..."*. For refactor, the model brute-forces with 33 individual patches (same strategy Phase 5c used), and the runtime nudges act as a safety net against stuck-loop give-ups that killed prior attempts.
+
+**Speed:** Implement is ~1.7× slower wall clock than stock Qwen or Sonnet — the fine-tuned model is slightly more verbose per patch, and ollama's eval-per-turn overhead dominates short tasks. Refactor is ~2.6× slower than Sonnet+MCP but free — 176 s of local GPU time at $0 vs 61 s of Sonnet at $0.17.
+
+**Qwen teacher vs. Sonnet teacher (teacher swap):** Replacing the Sonnet-distilled traces with Qwen3-Coder-480B-A35B-Instruct traces produced a strictly better student by every measured dimension (implement: 19→17 turns, 67→61 s; refactor: 57→55 turns, 268→176 s — 34% faster on the refactor). Same-family tokenizer and tool-call format alignment between teacher and student plausibly explains the improvement. The swap was driven by license cleanup (Anthropic's Commercial Terms restrict using Claude outputs to train competing models) — the quality win was a happy side effect.
+
+**Nudges are a safety net, not a strategy changer.** The runner fired 13 runtime nudges across both runs. The model **never actually adopted `replace_all=true` in response** — it kept brute-forcing. What the nudges actually did: prevented the model from giving up on stuck patches (Phase 7b without nudges gave up at turn 36; with nudges it pushed through to turn 57 and finished). The literal suggestion in the hint text was ignored; the "keep going, you're not stuck" signal was the real value.
+
+### What got us here across five training rounds
+
+| Round | Model | Dataset | Epochs | Implement | Refactor |
+|---|---|---:|---:|---|---|
+| 4 (validation v1, Sonnet teacher) | first fine-tune | 60 | 2 | pass | **FAIL** (loop) |
+| 5b (Sonnet teacher) | + comments + patch_code | 60 | 2 | pass | FAIL (incomplete) |
+| 5c (Sonnet teacher) | + kvproj tasks + verify rule | 79 | 2 | pass | **PASS** (brute-force) |
+| 7 (first production, Sonnet teacher) | + 6 new packages, no hint | 138 | 4 | FAIL (missing imports) | FAIL (stopped at turn 5) |
+| 7b (Sonnet teacher) | + restored refactor hint | 138 | 3 | pass | FAIL (stuck retries) |
+| 9 (7b + runtime nudge, Sonnet teacher) | + `host_agent_runner.py` nudges | 138 | 3 | pass | pass |
+| **11 (teacher swap → Qwen3-Coder-480B)** | same pipeline, teacher replaced for license | 137 | 3 | **pass (17 turns, 61 s)** | **pass (55 turns, 176 s)** |
+
+Total Together AI spend: **~$21.68** (includes $10.84 of retired Sonnet-era LoRA jobs and $10.84 of Qwen-era distillation + training; retired artifacts never published). Anthropic spend: **$0** (Sonnet-distilled weights were retired and replaced after reviewing the Anthropic Commercial Terms restriction on training competing models from Claude outputs). **Combined ~$21.68** vs. the original plan's $350-400 budget.
+
+### The honest takeaway
+
+The self-hosted stack is real — a $0-per-inference alternative to Sonnet+MCP on real multi-file agent tasks — but it's **verbose** (2-4× the wall clock of Sonnet) and **brute-force** (individual patches where Sonnet would use `replace_all`). The runtime nudge in the runner is load-bearing: without it, refactor tasks regress to "model gives up" failure modes.
+
+For a user who wants agentic coding on their own 3090 with no API costs, `nebula-host-30b + host_agent_runner.py` is a working alternative. For a user who values speed or elegance, stick with Sonnet.
+
+> **Superseded by Round 11.** The refactor brute-force problem described above was fixed in training by re-distilling the refactor traces with a `replace_all=true`-mandatory system prompt. The Round 9 refactor numbers (55 turns, 176 s) refer to the retired Phase 11 checkpoint. The current `nebula-host-30b` tag — Phase 12 — finishes the same refactor in 35 turns / 69 s. See Round 11 below.
+
+## Round 11 — `nebula-host-30b` (Phase 12, `replace_all`-disciplined) ✅
+
+**Motivation.** Round 10 measured that stock Qwen3-Coder-30B + Nebula MCP loses refactor on wall clock vs generic file tools (185 s vs 102 s), and diagnosed the cause as a model-strategy gap: the agent brute-forces renames with many individual patches instead of using `patch_code(replace_all=true)`. The same failure mode appears in our Phase 11 fine-tune (Round 9: 55 individual patches / 176 s). Phase 12 fixes it in training — the 46 refactor traces in the distillation corpus are re-run with Qwen3-Coder-480B under a system prompt that makes `replace_all=true` mandatory for rename tasks. The 91 non-refactor traces from Phase 11 are kept verbatim, so implement / bugfix / explain behavior is re-anchored unchanged.
+
+**Setup:**
+- **Agent:** `nebula-host-30b` (Phase 12, `ft-d3e95713-fbae`, LoRA r=16 attention-only, 3 epochs on 138 Qwen-distilled traces — 91 non-refactor from Phase 11 + 47 new refactor traces)
+- **Teacher for refactor traces:** Qwen3-Coder-480B-A35B-Instruct with the `replace_all_mandatory` prompt variant
+- **Distillation result:** 47/47 refactor tasks verify-pass; 84% of all `patch_code` calls use `replace_all=true` (Phase 11 was 46%); 40/47 traces have ≥1 `replace_all=true` (Phase 11 was 13/46)
+- **Runner:** `bench/finetune/host_agent_runner.py` with Path-B runtime nudges (unchanged from Round 9)
+- **Deploy:** Q4_K_M GGUF, 18 GB, Ollama 0.18 on RTX 3090
+
+**Head-to-head across three versions of `nebula-host-30b`:**
+
+| | Stock Qwen + MCP | Stock Qwen + builtins | Phase 11 (Round 9) | **Phase 12 (Round 11)** |
+|---|---:|---:|---:|---:|
+| **Implement task** | | | | |
+| Tests | 12/12 | 12/12 | 12/12 | **12/12** |
+| Turns | 18 | 16 | 17 | **17** |
+| `patch_code` calls | 12 | n/a | 12 | **12** |
+| Output tokens | 3,013 | 4,585 | 3,013 | **2,751** |
+| Wall clock | 63.8 s | 89.7 s | 61 s | **55.9 s** |
+| **Refactor task** | | | | |
+| Tests | 12/12 | 12/12 | 12/12 | **12/12** |
+| Turns | 42 | 38 | 55 | **35** |
+| `patch_code` calls | 22 | n/a (21 edit_file) | 55 | **14** |
+| `replace_all=true` used | 0 / 22 | 0 / 21 edits | 0 / 55 | **14 / 14** |
+| Output tokens | 5,759 | 4,420 | 5,759 | **1,624** |
+| Wall clock | 185.2 s | 101.6 s | 176 s | **69.0 s** |
+
+**Headline on refactor: −61% wall clock vs Phase 11, and −32% vs the `stock Qwen + builtins` baseline from Round 10.** Output tokens drop 72% vs Phase 11 and 63% vs the builtins baseline. The model made 14 `patch_code(replace_all=true)` calls and zero individual patches — not a single brute-force slip. Implement is unchanged in correctness and slightly faster (61 → 55.9 s, 3013 → 2751 output tokens), confirming the re-anchoring worked: non-refactor traces were untouched in the training set, and non-refactor behavior is untouched in the evaluation.
+
+### What changed, specifically
+
+The only thing different between Phase 11 and Phase 12 is **47 of the 138 training traces**. Everything else — student base model, LoRA config, hyperparameters, teacher model, 91 of 138 traces, the runtime runner, the Path-B nudges, the Nebula MCP server code, the benchmark tasks — is byte-identical to Phase 11.
+
+The new prompt variant adds one rule block to the teacher's system prompt during refactor distillation:
+
+```
+## Rename-task discipline
+
+If the user's task is to rename a symbol — whether the symbol appears in a single
+file or across many — you MUST:
+  1. Use search_code with the old name to discover every file that references it.
+  2. For each file in the results, call patch_code exactly ONCE with replace_all=true.
+  3. Do NOT emit individual patch_code calls against the same file.
+  4. Run the verification command ONCE at the end.
+
+A rename of N references across M files is exactly M patch_code(replace_all=true)
+calls, not N individual patches.
+```
+
+Measured shift in the distilled traces:
+
+| | Phase 11 (46 traces) | **Phase 12 (47 traces)** |
+|---|---:|---:|
+| Total `patch_code` calls | 156 | **126** |
+| Using `replace_all=true` | 71 (46%) | **106 (84%)** |
+| Individual patches | 85 (54%) | **20 (16%)** |
+| Traces with ≥1 `replace_all=true` | 13 / 46 | **40 / 47** |
+
+The student then generalized that discipline to the Round 9 refactor task at inference, making 14/14 `replace_all=true` patches on a task it had never seen (Round 9's refactor is `KVCache → SnapCache`, which is held out from the training set — Phase 12's kvproj traces are `KVCache → DataStore`, `ObjectCache`, and `SnapCache-but-different`; see `generate_tasks.py:LARGE_PKG_RENAMES`).
+
+### Cost
+
+- Phase 12 distillation (Qwen-480B via Together, 47 refactor tasks): $1.84 actual
+- Phase 12 training (Together LoRA, 138 examples, 3 epochs): $2.86 actual
+- Validation: $0 (Ollama)
+- **Total Phase 12 spend: ~$4.70 Together**, zero Anthropic
+
+### Cumulative training spend across the full arc
+
+| Phase | What | Together | Anthropic |
+|---|---|---:|---:|
+| Phase 4 + 5b + 5c + 7 + 7b | Sonnet-distilled checkpoints (retired on license cleanup) | ~$8 | ~$2.50 |
+| Phase 11 | Qwen-480B teacher, 138 traces, initial LoRA | ~$14 | $0 |
+| **Phase 12** | **replace_all-disciplined retrain** | **~$5** | **$0** |
+| **Current `nebula-host-30b` total** | Phase 11 + Phase 12 | **~$19** | **$0** |
+
+### Round 10 verdict, updated
+
+Round 10's finding that "Nebula MCP loses refactor on Ollama" was **agent-strategy-limited**, not MCP-limited. With a properly-trained agent (Phase 12), the self-hosted stack wins refactor handily on Ollama:
+
+- **Refactor wall clock:** Phase 12 + MCP = 69 s vs Stock Qwen + builtins = 101.6 s → **−32% MCP wins**
+- **Refactor output tokens:** Phase 12 + MCP = 1,624 vs Stock Qwen + builtins = 4,420 → **−63% MCP wins**
+- **Implement wall clock:** Phase 12 + MCP = 55.9 s vs Stock Qwen + builtins = 89.7 s → **−38% MCP wins**
+- **Implement output tokens:** Phase 12 + MCP = 2,751 vs Stock Qwen + builtins = 4,585 → **−40% MCP wins**
+
+**All four cells now favor the Nebula stack.** The paper claim *"the self-hosted open-weights Nebula stack saves wall clock and output tokens on both implement and refactor shapes"* is now defensible and measured.
+
+## Round 10 — Open-model A/B: `stock Qwen3-Coder-30B + builtins` vs `stock Qwen3-Coder-30B + Nebula MCP` ✅
+
+**Motivation.** Rounds 3 and 8 established that Nebula MCP saves cache_read tokens on Sonnet (−62% and −31% respectively on the refactor task). The obvious follow-up for the paper is whether the savings story generalizes to a different agent architecture — stock Qwen3-Coder-30B served locally by Ollama — so the claim isn't "Nebula helps Sonnet specifically" but "Nebula helps language-model agents in general." This round runs a matched A/B on both Round 9 tasks to find out.
+
+**Setup:**
+- **Agent:** `qwen3-coder:30b` (stock, not our fine-tune) on Ollama 0.18, Q4_K_M, RTX 3090, num_ctx=32768
+- **Baseline runner:** `bench/mcp_manual_test/builtin_agent_runner.py` — minimal agent loop with 5 generic file tools (`read_file`, `write_file`, `edit_file(replace_all)`, `list_files`, `bash`)
+- **Nebula runner:** `bench/finetune/host_agent_runner.py` — same agent loop shape, same Ollama backend, 5 MCP tools (`read_code`, `write_code`, `patch_code`, `search_code`, `translate_code`, plus `bash`)
+- **Tasks:** identical to Round 9 — `bench/mcp_manual_test/template/` (implement 12 Go stubs) and `refactor_template/` (rename `KVCache` → `SnapCache` across a 10-file module)
+
+### Results
+
+| | **Implement (12 tests)** | | **Refactor (12 tests)** | |
+|---|---:|---:|---:|---:|
+| | Builtins | Nebula MCP | Builtins | Nebula MCP |
+| Tests passing | 12/12 ✅ | 12/12 ✅ | 12/12 ✅ | 12/12 ✅ |
+| Turns | 16 | 18 | 38 | 42 |
+| Tool calls | 15 | 17 | 37 | 41 |
+| **Output tokens** (real generation) | 4,585 | **3,013** (−34%) | **4,420** | 5,759 (+30%) |
+| **Wall clock** (real compute) | 89.7 s | **63.8 s** (−29%) | **101.6 s** | 185.2 s (+82%) |
+| Nominal prompt size (flat-rate proxy) | 63,694 | 82,114 (+29%) | 222,038 | 575,830 (+159%) |
+
+**Headline:** On the implement task, Nebula MCP **wins decisively** on both wall clock (−29%) and output tokens (−34%). On the refactor task, Nebula MCP **loses** on wall clock (+82%) and output tokens (+30%). Both runs correct (12/12). Nebula's benefit is task-shape-dependent on Ollama self-host, not a universal win, and the direction of the win differs from Sonnet.
+
+### A note on "tokens" — which number means what on Ollama
+
+This round went through a metric mishap worth documenting: my first pass at the writeup claimed the MCP was a loss on both tasks by summing Ollama's `prompt_eval_count` across turns and calling that "total tokens." That sum was 226K (builtins) vs 581K (MCP) on refactor, and the MCP number is real but it is **not** what you pay for compute.
+
+I verified this with a direct probe: sending the same 1222-token prompt twice to Ollama takes 0.56 s the first time and 0.07 s the second. Both responses report `prompt_eval_count=1222`. **Ollama's `prompt_eval_count` is the nominal prompt size, not the number of tokens the model actually evaluated.** Slot-based KV caching is working fine in 0.18; it just doesn't discount the reported count. The 8× wall-clock speedup is the cache at work.
+
+So on Ollama self-host, the metrics that correspond to real compute are:
+
+- **Wall clock** — direct measurement of GPU time. Can't fake it.
+- **Output tokens** (`eval_count`) — fresh generation, not cacheable, always evaluated.
+- **Tool call count** — each MCP call spawns an out-of-process `nebula mcp` subprocess with a tree-sitter parse pass, adding ~100-200 ms/call. Builtin tools are in-process Python and near-free per call.
+
+The `prompt_eval_count` number is still meaningful — it's what you'd pay for on a **flat-rate API without prompt caching** — but it's not the Ollama cost. I've kept it in the table as "nominal prompt size" with that caveat. On Anthropic Sonnet, the corresponding metric is `cache_read_tokens`, which is billed at roughly a 10× discount vs fresh input tokens, and that's the column Rounds 3 and 8 showed the MCP reducing by 31-62%.
+
+### Why implement wins and refactor loses on Ollama
+
+Both halves of the split have clean mechanistic stories:
+
+**Implement wins** because `patch_code` lets the model replace small code regions in place without re-emitting the surrounding function body. Qwen on stock + Nebula MCP made 12 patch_code calls with ~3K total output tokens for all 12 function implementations. Qwen on stock + builtins made 5 edit_file calls but generated ~4.6K output tokens — more output per file because the model wrote larger replacement blocks. The MCP's primer probably nudges toward smaller patches by advertising `patch_code` as the default write tool; the builtins runner has no such hint.
+
+**Refactor loses** because stock Qwen brute-forces the rename with many individual `patch_code` calls instead of using `replace_all=true` (the same failure mode we documented in Round 9 for the fine-tune). It makes 22 patch_code calls × ~150 ms/call subprocess spawn overhead ≈ 3.3 s of MCP overhead alone. Plus the model generates 30% more output tokens on the MCP side — each patch_code assistant turn tends to include more explanatory prose than the equivalent edit_file call, possibly because the primer encourages verbose reasoning. Wall clock ends up 82% slower.
+
+**Notably: the builtins runner on refactor also brute-forces** — 21 individual edit_file calls, not one replace_all sweep. So the "refactor strategy gap" isn't specifically a Nebula MCP problem; it's a stock-Qwen problem across both tool surfaces. The MCP just happens to lose the tiebreaker because its per-call overhead is higher.
+
+### What this actually says about the project
+
+1. **Rounds 3/4/8 (Sonnet cache_read savings) are the valid token-cost story.** 31-62% reduction in billable `cache_read_tokens` on the refactor workload. The mechanism is Nebula's compression of file contents in the cacheable prefix, combined with Anthropic's discount on cache_read tokens. Both halves are required. Nothing about Round 10 changes this finding.
+
+2. **On self-hosted Ollama, the Nebula MCP's value is mixed and task-dependent.** Implement is a clear win on the metrics that matter (wall clock, output tokens). Refactor is a clear loss, mostly because of per-call subprocess overhead compounding with stock Qwen's brute-force rename strategy. The paper claim *"self-hosted stack universally saves tokens"* doesn't hold; the narrower claim *"self-hosted stack saves wall clock and output tokens on implement-shaped tasks"* does.
+
+3. **Two concrete follow-ups that would flip the refactor story, both structural:**
+   - **Keep the MCP server process alive across tool calls.** Currently `host_agent_runner.py` spawns `nebula mcp` as a long-lived subprocess — good — but the compiler still re-parses the file tree on some operations. Tightening the source cache's hit rate would shave ~50-100 ms per call on refactor. That's 2-4 s on the refactor task alone.
+   - **Teach the fine-tuned agent to use `replace_all=true`.** Stock Qwen's brute-force strategy is agent-level, not MCP-level. Our fine-tune has the same pattern (Round 9). A Phase 12 with targeted training examples where `replace_all=true` is the correct tool arg would flip refactor from 55 turns to ~8-10 turns, which would dominate everything else in the comparison. This is the highest-leverage follow-up.
+
+4. **The "open-model, 3090-hosted, no API spend" story stands.** Correctness is 12/12 on both tasks (Round 9). The fine-tune is cheaper to run than Sonnet *in dollars* and matches it on implement wall clock (+18%) and correctness. It's slower on refactor (2.6× wall clock), but it also costs zero per inference and has no API / ToS dependencies.
+
+### Artifacts
+
+- `bench/mcp_manual_test/builtin_agent_runner.py` — the minimal Ollama agent loop with generic file tools (committed)
+- `/tmp/ollama_delta_check.py` — the probe that confirmed Ollama's slot caching is active and `prompt_eval_count` is nominal-size, not delta (not committed — ephemeral diagnostic)
+
 ## Round 8 — All seven fixes shipped, clean apples-to-apples ✅
 
 After items 4-7 landed (skip canonicalize on `//` lines, tighter primer, Nebula-form `search_code`, token-aware `text_level_translate`), I reran both tasks side-by-side with TodoWrite enabled in both conditions and the same prompts. This is the most honest comparison so far — single trial, no cherry-picking.

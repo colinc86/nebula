@@ -259,10 +259,17 @@ def parse_qwen_xml_tool_calls(content):
 # doesn't favor either model.
 SYSTEM_PROMPT_PREFIX = """You are an autonomous coding agent. You have access to tools for reading, searching, writing, and patching code, plus a bash tool for running test/build commands.
 
+IMPORTANT — about read_code and patch_code:
+- For large files (>100 lines), read_code returns source in Nebula form — a compact canonical IL you can recognize by `fn`, `rt`, `fo`, `def`, `:=`, indent blocks instead of braces, and `Str`/`Int`/`Bool` type names. Small files come back as raw native source.
+- patch_code ALWAYS matches against the native source bytes (Go, Python, etc.), NEVER Nebula. If read_code showed you Nebula for a file, you must mentally translate each `old_str` back to the native syntax before calling patch_code. If you see `fn Foo(s: Str) -> Str:` in the Nebula read, your `old_str` must be the native Go form `func Foo(s string) string {` — with real braces, real types, and real indentation.
+- If patch_code returns `old_str not found`, do NOT retry the same old_str. Re-think: you probably copied from a Nebula read. Use bash `cat` (or run the test to see the raw error) to confirm the native syntax, then try again.
+
 Working principles:
 - Call tools decisively. Don't narrate; just call the tool and look at the result.
-- Prefer patch_code over write_code for any change smaller than a full file rewrite. Use replace_all=true for renames or repetitive substitutions.
+- Prefer patch_code over write_code for any change smaller than a full file rewrite.
+- For ANY rename across multiple files, use exactly one `patch_code` call per affected file with `replace_all=true`. That's almost always 5-15 tool calls total, not 30+. Individual patches without replace_all are only correct when the symbol appears in just one or two places total OR when you need surgical context-specific control.
 - After making changes, run the verify command (go test, pytest, etc.) to confirm. If it fails, fix the bug and re-run.
+- BEFORE responding with your final summary, run the verification command one last time. A green build is the ONLY signal that you're done — if `go build` or the tests still fail, you have more work to do, not a summary to write.
 - When the task is fully complete and the verification passes, respond with a brief plain-text summary and stop calling tools."""
 
 
@@ -319,8 +326,21 @@ def run_agent_loop(ollama, mcp, user_prompt, bash_cwd, max_turns=30, log_fp=None
         "output_tokens": 0,
         "duration_ms": 0,
         "stopped_reason": "incomplete",
+        "nudges_replace_all": 0,
+        "nudges_stuck": 0,
     }
     final_text = ""
+
+    # ── Path-B runtime nudge tracking ──────────────────────────────────────
+    # Per-file counters for individual (non-replace_all) patch_code calls.
+    # When we see ≥3 individual patches to the same file, we append a one-line
+    # hint to the tool result pointing the model at replace_all=true. This is
+    # a pure inference-time fix that doesn't require retraining.
+    individual_patch_counts = {}   # path -> count of successful non-replace_all patch_code
+    stuck_patch_fingerprints = {}  # path -> list of failed old_str prefixes (first 64 chars)
+    NUDGE_INDIVIDUAL_THRESHOLD = 3
+    NUDGE_STUCK_THRESHOLD = 2
+    nudged_files = set()           # don't re-nudge the same file more than once per trigger type
 
     t0 = time.time()
     for turn in range(max_turns):
@@ -392,6 +412,47 @@ def run_agent_loop(ollama, mcp, user_prompt, bash_cwd, max_turns=30, log_fp=None
                     raw_name = raw_name[len("mcp__nebula__"):]
                 ok, result_text = mcp.call_tool(raw_name, args)
 
+            # ── Path-B nudge injection ────────────────────────────────────
+            # Look at the result AFTER dispatch. If the model is making many
+            # individual patch_code calls to the same file, or retrying the
+            # same failed old_str on one file, append a one-line hint.
+            nudge_text = None
+            if "patch_code" in name.lower():
+                path = args.get("path", "")
+                fname = path.split("/")[-1] if path else "?"
+                replace_all_flag = bool(args.get("replace_all"))
+                if ok and not replace_all_flag and path:
+                    individual_patch_counts[path] = individual_patch_counts.get(path, 0) + 1
+                    if (individual_patch_counts[path] >= NUDGE_INDIVIDUAL_THRESHOLD
+                            and (path, "individual") not in nudged_files):
+                        nudge_text = (
+                            f"\n\n[runner hint] You've now made "
+                            f"{individual_patch_counts[path]} individual patch_code calls "
+                            f"to {fname}. If this is a rename or repetitive substitution, "
+                            f"a single patch_code with replace_all=true (one call per file) "
+                            f"is almost always the right strategy. Consider switching."
+                        )
+                        nudged_files.add((path, "individual"))
+                        metrics["nudges_replace_all"] += 1
+                if (not ok) and path and "not found" in result_text.lower():
+                    # Stuck-loop detection: same old_str prefix seen twice failing.
+                    old_prefix = (args.get("old_str", "") or "")[:64]
+                    prior = stuck_patch_fingerprints.setdefault(path, [])
+                    prior.append(old_prefix)
+                    if (prior.count(old_prefix) >= NUDGE_STUCK_THRESHOLD
+                            and (path, "stuck") not in nudged_files):
+                        nudge_text = (
+                            f"\n\n[runner hint] You've retried the same patch_code on "
+                            f"{fname} and keep getting old_str not found. The file on disk "
+                            f"is in NATIVE language (Go/Python). If read_code showed Nebula, "
+                            f"you must translate `fn name(x: Str) -> Str:` to the native form "
+                            f"like `func name(x string) string {{` before using it as old_str. "
+                            f"Alternatively, use bash cat or re-read the file to see the exact "
+                            f"bytes, then retry with the correct native syntax."
+                        )
+                        nudged_files.add((path, "stuck"))
+                        metrics["nudges_stuck"] += 1
+
             log_event(log_fp, {
                 "type": "tool_result",
                 "turn": turn + 1,
@@ -399,13 +460,14 @@ def run_agent_loop(ollama, mcp, user_prompt, bash_cwd, max_turns=30, log_fp=None
                 "args": args,
                 "ok": ok,
                 "result": result_text[:8000],
+                "nudge": nudge_text,
             })
 
             messages.append({
                 "role": "tool",
                 "tool_call_id": tc.get("id", f"call_{turn}_{name}"),
                 "name": name,
-                "content": result_text,
+                "content": result_text + (nudge_text or ""),
             })
     else:
         metrics["stopped_reason"] = "max_turns"
@@ -442,8 +504,11 @@ def log_event(fp, obj):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--model", required=True, help="Ollama model tag (e.g. qwen3-coder:30b)")
-    p.add_argument("--ollama-url", default="http://192.168.68.94:11434")
+    p.add_argument("--model", required=True, help="Model tag. For ollama backend: 'qwen3-coder:30b' etc. For openai backend: the Together model_output_name or any model served at --openai-base-url")
+    p.add_argument("--backend", choices=["ollama", "openai"], default="ollama", help="Which API shape to talk: ollama /api/chat or OpenAI /v1/chat/completions")
+    p.add_argument("--ollama-url", default="http://192.168.68.94:11434", help="Base URL for ollama backend")
+    p.add_argument("--openai-base-url", default="https://api.together.xyz", help="Base URL for openai backend (Together AI by default)")
+    p.add_argument("--openai-api-key", default=None, help="API key for openai backend; falls back to TOGETHER_API_KEY from .env/openai.env if not set")
     p.add_argument("--mcp-command", required=True, help="Path to the nebula MCP binary (the runner adds the 'mcp' subcommand automatically)")
     p.add_argument("--task-dir", required=True, help="Working directory for bash commands and the MCP server")
     p.add_argument("--prompt-file", help="File containing the user prompt")
@@ -475,19 +540,37 @@ def main():
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     print(f"=== Host agent runner ===", flush=True)
+    print(f"  backend:      {args.backend}", flush=True)
     print(f"  model:        {args.model}", flush=True)
-    print(f"  ollama_url:   {args.ollama_url}", flush=True)
+    if args.backend == "ollama":
+        print(f"  ollama_url:   {args.ollama_url}", flush=True)
+    else:
+        print(f"  openai_url:   {args.openai_base_url}", flush=True)
     print(f"  task_dir:     {args.task_dir}", flush=True)
     print(f"  mcp:          {' '.join(cmd)}", flush=True)
     print(f"  output:       {out_path}", flush=True)
     print(f"  max_turns:    {args.max_turns}", flush=True)
-    print(f"  num_ctx:      {args.num_ctx}", flush=True)
     print(flush=True)
 
     mcp = MCPClient(cmd, env=mcp_env)
     mcp.start(cwd=args.task_dir)
 
-    ollama = OllamaClient(args.ollama_url, args.model, num_ctx=args.num_ctx, temperature=args.temperature)
+    if args.backend == "ollama":
+        ollama = OllamaClient(args.ollama_url, args.model, num_ctx=args.num_ctx, temperature=args.temperature)
+    else:
+        api_key = args.openai_api_key
+        if not api_key:
+            for env_file in (Path(".env"), Path("openai.env")):
+                if env_file.exists():
+                    for line in env_file.read_text().splitlines():
+                        if line.startswith("TOGETHER_API_KEY="):
+                            api_key = line.split("=", 1)[1].strip().strip('"').strip("'")
+                            break
+                if api_key:
+                    break
+        if not api_key:
+            sys.exit("--backend openai requires --openai-api-key or TOGETHER_API_KEY in env/.env")
+        ollama = OpenAIClient(args.openai_base_url, args.model, api_key=api_key, temperature=args.temperature)
 
     log_fp = open(out_path, "w")
     log_event(log_fp, {"type": "config", "model": args.model, "task_dir": args.task_dir, "max_turns": args.max_turns})
@@ -519,6 +602,8 @@ def main():
         "output_tokens": metrics["output_tokens"],
         "total_tokens": metrics["input_tokens"] + metrics["output_tokens"],
         "duration_ms": metrics["duration_ms"],
+        "nudges_replace_all": metrics.get("nudges_replace_all", 0),
+        "nudges_stuck": metrics.get("nudges_stuck", 0),
         "final_text": final_text[:1000],
         "verify": verify_result,
     }
@@ -533,6 +618,8 @@ def main():
     print(f"  input_tokens:   {summary['input_tokens']}", flush=True)
     print(f"  output_tokens:  {summary['output_tokens']}", flush=True)
     print(f"  duration:       {summary['duration_ms']/1000:.1f}s", flush=True)
+    if summary.get('nudges_replace_all') or summary.get('nudges_stuck'):
+        print(f"  nudges:         replace_all={summary['nudges_replace_all']}  stuck={summary['nudges_stuck']}", flush=True)
     if verify_result:
         print(f"  verify:         {'PASS' if verify_result['ok'] else 'FAIL'} ({verify_result['command']})", flush=True)
         print(f"  verify_tail:    {verify_result['output'][-300:]}", flush=True)

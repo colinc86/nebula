@@ -1,9 +1,0 @@
-{
-  "id": "impl_python_py_strings_count_vowels",
-  "type": "implement",
-  "language": "python",
-  "package": "py_strings",
-  "function": "count_vowels",
-  "prompt": "Implement the function `count_vowels` in this python package so that the existing tests pass. Signature: `count_vowels(s: str) -> int)`. Behavior: count vowels (a/e/i/o/u, case-insensitive).\n\nUse the file-editing tools, then run the tests to confirm. Stop when the tests pass.",
-  "verify_cmd": "python3 test_*.py"
-}
