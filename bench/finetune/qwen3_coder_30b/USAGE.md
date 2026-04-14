@@ -1,5 +1,14 @@
 # Using `nebula-host-30b` — self-hosted Nebula MCP agent
 
+> **Two configs, pick the right one for your workflow.** The Nebula MCP stack can run in either of two mutually-exclusive configurations on a single 24 GB GPU — they can't share VRAM.
+>
+> | Config | Host agent | Translator backend | When to use |
+> |---|---|---|---|
+> | **Production coding** | Sonnet / Opus (remote, via Claude Code) | `nebula-8lang-14b-q4` (local, ~9 GB Q4_K_M) | Day-to-day coding. Frontier agent, best translator, MCP tools compress cacheable prefix on Anthropic's API. |
+> | **Self-hosted research** | `nebula-host-30b` (local, 18 GB Q4_K_M) | `nebula-8lang-7b` (local, ~5 GB Q4_K_M) | Fully offline / zero API cost runs. Agent quality ≈ Sonnet on implement/refactor tasks per Round 11. |
+>
+> This document is the setup for the **research config** — self-hosted host agent. For the production config, just run Claude Code with the Nebula MCP configured at user scope (`claude mcp add -s user nebula -- /absolute/path/to/nebula mcp`) and have `nebula-8lang-14b-q4` loaded in Ollama; no host agent setup needed.
+
 This is the end-to-end setup for running the fine-tuned `nebula-host-30b` model as your host coding agent, driving the Nebula MCP server, with no API dependencies. Everything runs on a single RTX 3090 (or equivalent 24 GB GPU).
 
 `nebula-host-30b` is a LoRA fine-tune of Qwen3-Coder-30B-A3B-Instruct (Apache 2.0), trained on 138 agent traces distilled from Qwen3-Coder-480B-A35B-Instruct (also Apache 2.0) driving the Nebula MCP. Teacher and student share a tokenizer, tool-call format, and architecture family, which keeps the distilled patterns native to the student at inference time. The refactor traces in the training set (47 of 138) use a system prompt that makes `patch_code(replace_all=true)` the mandatory pattern for rename tasks, so the fine-tune reliably uses whole-file replace sweeps instead of brute-forcing with many individual patches.

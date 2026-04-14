@@ -21,7 +21,7 @@ use crate::neural;
 /// AND the model's verification instinct (Bash cat to confirm raw bytes before
 /// patching) wipes out any read-side win. 100 covers most "normal" source files;
 /// large files where compression actually pays go through the Nebula path.
-const SMALL_FILE_THRESHOLD: usize = 100;
+const SMALL_FILE_THRESHOLD: usize = 40;
 
 /// Number of leading raw-source lines to prepend as a "native preview" header
 /// when serving compressed Nebula. Lets the host model anchor on the literal
@@ -87,7 +87,13 @@ syntax — that preview is enough to anchor your edits, no need to Bash-cat the 
 Workflow: read_code to view, patch_code to edit, write_code only for new files \
 or full rewrites. patch_code is byte-level on the raw source bytes, so old_str / \
 new_str must be in the file's NATIVE language (Go, Python, etc.) — NOT Nebula. \
-Use replace_all=true for renames and other repetitive substitutions.\n\
+Use replace_all=true for repetitive substitutions within one file.\n\
+\n\
+For package-wide renames across many files, use patch_code BULK mode in a \
+SINGLE call: pass `path` as the directory and `glob` like '*.go'. It walks \
+the directory and applies the replacement to every matching file — one tool \
+call, not one per file. Prefer this over `bash sed -i` loops: same semantics, \
+lower tool-call overhead, and you get a structured per-file report back.\n\
 \n\
 Nebula syntax: `fn name(a: Int) -> Int:` indent body / `rt x` / `fo i in 0..n:` / \
 `x := 5` immutable, `x = 5` mutable / `\"hi {name}\"` interpolation / `|x| x+1` \
@@ -215,17 +221,17 @@ fn handle_request(request: &Value) -> Option<Value> {
                     },
                     {
                         "name": "patch_code",
-                        "description": "Edit a file by replacing a snippet. Send `old_str` and `new_str` in the file's NATIVE LANGUAGE (not Nebula) — this is a byte-level replace, not a round-trip. Use this instead of write_code for any change smaller than the whole file. Token cost is just the diff, not the whole file. By default `old_str` must appear exactly once; pass `replace_all=true` to replace every occurrence.",
+                        "description": "Edit source by replacing a snippet. Send `old_str` and `new_str` in the file's NATIVE LANGUAGE (not Nebula) — byte-level replace, not a round-trip. Single-file mode: pass `path` to a file; `old_str` must appear once unless `replace_all=true`. Bulk mode (multi-file rename in ONE call): pass `path` to a directory plus `glob` (e.g. '*.go'); applies the replacement to every matching file that contains `old_str`, implicitly replace_all. Bulk mode is the right tool for package-wide renames — one call instead of N.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
                                 "path": {
                                     "type": "string",
-                                    "description": "Absolute path to the file to edit"
+                                    "description": "Absolute path. File path in single-file mode, directory path in bulk mode (when `glob` is set)."
                                 },
                                 "old_str": {
                                     "type": "string",
-                                    "description": "Existing snippet to replace, in the file's native language (Go, Python, etc.). Must match the source byte-for-byte including indentation."
+                                    "description": "Existing snippet to replace, in the file's native language (Go, Python, etc.). Must match source byte-for-byte including indentation."
                                 },
                                 "new_str": {
                                     "type": "string",
@@ -233,7 +239,11 @@ fn handle_request(request: &Value) -> Option<Value> {
                                 },
                                 "replace_all": {
                                     "type": "boolean",
-                                    "description": "If true, replace every occurrence; if false (default), require exactly one match"
+                                    "description": "Single-file mode only: if true, replace every occurrence; if false (default), require exactly one match. Ignored in bulk mode (always true)."
+                                },
+                                "glob": {
+                                    "type": "string",
+                                    "description": "Bulk mode: file pattern like '*.go' or '*.py'. When set, `path` must be a directory; the patch is applied to every matching file that contains `old_str`. One call covers the whole package."
                                 }
                             },
                             "required": ["path", "old_str", "new_str"]
@@ -399,9 +409,14 @@ fn tool_patch_code(args: &Value) -> Result<String, String> {
     let replace_all = args.get("replace_all")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    let glob = args.get("glob").and_then(|v| v.as_str());
 
     if old_str.is_empty() {
         return Err("old_str must not be empty".to_string());
+    }
+
+    if let Some(glob_pattern) = glob {
+        return tool_patch_code_bulk(path, glob_pattern, old_str, new_str);
     }
 
     let (source, _nebula) = read_source_cached(path)?;
@@ -440,6 +455,96 @@ fn tool_patch_code(args: &Value) -> Result<String, String> {
         if occurrences == 1 { "occurrence" } else { "occurrences" },
         output.len()
     ))
+}
+
+/// Bulk mode: walk `dir_path`, apply the replacement to every file matching
+/// `glob_pattern` that contains `old_str`. Implicit replace_all. Returns a
+/// per-file summary plus totals. One tool call covers the whole rename.
+fn tool_patch_code_bulk(
+    dir_path: &str,
+    glob_pattern: &str,
+    old_str: &str,
+    new_str: &str,
+) -> Result<String, String> {
+    let dir = Path::new(dir_path);
+    if !dir.is_dir() {
+        return Err(format!(
+            "patch_code (bulk mode): path '{}' is not a directory. When `glob` is set, `path` must be a directory to walk.",
+            dir_path
+        ));
+    }
+
+    let mut changed: Vec<(String, usize)> = Vec::new();
+    let mut skipped_binary: usize = 0;
+    let mut scanned: usize = 0;
+    let mut write_errors: Vec<(String, String)> = Vec::new();
+
+    walk_dir(dir, &mut |file_path| {
+        let file_name = match file_path.file_name() {
+            Some(n) => n.to_string_lossy().into_owned(),
+            None => return,
+        };
+        if !glob_match(glob_pattern, &file_name) {
+            return;
+        }
+        scanned += 1;
+
+        let source = match fs::read_to_string(file_path) {
+            Ok(s) => s,
+            Err(_) => {
+                skipped_binary += 1;
+                return;
+            }
+        };
+        if source.bytes().take(512).any(|b| b == 0) {
+            skipped_binary += 1;
+            return;
+        }
+
+        let occurrences = source.matches(old_str).count();
+        if occurrences == 0 {
+            return;
+        }
+
+        let output = source.replace(old_str, new_str);
+        let path_str = file_path.to_string_lossy().into_owned();
+        match fs::write(file_path, &output) {
+            Ok(()) => {
+                invalidate_cache(&path_str);
+                changed.push((path_str, occurrences));
+            }
+            Err(e) => {
+                write_errors.push((path_str, e.to_string()));
+            }
+        }
+    });
+
+    if changed.is_empty() && write_errors.is_empty() {
+        return Err(format!(
+            "patch_code (bulk mode): no files under '{}' matching '{}' contained old_str. Scanned {} file(s). Note: patch_code expects native-language source (Go, Python, etc.), not Nebula.",
+            dir_path, glob_pattern, scanned
+        ));
+    }
+
+    let mut report = String::new();
+    let total_occurrences: usize = changed.iter().map(|(_, n)| n).sum();
+    report.push_str(&format!(
+        "Bulk patch: {} file(s) modified, {} total replacement(s) under '{}' matching '{}'.\n",
+        changed.len(), total_occurrences, dir_path, glob_pattern
+    ));
+    if skipped_binary > 0 {
+        report.push_str(&format!("Skipped {} binary/unreadable file(s).\n", skipped_binary));
+    }
+    for (p, n) in &changed {
+        report.push_str(&format!("  {} ({} replaced)\n", p, n));
+    }
+    if !write_errors.is_empty() {
+        report.push_str(&format!("WRITE ERRORS ({}):\n", write_errors.len()));
+        for (p, e) in &write_errors {
+            report.push_str(&format!("  {}: {}\n", p, e));
+        }
+    }
+    Ok(report.trim_end().to_string())
 }
 
 fn tool_search_code(args: &Value) -> Result<String, String> {

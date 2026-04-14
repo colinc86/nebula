@@ -12,9 +12,9 @@ Model registry and training history. All models trained via Together AI with QLo
 |---|---|---|---|
 | `nebula-8lang-1.5b` | Qwen-2.5-1.5B | [68K pairs](https://huggingface.co/datasets/electrocampbell/nebula-8lang-68k) | [electrocampbell/nebula-8lang-1.5b](https://huggingface.co/electrocampbell/nebula-8lang-1.5b) |
 | `nebula-8lang-7b` | Qwen-2.5-7B | [68K pairs](https://huggingface.co/datasets/electrocampbell/nebula-8lang-68k) | [electrocampbell/nebula-8lang-7b](https://huggingface.co/electrocampbell/nebula-8lang-7b) |
-| `nebula-8lang-14b` | Qwen-2.5-14B | [203K pairs (30K/lang, +multi-func)](https://huggingface.co/datasets/electrocampbell/nebula-8lang-203k) | [electrocampbell/nebula-8lang-14b](https://huggingface.co/electrocampbell/nebula-8lang-14b) |
+| `nebula-8lang-14b` | Qwen-2.5-14B | [203K pairs (30K/lang, +multi-func)](https://huggingface.co/datasets/electrocampbell/nebula-8lang-203k) | [electrocampbell/nebula-8lang-14b](https://huggingface.co/electrocampbell/nebula-8lang-14b) (BF16 safetensors) · [electrocampbell/nebula-8lang-14b-gguf](https://huggingface.co/electrocampbell/nebula-8lang-14b-gguf) (Q4_K_M, production default) |
 
-*14B raw score limited by CPU/GPU split on 3090 (24GB). Needs 48GB+ GPU for full performance.*
+**`nebula-8lang-14b-q4` is the MCP `translate_code` / `write_code` default.** The BF16 safetensors release is 29 GB and CPU-spills on a 24 GB GPU; the Q4_K_M build is ~8.4 GB, fits in ~15 GB VRAM alongside Ollama's KV cache at 4K context, and produces semantically equivalent translations to the full-precision checkpoint. Verified against gdsp's `convolution.go` — the Q4 model preserves the 2× multiplier, function decomposition (`conv` + `conv_c`), correct slice bounds, and helper calls like `v_mul_ec` that the 7B translator collapses. The earlier "14B needs 48 GB+ GPU for full performance" guidance referred to BF16 *HumanEval evaluation* — not Q4_K_M inference, which runs cleanly on a 3090 when host-30b isn't co-located.
 
 **Agent model** (host coding agent that drives the Nebula MCP — calls `read_code`, `patch_code`, etc., and lets the translator above handle the final code generation):
 

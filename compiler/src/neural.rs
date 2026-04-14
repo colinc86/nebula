@@ -7,7 +7,7 @@
 use serde_json::{json, Value};
 
 const FALLBACK_OLLAMA_URL: &str = "http://localhost:11434";
-const FALLBACK_MODEL: &str = "nebula-8lang-7b";
+const FALLBACK_MODEL: &str = "nebula-8lang-14b-q4";
 
 fn ollama_url() -> String {
     std::env::var("NEBULA_OLLAMA_URL").unwrap_or_else(|_| FALLBACK_OLLAMA_URL.to_string())
