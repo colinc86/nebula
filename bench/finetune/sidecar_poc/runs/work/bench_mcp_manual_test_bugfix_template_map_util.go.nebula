@@ -1,0 +1,22 @@
+def keys_renamed(m: Map) -> List:
+  out = make("[]string, 0, len(m)")
+  for k in m:
+    out.append(k)
+  return out
+def values(m: Map) -> List:
+  out = make("[]int, 0, len(m)")
+  for v in m:
+    out.append(v)
+  return out
+def merge(a: Map, b: Map) -> Map:
+  out = make("map[string]int")
+  for k, v in b:
+    out[k] = v
+  for k, v in a:
+    out[k] = v
+  return out
+def invert(m: Map) -> Map:
+  out = make("map[int]string, len(m)")
+  for k, v in m:
+    out[v] = k
+  return out

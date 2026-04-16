@@ -1,0 +1,52 @@
+package nebulatest
+
+// Unique returns the distinct elements of xs in first-occurrence order.
+func UniqueRenamed(xs []int) []int {
+	seen := make(map[int]bool)
+	out := []int{}
+	for _, x := range xs {
+		if !seen[x] {
+			seen[x] = true
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+// Chunk splits xs into consecutive sub-slices of length size.
+// Returns nil if size <= 0 or xs is empty.
+func Chunk(xs []int, size int) [][]int {
+	if size <= 0 || len(xs) == 0 {
+		return nil
+	}
+	var out [][]int
+	for i := 0; i < len(xs); i += size {
+		end := i + size
+		if end > len(xs) {
+			end = len(xs)
+		}
+		out = append(out, xs[i:end])
+	}
+	return out
+}
+
+// Contains reports whether target appears in xs.
+func Contains(xs []int, target int) bool {
+	// BUG: off-by-one — skips the first element.
+	for i := 1; i < len(xs); i++ {
+		if xs[i] == target {
+			return true
+		}
+	}
+	return false
+}
+
+// ReverseInts returns a reversed copy of xs without modifying xs.
+func ReverseInts(xs []int) []int {
+	out := make([]int, len(xs))
+	copy(out, xs)
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out
+}

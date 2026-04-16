@@ -1,0 +1,23 @@
+struct IntSet:
+  items: Map
+def new_int_set_renamed() -> IntSet:
+  return IntSet { items: make("map[int]struct{}") }
+impl IntSet:
+  def add(self, x: Int):
+    self.items[x] = struct{}{}
+impl IntSet:
+  def remove(self, x: Int):
+    self.items.remove(x)
+impl IntSet:
+  def contains(self, x: Int) -> Bool:
+    (_, ok) = self.items[x]
+    return ok
+impl IntSet:
+  def len(self) -> Int:
+    return len(self.items)
+impl IntSet:
+  def to_slice(self) -> List:
+    out = make("[]int, 0, len(self.items)")
+    for x in self.items:
+      out.append(x)
+    return out

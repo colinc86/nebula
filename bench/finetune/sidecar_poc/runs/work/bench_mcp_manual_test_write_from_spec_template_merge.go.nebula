@@ -1,0 +1,2 @@
+def merge_intervals_renamed(intervals: List) -> List:
+  return None

@@ -1,3 +1,5 @@
+[← Back to README](../README.md)
+
 # Nebula Language Specification v1.0
 
 ## Relation to Prior Work

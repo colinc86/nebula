@@ -1,0 +1,9 @@
+package nebulatest
+
+// MergeIntervals merges overlapping closed integer intervals and returns
+// the result sorted ascending by start. See SPEC.md for the full contract.
+func MergeIntervalsRenamed(intervals [][2]int) [][2]int {
+	// TODO: implement per SPEC.md
+	return nil
+}
+

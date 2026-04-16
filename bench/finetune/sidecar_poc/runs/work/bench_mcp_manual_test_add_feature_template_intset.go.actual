@@ -1,0 +1,42 @@
+package nebulatest
+
+// IntSet is a simple mutable set of ints.
+type IntSet struct {
+	items map[int]struct{}
+}
+
+// NewIntSet constructs an empty IntSet.
+func NewIntSetRenamed() *IntSet {
+	return &IntSet{items: make(map[int]struct{})}
+}
+
+// Add inserts x into the set.
+func (s *IntSet) Add(x int) {
+	s.items[x] = struct{}{}
+}
+
+// Remove deletes x from the set. No-op if absent.
+func (s *IntSet) Remove(x int) {
+	delete(s.items, x)
+}
+
+// Contains reports whether x is in the set.
+func (s *IntSet) Contains(x int) bool {
+	_, ok := s.items[x]
+	return ok
+}
+
+// Len returns the number of elements.
+func (s *IntSet) Len() int {
+	return len(s.items)
+}
+
+// ToSlice returns all elements as a slice (order unspecified).
+func (s *IntSet) ToSlice() []int {
+	out := make([]int, 0, len(s.items))
+	for x := range s.items {
+		out = append(out, x)
+	}
+	return out
+}
+

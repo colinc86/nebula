@@ -1,381 +1,223 @@
-# Nebula: Lingua Franca
+# Nebula
 
-**A universal and human-readable code intermediate language for token-efficient LLM code generation.**
+**An MCP server that cuts host-model code-editing cost by ~50% on Claude Sonnet — without fine-tuning, without changing your workflow, without losing correctness.**
 
-Nebula normalizes code from 8 programming languages into a single canonical form that compresses 3-21% smaller than the source — meaning an LLM can read, reason about, and generate more code within the same context window. A 14B model fine-tuned on Nebula achieves **93.3% Pass@1** on HumanEval with error correction, translating across 8 target languages from a single model.
+Drop one tool (`code_task`) into your Claude Code config. The host stops making twenty Read/Edit/Bash calls per task and starts making one. A local Qwen3-Coder-30B on Ollama does the actual work. You keep the smart host. You just stop paying it to shuffle bytes.
 
-Nebula extends the grammar-redesign approach of SimPy (ISSTA 2024) and Token Sugar (ASE 2025) to multiple source languages, validated by a comprehensive tokenizer audit against cl100k_base.
-
-```sh
-cargo build --manifest-path compiler/Cargo.toml     # Build
-nebula examples/hello.neb                            # Run a program
-nebula from-rust lib.rs                              # Rust → Nebula
-nebula translate --from go --to python main.go       # Go → Python (neural)
-nebula mcp                                           # Start MCP server
+```mermaid
+---
+config:
+  xyChart:
+    width: 520
+    height: 320
+    xAxis:
+      labelFontSize: 10
+---
+xychart-beta
+    title "Host cost reduction per task shape (Sonnet, N=3, 8 Go shapes)"
+    x-axis ["spec", "feat", "port", "helper", "docs", "impl", "bug", "refac"]
+    y-axis "% cheaper than builtins" 0 --> 80
+    bar [26, 33, 37, 41, 46, 52, 57, 73]
 ```
 
-**Documentation:** [Language Spec](spec/LANGUAGE.md) | [Results](bench/results.md) | [Experiments](bench/experiments.md) | [Training Guide](TRAINING.md)
-
-## Results Summary
-
-| What We Measured | Result |
-|---|---|
-| Token compression (8 languages) | **16.2%** mean reduction |
-| Best compression (Rust, Swift, Kotlin) | **20.6-20.7%** |
-| Fine-tuned 14B Pass@1 (Nebula→Python, 8 langs) | **89.0%** raw, **93.3%** with error correction |
-| Fine-tuned 7B Pass@1 (Nebula→Python, 8 langs) | **67.7%** raw, **88.4%** with error correction |
-| Fine-tuned 7B Pass@1 (MBPP, 500 problems) | **55.4%** — matches base model on raw Python |
-| Base model on Nebula (no fine-tuning) | **1.2%** — can't parse Nebula at all |
-| InterTrans (Nebula-mediated translation) | **+17.6pp** on Go→Python, **+17.6pp** on JS→Python |
-
-Full results: [`bench/results.md`](bench/results.md) | Experiment log: [`bench/experiments.md`](bench/experiments.md)
-
+```mermaid
 ---
-
-## Table of Contents
-
-1. [How It Works](#how-it-works)
-2. [Token Compression](#token-compression)
-3. [Neural Refinement](#neural-refinement)
-4. [Cross-Language Translation (InterTrans)](#cross-language-translation)
-5. [Products](#products)
-6. [Quick Start](#quick-start)
-7. [Syntax Overview](#syntax-overview)
-8. [Design Principles](#design-principles)
-9. [Related Work](#related-work)
-10. [Project Structure](#project-structure)
-11. [References](#references)
-
+config:
+  xyChart:
+    width: 520
+    height: 320
 ---
-
-## How It Works
-
-Nebula is a **universal code IL** — one canonical source form that any programming language can be ingested into and emitted from. The same algorithm, regardless of whether it was written in Go, Python, Rust, or TypeScript, produces identical (or near-identical) Nebula.
-
-```
-Source (any of 8 languages)
-    │
-    ▼
-┌─────────────┐
-│  Ingester   │  tree-sitter parse → canonical normalization
-│  (from-X)   │  snake_case, Python-native methods, walrus :=, indent blocks
-└─────────────┘
-    │
-    ▼
-┌─────────────┐
-│   Nebula    │  Universal IL — 16.2% fewer tokens
-│    IL       │  Language-agnostic, ceremony-free
-└─────────────┘
-    │
-    ├──────────────────┐
-    ▼                  ▼
-┌─────────────┐  ┌──────────────┐
-│ Rule-based  │  │   Neural     │
-│ Codegen     │  │   Model      │  Fine-tuned Qwen 7B
-│  (to-Y)     │  │  (Ollama)    │  68.9% Pass@1
-└─────────────┘  └──────────────┘
-    │                  │
-    ▼                  ▼
-  Target code (any of 8 languages)
+xychart-beta
+    title "Nebula IL compression per language (cl100k_base, ~100-LoC corpus)"
+    x-axis ["Py", "JS", "Go", "TS", "C", "Swift", "Kotlin", "Rust"]
+    y-axis "% fewer tokens than source" 0 --> 25
+    bar [3.2, 11.0, 12.2, 18.9, 19.2, 20.6, 20.6, 20.7]
 ```
 
-**N×M language translation reduced to N+M**: 8 ingesters + 8 codegens through one IL, instead of 56 direct translators.
+Two mechanisms, additive. The **delegate** hides the tool surface from the host (−51% weighted mean, 8 code-editing shapes, Sonnet, 24/24 correct). The **IL** compresses source across every language Nebula ingests (16.2% mean). On large files both stack: −44% combined vs. −23% from delegation alone. See [Research](#research) for the full breakdown.
 
 ---
 
-## Token Compression
-
-Measured with tiktoken cl100k_base on equivalent ~100-line programs across 8 languages:
-
-| Language | Source Tokens | Nebula Tokens | Compression |
-|----------|-------------|-------------|-------------|
-| Rust | 1,071 | 849 | **20.7%** |
-| Swift | 967 | 768 | **20.6%** |
-| Kotlin | 922 | 732 | **20.6%** |
-| C | 1,258 | 1,017 | **19.2%** |
-| TypeScript | 1,140 | 924 | **18.9%** |
-| Go | 1,024 | 899 | **12.2%** |
-| JavaScript | 933 | 830 | **11.0%** |
-| Python | 870 | 842 | **3.2%** |
-| **Overall** | **8,185** | **6,861** | **16.2%** |
-
-**All 8 languages compress.** The biggest single optimization is removing braces — indent blocks save ~2 tokens per block, and a typical 100-line program has 30-40 blocks.
+**[▸ MCP Quick Start](#mcp)** · **[▸ Language](#language)** · **[▸ Research](#research)** · **[▸ Paper](bench/paper.md)** · **[▸ Spec](spec/LANGUAGE.md)**
 
 ---
 
-## Neural Refinement
+## MCP
 
-We fine-tuned small language models to translate Nebula IL to idiomatic code, measuring Pass@1 on HumanEval (164 problems):
+One binary, six tools, two modes that compose freely in one session.
 
-### Model Progression
+### Quick start
 
-| Model | Size | Target Languages | Pass@1 (raw) | Pass@1 (corrected) |
-|---|---|---|---|---|
-| Base Qwen-2.5-1.5B | 1.5B | — | 1.2% | — |
-| Fine-tuned (Python only) | 1.5B | Python | 48.8% | 78.7% |
-| Fine-tuned (6 languages) | 1.5B | Py, JS, TS, Go, Rust, C | 42.7% | — |
-| **Fine-tuned (6 languages)** | **7B** | **Py, JS, TS, Go, Rust, C** | **68.9%** | **89.6%** |
+1. **Build the MCP server.**
+   ```sh
+   git clone https://github.com/colinc86/nebula.git && cd nebula
+   cargo build --release --manifest-path compiler/Cargo.toml
+   ```
+   The binary lands at `compiler/target/release/nebula`.
 
-### Key Findings
+2. **Install Ollama and pull the delegate worker** (only needed for `code_task`; the compression tools work without Ollama).
+   ```sh
+   ollama pull qwen3-coder:30b
+   ```
 
-- **Nebula is learnable.** A 1.5B model goes from 1.2% to 48.8% Pass@1 with 20K training pairs — exceeding the base model's published ~30-40% on raw Python.
-- **Multi-target works.** A single model handles 6 languages with minimal quality loss (-6.1pp at 1.5B, no loss at 7B).
-- **Error correction is powerful.** A retry loop (feed errors back to model, up to 3 attempts) + rule-based fallback pushes 68.9% → 89.6%.
-- **Scale helps.** 7B multi-target (68.9%) beats 1.5B single-target Python-only (48.8%) by 20pp while serving 5 additional languages.
+3. **Wire it into Claude Code.** Add to `~/.claude/mcp.json` (or pass via `--mcp-config`):
+   ```json
+   {
+     "mcpServers": {
+       "nebula": {
+         "command": "/absolute/path/to/nebula/compiler/target/release/nebula",
+         "args": ["mcp"],
+         "env": {
+           "NEBULA_DELEGATE_OLLAMA_URL": "http://localhost:11434",
+           "NEBULA_DELEGATE_MODEL": "qwen3-coder:30b"
+         }
+       }
+     }
+   }
+   ```
 
-### Error Correction Pipeline
+4. **Restart Claude Code.** All six tools are now available. That's it.
 
-The inference pipeline combines neural generation with verification:
+> **Note.** Works with any MCP-capable host (Claude Code, Cursor, Zed, custom clients). Savings depend on whether the host *chooses* to delegate: Sonnet-class models route to `code_task` reliably; Opus under-delegates on small tasks and forfeits most of the savings — see [Research §Host routing propensity](#research).
 
-1. **Generate**: Model produces target code from Nebula
-2. **Test**: Run against unit tests (or compile-check)
-3. **Retry**: If tests fail, feed error message back → model generates fix (up to 3 attempts)
-4. **Fallback**: If all retries fail, use deterministic rule-based `nebula to-X` output
+### The tools
 
-| Component | 7B Model | 1.5B Model |
+| Tool | Mode | What it does |
 |---|---|---|
-| Passed first attempt | 111/164 (67.7%) | 76/164 (46.3%) |
-| Passed after retry | 13 | 10 |
-| Passed via rule-based fallback | 23 | 43 |
-| Failed | 17 | 35 |
-| **Total** | **147/164 (89.6%)** | **129/164 (78.7%)** |
+| **`code_task`** | Delegate | Hand off a natural-language task + a `verify` command. Inner agent reads/edits files, runs verify, auto-retries up to 3 times on failure, returns one JSON summary with `verify_passed`. One host turn, one host billing event. |
+| `read_code` | Compression | Read any source file. Returns it in Nebula IL (≤40-line files pass through as-is). Works on 8 languages. |
+| `write_code` | Compression | Write Nebula code. Auto-translates to the file's native language by extension. |
+| `patch_code` | Compression | Byte-level `old_str → new_str` edit on native source. Single-file or bulk glob (one call replaces across a whole package). |
+| `search_code` | Compression | Substring + IL-canonical search; results returned as Nebula snippets. |
+| `translate_code` | Compression | Any-to-any translation across 8 languages via Nebula IL. Neural (Ollama) if available, rule-based otherwise. |
 
-### Token Economy: Compression vs Translation
+### When to use which
 
-Nebula serves two distinct purposes with different token economics:
+- **`code_task`** — multi-turn work: refactors, bug fixes, feature additions, anything the host would otherwise drive for more than ~3–4 tool calls. The break-even is ≈3.4 host turns ([cost model §3](bench/cost_model.md#3-break-even-point)).
+- **Compression tools** — read-heavy exploration, single-shot edits, or sessions where you want to stay in direct control of the outer agent. No Ollama needed.
+- **Both at once** (default). They are orthogonal; the host picks per call. Hide the tool surface on the hard stuff, stay direct on the easy stuff.
 
-**Context compression (MCP read/write):** Pure savings. Every `read_code` call returns 16.2% fewer tokens. No model calls, no retries. Over a 100K-token codebase session, that's ~16,200 tokens saved — equivalent to reading an extra 30+ files for free.
+### How `code_task` works
 
-**Translation with error correction:** Trades tokens for accuracy. The retry loop (up to 3 attempts on failures) adds overhead, but dramatically improves correctness:
+```mermaid
+flowchart LR
+    Host["Host model<br/>(Claude / GPT)"] -->|"code_task(instruction, verify)"| MCP["Nebula MCP"]
+    MCP -->|instruction + tools| Inner["Qwen3-Coder-30B<br/>on Ollama"]
+    Inner -->|read_code / patch_code| Files[("Source files")]
+    Files -->|Nebula IL| Inner
+    Inner -->|"verify: go test ./..."| Shell["Shell"]
+    Shell -->|pass / fail| Inner
+    Inner -->|"JSON summary<br/>verify_passed: true"| Host
+```
 
-| Metric | Nebula Pipeline | Direct Translation |
+The host sees one tool call and one JSON response. Everything inside the dashed region — reads, patches, verify loop, retries — is invisible and uncharged. If `verify_passed: true`, the work is done and tested; you do not need to re-verify.
+
+### Configuration
+
+Environment variables (all optional):
+
+| Variable | Default | Effect |
 |---|---|---|
-| Total tokens (164 problems) | ~108K | ~66K |
-| Accuracy | **89.6%** (147/164) | ~65% (~107/164) |
-| Correct translations | 147 | ~107 |
-| Tokens per correct result | 734 | 619 |
+| `NEBULA_MCP_TOOLS` | unset = all six | Comma allow-list. Set to `code_task` for delegate-only, or `read_code,patch_code,search_code` for compression-only. |
+| `NEBULA_DISABLE_IL` | unset | `1` forces `read_code` to return raw source (bypasses IL compression). |
+| `NEBULA_DELEGATE_MODEL` | `qwen3-coder:30b` | Inner-agent Ollama model. |
+| `NEBULA_DELEGATE_OLLAMA_URL` | `http://localhost:11434` | Inner-agent endpoint. |
+| `NEBULA_OLLAMA_MODEL` | `nebula-8lang-14b-q4` | Neural translation backend for `translate_code`. |
+| `NEBULA_OLLAMA_URL` | `http://localhost:11434` | Neural translation endpoint. |
 
-The pipeline uses ~63% more tokens than a single-shot direct translation — but produces 37% more correct results. The extra cost comes from retries on the ~20% of problems that fail initially. For a translation job where correctness matters, this is a good tradeoff. For context compression where every token counts, use the zero-overhead MCP path instead.
-
-### Training Details
-
-- **Base models**: Qwen-2.5-1.5B, Qwen-2.5-7B
-- **Method**: QLoRA (rank 16, alpha 16) via Together AI
-- **Data**: ~51K (Nebula, code) pairs across 6 languages, sourced from StarCoderData
-- **Epochs**: 3
-- **Data pipeline**: StarCoderData → extract functions → `nebula from-{lang}` → SFT training pairs
+If Ollama is unreachable, `code_task` returns a structured error. The compression tools keep working — they have no Ollama dependency.
 
 ---
 
-## Cross-Language Translation
+## Language
 
-We tested whether Nebula-mediated translation (source → Nebula → target) outperforms direct LLM translation (source → target) across 10 directed language pairs using Claude Sonnet 4.
+Nebula is a universal code intermediate language. Eight ingesters normalize source into one canonical form; eight codegens emit idiomatic output. That same IL is what `read_code` returns and what the delegate agent thinks in.
 
-### Results (20 HumanEval problems per pair)
-
-**X → Python** (Nebula strips source ceremony, model outputs its strongest language):
-
-| Pair | Direct CA | Nebula CA | Delta |
-|---|---|---|---|
-| JavaScript → Python | 23.5% | 41.2% | **+17.6pp** |
-| Go → Python | 58.8% | 76.5% | **+17.6pp** |
-| C → Python | 47.1% | 52.9% | **+5.9pp** |
-| TypeScript → Python | 52.9% | 35.3% | -17.6pp |
-| Rust → Python | 58.8% | 47.1% | -11.8pp |
-
-**Python → X** (model must output unfamiliar languages):
-
-| Pair | Direct CA | Nebula CA | Delta |
-|---|---|---|---|
-| Python → JavaScript | 90.0% | 85.0% | -5.0pp |
-| Python → Go | 65.0% | 65.0% | 0.0pp |
-| Python → Rust | 80.0% | 75.0% | -5.0pp |
-| Python → TypeScript | 85.0% | 65.0% | -20.0pp |
-| Python → C | 75.0% | 60.0% | -15.0pp |
-
-### Interpretation
-
-**Nebula helps most when the source language has ceremony** (Go `&` references, JS prototype patterns). **Nebula hurts when it strips useful type information** (TypeScript annotations, Rust ownership). The overall average (-3.3pp) reflects that Claude Sonnet sees Nebula cold — it was never trained on this syntax.
-
-**The real win comes with a Nebula-native model.** Our fine-tuned 7B achieves 68.9% Pass@1 from Nebula input, matching the base model's performance on raw Python. With a Nebula-trained model doing the InterTrans translation, we expect the heatmap to flip positive across all pairs.
-
----
-
-## Products
-
-### CLI Language Translator
-
-```bash
-nebula translate --from rust --to python input.rs
-nebula translate input.rs --to python  # auto-detect source
+```nebula
+def fibonacci(n):
+    if n <= 1:
+        return n
+    a, b = 0, 1
+    for i in 2..=n:
+        a, b = b, a + b
+    return b
 ```
-
-Uses the neural model (via Ollama) when available, falls back to rule-based codegen.
-
-### MCP Server
-
-Nebula includes an MCP server that works as a transparent compression layer between LLMs and codebases:
-
-```bash
-nebula mcp    # Start MCP server (JSON-RPC over stdio)
-```
-
-Four tools:
-- `read_code` — Read any source file, returns Nebula (token-efficient)
-- `write_code` — Write Nebula code, auto-translates to file's native language
-- `search_code` — Search codebase, results normalized to Nebula
-- `translate_code` — Translate code between any pair of 8 languages via Nebula IL
-
----
-
-## Quick Start
-
-```sh
-# Build the compiler
-cd compiler && cargo build
-
-# Run Nebula programs
-./target/debug/nebula examples/hello.neb
-
-# Translate between languages
-./target/debug/nebula from-python script.py       # Python → Nebula
-./target/debug/nebula to-python examples/hello.neb # Nebula → Python
-./target/debug/nebula from-rs lib.rs               # Rust → Nebula
-./target/debug/nebula to-go examples/hello.neb     # Nebula → Go
-
-# Neural translation (requires Ollama + fine-tuned model)
-ollama create nebula-multi-7b -f bench/finetune/models/nebula-multi-7b/Modelfile
-./target/debug/nebula translate --from rust --to python input.rs
-
-# Other tools
-./target/debug/nebula check file.neb    # Parse-check
-./target/debug/nebula fmt file.neb      # Format to canonical style
-./target/debug/nebula lint file.neb     # Static analysis
-./target/debug/nebula compact file.neb  # Compress identifiers
-./target/debug/nebula mcp              # Start MCP server
-```
-
-### Supported Languages
 
 | Direction | Languages |
 |---|---|
 | **Ingest** (source → Nebula) | Python, JavaScript, TypeScript, Go, Swift, Kotlin, Rust, C |
 | **Codegen** (Nebula → target) | Python, JavaScript, TypeScript, Go, Swift, Kotlin, Rust, C |
-| **Neural** (fine-tuned model) | Python, JavaScript, TypeScript, Go, Rust, C |
+| **Neural translator** (fine-tuned Qwen) | Python, JavaScript, TypeScript, Go, Rust, C |
+
+Design principles: every syntax choice validated by a cl100k_base tokenizer audit; no special cases; any language maps cleanly in and out; strip ceremony the target doesn't need (Go pointers, Rust lifetimes, C includes).
+
+**Deeper reading:**
+- [Full language specification →](spec/LANGUAGE.md)
+- [Syntax cheatsheet →](spec/CHEATSHEET.md)
+- [Compression methodology & per-language results →](bench/results.md)
+- [Neural translator training guide →](TRAINING.md)
 
 ---
 
-## Syntax Overview
+## Research
 
-Nebula accepts both short and long keyword forms (all 1 token in cl100k_base):
+We collapse the code-editing tool surface to a single natural-language MCP tool backed by a stock local worker (Qwen3-Coder-30B on one RTX 3090). On 8 matched-pair Go shapes with Claude Sonnet as host, this reduces billable host cost by a weighted **−51.2%** without loss of correctness (24/24 tasks pass). A fitted linear cost model predicts the break-even at **≈3.4 host turns**; every shape in the benchmark clears it.
 
-| Canonical | Compact | Description |
-|-----------|---------|-------------|
-| `def` | `fn` | Function declaration |
-| `return` | `rt` | Return |
-| `for` | `fo` | For loop |
-| `while` | `wl` | While loop |
-| `if`/`else`/`elif` | `if`/`el` | Conditionals |
-| `match` | `mc` | Pattern matching |
-| `struct` / `class` | `st` | Type declaration |
-| `impl` | `im` | Method block |
-| `trait` | `tr` | Interface |
-| `break`/`continue` | `bk`/`ct` | Loop control |
-| `True`/`False`/`None` | `tt`/`ff`/`nil` | Literals |
+### Headline numbers
 
-```nebula
-x = 5              # mutable binding (bare assignment)
-x := 5             # immutable binding (walrus operator)
-
-def fibonacci(n):
-    if n <= 1:
-        return n
-    a, b = 0, 1
-    for i in range(2, n + 1):
-        a, b = b, a + b
-    return b
-```
-
-- **Lambdas**: `|x| x * 2`, trailing closures `{ it.X }`
-- **Pipes**: `data |> filter(|x| x > 0) |> map(|x| x * 2)`
-- **Ranges**: `0..10` (exclusive), `0..=10` (inclusive)
-- **String interpolation**: `"Hello {name}"`
-- **Nil coalesce**: `x ?? default`
-- **Pattern matching**: `match val { 0 => "zero", _ => "other" }`
-
----
-
-## Design Principles
-
-Every syntax choice is driven by a cl100k_base tokenizer audit:
-
-1. **Token-optimal** — Use the cheapest form: bare assignment over `let`/`mut`, indent blocks over braces. Every keyword validated by tokenizer audit.
-2. **Consistent** — No special cases. Every construct follows the same patterns.
-3. **Translatable** — Any language maps cleanly to/from Nebula. The 8 ingesters produce canonical normalized output.
-4. **Multi-paradigm** — FP, OOP, procedural all first-class.
-5. **Ceremony-free** — Strip what the target doesn't need. Go pointers, Rust lifetimes, C includes — normalized away.
-
-### Canonical Normalization Pipeline
-
-All 8 ingesters converge to identical output through:
-
-1. **Tree-sitter parse** — language-specific AST
-2. **Emit Nebula** — translate AST nodes to Nebula syntax
-3. **Canonicalize** — snake_case identifiers, Python-native method names (`.filter()`, `.map()`, `.join()`), keyword normalization, walrus `:=` for immutables, type normalization
-4. **Indent blocks** — convert `{ }` to `:` + indentation
-5. **Language-specific cleanup** — strip ceremony (Go `&` refs, Rust `.iter().collect()`, etc.)
-
----
-
-## Related Work
-
-| Paper | Venue | Key Finding | How Nebula Extends It |
+| Axis | Experiment | Result | Source |
 |---|---|---|---|
-| **SimPy** ([arXiv:2404.16333](https://arxiv.org/abs/2404.16333)) | ISSTA 2024 | Python grammar redesign, 10-13% token reduction | Multi-language (8 langs), richer AST, tokenizer-audited keywords |
-| **Token Sugar** ([arXiv:2512.08266](https://arxiv.org/abs/2512.08266)) | ASE 2025 | Semantic pattern substitution, 20% combined | Structural compression via IL normalization, not pattern mining |
-| **UniCoder** ([arXiv:2406.16441](https://arxiv.org/abs/2406.16441)) | ACL 2024 | Universal pseudocode IL for code generation | Nebula is parseable, deterministic, bidirectional (UniCoder is LLM-generated) |
-| **InterTrans** ([arXiv:2411.01063](https://arxiv.org/abs/2411.01063)) | ICSE 2025 | A→C→B translation improves accuracy 18-43% | Nebula IS the ideal intermediate C; validated at +17.6pp on Go/JS→Python |
-| **Compiler IR for Translation** ([arXiv:2207.03578](https://arxiv.org/abs/2207.03578)) | ICLR 2023 | LLVM IR as intermediate boosts translation | Nebula is the high-level readable equivalent of LLVM IR |
+| Host token cost | 8-shape matched pair, Sonnet, N=3 | **−51.2%** weighted mean host cost, 24/24 correct | [`bench/cost_model.md §2`](bench/cost_model.md#2-fitting-to-the-full-8-shape-sonnet-data-iterations-17--18) |
+| Host token cost | Large-file ablation (425-LoC Go, N=3) | tool-hiding −23.1% + IL compression −21.2pp = combined **−44.3%** | [`bench/cost_model.md §4.6`](bench/cost_model.md#46-the-nebula-il-contribution-iter-19-large-file-shape) |
+| Inner-loop wall-clock | 7-shape, multi-task fine-tuned 30B-Coder, N=3 | **−54.8%** mean wall-clock vs stock inner agent, 21/21 trials correct (8th shape `large_file`: 1/3 pass, capability gap from no-large-file training data) | [`bench/paper.md §5.6`](bench/paper.md#56-phase-20-multi-task-fine-tune-as-a-wall-clock-lever) |
+| End-to-end correctness | GAIA subset (13 code-editing tasks, N=1) | accuracy-invariant: 10/13 correct under both configs, identical failures | [`bench/gaia/`](bench/gaia/) |
+| Host routing | Opus 4.6 on 15 small-shape trials | Opus delegated 1/15 → savings collapse to noise on small tasks | [`bench/cost_model.md §4.5`](bench/cost_model.md#45-host-model-behavior-opus-check) |
+
+### What we claim (and what we don't)
+
+The novel contribution is the framing and the measurement: **collapse the tool surface to one natural-language MCP tool, measure host billable cost on matched pairs, and report routing propensity as a first-class limiting variable.** The core insight (hide expensive tool calls from the expensive model) is shared with CodeAgents and AWO; our value-add is a clean code-editing benchmark with a fitted cost model and the separation of tool-hiding from IL compression as two independent, additive mechanisms.
+
+> **Cross-language validation (iter 21).** The delegate benchmark is now validated across all 8 Nebula languages — Python, JavaScript, TypeScript, Go, Swift, Kotlin, Rust, and C — on **two shapes** (add_feature and bugfix). **96/96 trials verify_passed**, confirming the delegate mechanism is architecturally portable. The per-language cost picture depends on host routing propensity:
+>
+> | Shape | Routing | Mean Δ | Median Δ |
+> |---|---|---:|---:|
+> | **add_feature** (4-turn shape) | **8/8 langs route** | −7.1% | **−12.2%** |
+> | **bugfix** (12-turn shape) | 6/8 langs route (Swift, Kotlin refuse; Python has verbose replies) | −7.5% | +1.4% |
+>
+> On shapes/languages where Sonnet actually delegates, savings match the cost model cleanly: Go −35.9%, TypeScript −25.2%, JavaScript −21.4%, C −17.6%, Rust −9.4% on bugfix. Swift and Kotlin route fine on add_feature (−13% each) but refuse to delegate bugfix, so their aggregate sits flat. Routing propensity is (language × shape × host)-dependent and mirrors the Opus small-shape routing caveat from §5.2–5.4. Full data + regime analysis: [`bench/paper.md §5.7`](bench/paper.md#57-cross-language-portability-iter-21).
+
+**Full writeups:**
+- [Paper draft →](bench/paper.md) — abstract, methodology, all tables, related work
+- [Cost model →](bench/cost_model.md) — notation, fit, break-even, held-out MAPE, host-routing analysis
+- [Iteration log →](bench/loop_notes.md) — every decision and dead-end from iterations 1–18
+- [Raw benchmark runs →](bench/mcp_manual_test/RESULTS.md) — per-shape numbers and variance
+- [GAIA comparison →](bench/gaia/) — head-to-head vs. CodeAgents on code-editing-shaped level-1 tasks
 
 ---
 
-## Project Structure
+## Project structure
 
 ```
-compiler/src/
-  lexer.rs          Tokenizer (indent/dedent desugaring, dual keyword forms)
-  parser.rs         Recursive descent parser (brace + indent blocks)
-  ast.rs            Language-agnostic abstract syntax tree
-  interpreter.rs    Tree-walk interpreter
-  linter.rs         Static analysis
-  codegen.rs        8 language translators (Nebula → target)
-  ingest.rs         8 language ingesters (source → Nebula) via tree-sitter
-  formatter.rs      Code formatter (walrus :=, indent blocks)
-  neural.rs         Neural translation backend (Ollama HTTP client)
-  mcp.rs            MCP server (JSON-RPC over stdio, 4 tools)
-  lang_detect.rs    File extension → language detection
-  compactor.rs      LLM context compressor
-  main.rs           CLI (run, check, lint, fmt, translate, from-X, to-X, mcp)
-
-bench/
-  corpus/           Test programs in 8 languages + HumanEval
-  benchmarks/       Evaluation scripts (InterTrans, MBPP, compression)
-  finetune/         Neural training pipeline (data prep, eval, correction)
-  results/          Per-experiment result files
-  results.md        Summary of all benchmark results
-  experiments.md    Full experiment log (24 experiments)
-
-examples/           Working .neb example programs
-spec/LANGUAGE.md    Language specification (source of truth)
+compiler/       Rust compiler, interpreter, MCP server, 8 ingesters, 8 codegens
+  src/mcp.rs             MCP JSON-RPC server (6 tools)
+  src/mcp_delegate.rs    code_task inner-agent loop
+  src/ingest.rs          Tree-sitter → Nebula canonicalization
+  src/codegen.rs         Nebula → target language
+spec/           Language specification and cheatsheet
+bench/          Benchmark suite, paper, cost model, iteration log
+  mcp_manual_test/       Matched-pair delegate benchmark templates + runners
+  gaia/                  GAIA / CodeAgents comparison
+  finetune/              Neural refinement pipeline (training, eval)
+examples/       Working .neb programs
 ```
-
----
 
 ## References
 
-1. Sun et al. "SimPy: Revealing the Hidden Simplicity in Python Programs for Token Efficiency." ISSTA 2024. [arXiv:2404.16333](https://arxiv.org/abs/2404.16333)
-2. Sun et al. "Token Sugar: Making Source Code Sweeter for LLMs through Token-Efficient Shorthand." ASE 2025. [arXiv:2512.08266](https://arxiv.org/abs/2512.08266)
-3. Yan et al. "InterTrans: Leveraging Transitive Intermediate Translations to Enhance LLM-based Code Translation." ICSE 2025. [arXiv:2411.01063](https://arxiv.org/abs/2411.01063)
-4. Zheng et al. "UniCoder: Scaling Code Large Language Model via Universal Code." ACL 2024. [arXiv:2406.16441](https://arxiv.org/abs/2406.16441)
-5. Szafraniec et al. "Code Translation with Compiler Representations." ICLR 2023. [arXiv:2207.03578](https://arxiv.org/abs/2207.03578)
-6. Chen et al. "Evaluating Large Language Models Trained on Code." arXiv 2021. [arXiv:2107.03374](https://arxiv.org/abs/2107.03374)
+1. Sun et al. *SimPy: Revealing the Hidden Simplicity in Python Programs for Token Efficiency.* ISSTA 2024. [arXiv:2404.16333](https://arxiv.org/abs/2404.16333)
+2. Sun et al. *Token Sugar: Making Source Code Sweeter for LLMs through Token-Efficient Shorthand.* ASE 2025. [arXiv:2512.08266](https://arxiv.org/abs/2512.08266)
+3. Li et al. *CodeAgents: Efficient Multi-Agent Code Generation via Structured Planning.* arXiv 2025. [arXiv:2507.03254](https://arxiv.org/abs/2507.03254)
+4. Yan et al. *InterTrans: Leveraging Transitive Intermediate Translations to Enhance LLM-based Code Translation.* ICSE 2025. [arXiv:2411.01063](https://arxiv.org/abs/2411.01063)
+5. Zheng et al. *UniCoder: Scaling Code Large Language Model via Universal Code.* ACL 2024. [arXiv:2406.16441](https://arxiv.org/abs/2406.16441)
+6. Szafraniec et al. *Code Translation with Compiler Representations.* ICLR 2023. [arXiv:2207.03578](https://arxiv.org/abs/2207.03578)
+
+[Third-party licenses](THIRD_PARTY_NOTICES.md) · Nebula language spec at [`spec/LANGUAGE.md`](spec/LANGUAGE.md)

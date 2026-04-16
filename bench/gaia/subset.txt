@@ -1,0 +1,23 @@
+# GAIA level-1 validation subset — 13 code-editing-shaped tasks
+# Curated 2026-04-14. Inclusion criteria:
+#   - No web browsing required
+#   - No image / video / audio parsing
+#   - Answer reachable from attached files + shell + pure reasoning
+# The full 2023_level1 validation split has 53 tasks; 40 of those need the
+# web or vision/audio. Of the remaining 13, 2 ship a text/python file and
+# 11 are pure reasoning / text-manipulation puzzles. This is the honest
+# subset of GAIA that our tool surface (read_code + patch_code + bash) can
+# cover without extending the agent into new modalities.
+ec09fa32-d03f-4bf8-84b0-1f16922c3ae4  # reasoning: ping-pong riddle
+2d83110e-a098-4ebb-9987-066c06fa42d0  # text: reverse-sentence puzzle
+27d5d136-8563-469e-92bf-fd103c28b57c  # reasoning: propositional logic
+dc28cf18-6431-458b-83ef-64b3ce566c10  # reasoning: mashed potatoes family
+42576abe-0deb-4869-8c63-225c2d75a95a  # reasoning: Tizin language
+6f37996b-2ac7-44b0-8e68-6d28256631b4  # reasoning: table algebra
+389793a7-ca17-4e82-81cb-2b3a2391b4b9  # file (.txt): cell-tower placement
+4b650a35-8529-4695-89ed-8dc7a500a498  # instruction trap
+3cef3a44-215e-4aed-8e3b-b1e3f08063b7  # reasoning: botany groceries
+f918266a-b3e0-4914-865d-4faa564f1aef  # file (.py): python execution
+e142056d-56ab-4352-b091-b56054bd1359  # reasoning: Bob game show
+50ad0280-0819-4bd9-b275-5de32d3b5bcb  # text: 5x7 block unscramble
+50ec8903-b81f-4257-9450-1085afd2c319  # reasoning: Rubik cube

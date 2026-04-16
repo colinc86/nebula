@@ -1,0 +1,59 @@
+staged ec09fa32-d03f-4bf8-84b0-1f16922c3ae4 -> runs/gaia_ec09fa32-d03f-4bf8-84b0-1f16922c3ae4_builtins
+[run ] ec09fa32-d03f-4bf8-84b0-1f16922c3ae4 builtins
+staged ec09fa32-d03f-4bf8-84b0-1f16922c3ae4 -> runs/gaia_ec09fa32-d03f-4bf8-84b0-1f16922c3ae4_delegate
+[run ] ec09fa32-d03f-4bf8-84b0-1f16922c3ae4 delegate
+staged 2d83110e-a098-4ebb-9987-066c06fa42d0 -> runs/gaia_2d83110e-a098-4ebb-9987-066c06fa42d0_builtins
+[run ] 2d83110e-a098-4ebb-9987-066c06fa42d0 builtins
+staged 2d83110e-a098-4ebb-9987-066c06fa42d0 -> runs/gaia_2d83110e-a098-4ebb-9987-066c06fa42d0_delegate
+[run ] 2d83110e-a098-4ebb-9987-066c06fa42d0 delegate
+staged 27d5d136-8563-469e-92bf-fd103c28b57c -> runs/gaia_27d5d136-8563-469e-92bf-fd103c28b57c_builtins
+[run ] 27d5d136-8563-469e-92bf-fd103c28b57c builtins
+staged 27d5d136-8563-469e-92bf-fd103c28b57c -> runs/gaia_27d5d136-8563-469e-92bf-fd103c28b57c_delegate
+[run ] 27d5d136-8563-469e-92bf-fd103c28b57c delegate
+staged dc28cf18-6431-458b-83ef-64b3ce566c10 -> runs/gaia_dc28cf18-6431-458b-83ef-64b3ce566c10_builtins
+[run ] dc28cf18-6431-458b-83ef-64b3ce566c10 builtins
+staged dc28cf18-6431-458b-83ef-64b3ce566c10 -> runs/gaia_dc28cf18-6431-458b-83ef-64b3ce566c10_delegate
+[run ] dc28cf18-6431-458b-83ef-64b3ce566c10 delegate
+staged 42576abe-0deb-4869-8c63-225c2d75a95a -> runs/gaia_42576abe-0deb-4869-8c63-225c2d75a95a_builtins
+[run ] 42576abe-0deb-4869-8c63-225c2d75a95a builtins
+staged 42576abe-0deb-4869-8c63-225c2d75a95a -> runs/gaia_42576abe-0deb-4869-8c63-225c2d75a95a_delegate
+[run ] 42576abe-0deb-4869-8c63-225c2d75a95a delegate
+staged 6f37996b-2ac7-44b0-8e68-6d28256631b4 -> runs/gaia_6f37996b-2ac7-44b0-8e68-6d28256631b4_builtins
+[run ] 6f37996b-2ac7-44b0-8e68-6d28256631b4 builtins
+staged 6f37996b-2ac7-44b0-8e68-6d28256631b4 -> runs/gaia_6f37996b-2ac7-44b0-8e68-6d28256631b4_delegate
+[run ] 6f37996b-2ac7-44b0-8e68-6d28256631b4 delegate
+staged 389793a7-ca17-4e82-81cb-2b3a2391b4b9 -> runs/gaia_389793a7-ca17-4e82-81cb-2b3a2391b4b9_builtins
+[run ] 389793a7-ca17-4e82-81cb-2b3a2391b4b9 builtins
+staged 389793a7-ca17-4e82-81cb-2b3a2391b4b9 -> runs/gaia_389793a7-ca17-4e82-81cb-2b3a2391b4b9_delegate
+[run ] 389793a7-ca17-4e82-81cb-2b3a2391b4b9 delegate
+staged 4b650a35-8529-4695-89ed-8dc7a500a498 -> runs/gaia_4b650a35-8529-4695-89ed-8dc7a500a498_builtins
+[run ] 4b650a35-8529-4695-89ed-8dc7a500a498 builtins
+staged 4b650a35-8529-4695-89ed-8dc7a500a498 -> runs/gaia_4b650a35-8529-4695-89ed-8dc7a500a498_delegate
+[run ] 4b650a35-8529-4695-89ed-8dc7a500a498 delegate
+staged 3cef3a44-215e-4aed-8e3b-b1e3f08063b7 -> runs/gaia_3cef3a44-215e-4aed-8e3b-b1e3f08063b7_builtins
+[run ] 3cef3a44-215e-4aed-8e3b-b1e3f08063b7 builtins
+staged 3cef3a44-215e-4aed-8e3b-b1e3f08063b7 -> runs/gaia_3cef3a44-215e-4aed-8e3b-b1e3f08063b7_delegate
+[run ] 3cef3a44-215e-4aed-8e3b-b1e3f08063b7 delegate
+staged f918266a-b3e0-4914-865d-4faa564f1aef -> runs/gaia_f918266a-b3e0-4914-865d-4faa564f1aef_builtins
+[run ] f918266a-b3e0-4914-865d-4faa564f1aef builtins
+staged f918266a-b3e0-4914-865d-4faa564f1aef -> runs/gaia_f918266a-b3e0-4914-865d-4faa564f1aef_delegate
+[run ] f918266a-b3e0-4914-865d-4faa564f1aef delegate
+staged e142056d-56ab-4352-b091-b56054bd1359 -> runs/gaia_e142056d-56ab-4352-b091-b56054bd1359_builtins
+[run ] e142056d-56ab-4352-b091-b56054bd1359 builtins
+staged e142056d-56ab-4352-b091-b56054bd1359 -> runs/gaia_e142056d-56ab-4352-b091-b56054bd1359_delegate
+[run ] e142056d-56ab-4352-b091-b56054bd1359 delegate
+staged 50ad0280-0819-4bd9-b275-5de32d3b5bcb -> runs/gaia_50ad0280-0819-4bd9-b275-5de32d3b5bcb_builtins
+[run ] 50ad0280-0819-4bd9-b275-5de32d3b5bcb builtins
+staged 50ad0280-0819-4bd9-b275-5de32d3b5bcb -> runs/gaia_50ad0280-0819-4bd9-b275-5de32d3b5bcb_delegate
+[run ] 50ad0280-0819-4bd9-b275-5de32d3b5bcb delegate
+staged 50ec8903-b81f-4257-9450-1085afd2c319 -> runs/gaia_50ec8903-b81f-4257-9450-1085afd2c319_builtins
+[run ] 50ec8903-b81f-4257-9450-1085afd2c319 builtins
+staged 50ec8903-b81f-4257-9450-1085afd2c319 -> runs/gaia_50ec8903-b81f-4257-9450-1085afd2c319_delegate
+[run ] 50ec8903-b81f-4257-9450-1085afd2c319 delegate
+
+All runs complete. Scoring...
+wrote 26 rows to /Users/colin/Local Documents/Programming/Misc/nebula/bench/gaia/summary.csv
+
+Aggregate:
+  builtins: n=13 acc=10/13 cost=$1.104 input=30 output=41646
+  delegate: n=13 acc=10/13 cost=$0.943 input=30 output=30615

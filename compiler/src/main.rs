@@ -9,6 +9,7 @@ mod lang_detect;
 mod lexer;
 mod linter;
 mod mcp;
+mod mcp_delegate;
 mod neural;
 mod parser;
 

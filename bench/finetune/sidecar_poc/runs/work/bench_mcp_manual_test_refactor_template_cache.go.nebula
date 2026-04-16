@@ -1,0 +1,62 @@
+struct KVCache:
+  mu: SyncRWMutex
+  data: Map
+  max_size: Int
+  logger: Logger
+  metrics: Metrics
+struct kvEntry:
+  value: Str
+  expires_at: TimeTime
+def new_kv_cache_renamed(max_size: Int, logger: Logger, metrics: Metrics) -> KVCache:
+  return (KVCache { data: make("map[string]kvEntry"), max_size: max_size, logger: logger, metrics: metrics })
+impl KVCache:
+  def get(self, key: Str) -> (string, bool):
+    self.mu.r_lock()
+    (entry, ok) = self.data[key]
+    self.mu.r_unlock()
+    if not ok:
+      self.metrics.record_miss()
+      return ("", False)
+    if not entry.expires_at.is_zero() and time.now().after(entry.expires_at):
+      self.mu.lock()
+      self.data.remove(key)
+      self.mu.unlock()
+      self.metrics.record_miss()
+      return ("", False)
+    self.metrics.record_hit()
+    return (entry.value, True)
+impl KVCache:
+  def Set(self, key: Str, value: Str):
+    self.mu.lock()
+    defer self.mu.unlock()
+    if self.max_size > 0 and len(self.data) >= self.max_size:
+      self.evict_oldest()
+    self.data[key] = kvEntry { value: value }
+    self.logger.debugf("KVCache.Set %q", key)
+impl KVCache:
+  def set_ttl(self, key: Str, value: Str, truel: TimeDuration):
+    self.mu.lock()
+    defer self.mu.unlock()
+    if self.max_size > 0 and len(self.data) >= self.max_size:
+      self.evict_oldest()
+    self.data[key] = kvEntry { value: value, expires_at: time.now().add(truel) }
+    self.logger.debugf("KVCache.SetTTL %q (%s)", key, truel)
+impl KVCache:
+  def delete(self, key: Str) -> Bool:
+    self.mu.lock()
+    defer self.mu.unlock()
+    (_, ok) = self.data[key]
+    if ok:
+      self.data.remove(key)
+      self.logger.debugf("KVCache.Delete %q", key)
+    return ok
+impl KVCache:
+  def len(self) -> Int:
+    self.mu.r_lock()
+    defer self.mu.r_unlock()
+    return len(self.data)
+impl KVCache:
+  def evict_oldest(self):
+    for k in self.data:
+      self.data.remove(k)
+      return

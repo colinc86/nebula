@@ -1,0 +1,243 @@
+enum TokenKind:
+  TK_EOF
+  TK_NUMBER
+  TK_IDENT
+  TK_PLUS
+  TK_MINUS
+  TK_STAR
+  TK_SLASH
+  TK_LPAREN
+  TK_RPAREN
+  TK_COMMA
+impl TokenKind:
+  def String(self) -> Str:
+    match self:
+      TK_EOF => "EOF"
+      TK_NUMBER => "NUMBER"
+      TK_IDENT => "IDENT"
+      TK_PLUS => "+"
+      TK_MINUS => "-"
+      TK_STAR => "*"
+      TK_SLASH => "/"
+      TK_LPAREN => "("
+      TK_RPAREN => ")"
+      TK_COMMA => ","
+    return ("TokenKind({int(self})"
+struct Token:
+  kind: TokenKind
+  lexeme: Str
+  offset: Int
+struct Lexer:
+  src: Str
+  pos: Int
+  toks: List
+def new_lexer_renamed(src: Str) -> (Lexer, error):
+  l = Lexer { src: src }
+err = l.tokenize()
+  if err != None:
+    return (None, err)
+  return (l, None)
+impl Lexer:
+  def tokenize(self) -> error:
+    while self.pos < len(self.src):
+      ch = self.src[self.pos]
+      if ch == ' ' or ch == '\t' or ch == '\n' or ch == '\r':
+        self.pos += 1
+        continue
+      if ch >= '0' and ch <= '9':
+        start = self.pos
+        while self.pos < len(self.src) and ((self.src[self.pos] >= '0' and self.src[self.pos] <= '9') or self.src[self.pos] == '.'):
+          self.pos += 1
+        self.toks.append(Token { kind: TK_NUMBER, lexeme: self.src[start..self.pos], offset: start })
+        continue
+      if unicode.is_letter(rune(ch)) or ch == '_':
+        start = self.pos
+        while self.pos < len(self.src) and (unicode.is_letter(rune(self.src[self.pos])) or unicode.is_digit(rune(self.src[self.pos])) or self.src[self.pos] == '_'):
+          self.pos += 1
+        self.toks.append(Token { kind: TK_IDENT, lexeme: self.src[start..self.pos], offset: start })
+        continue
+      match ch:
+        '+' => self.toks = append(self.toks, Token { kind: TK_PLUS, lexeme: "+", offset: self.pos })
+        '-' => self.toks = append(self.toks, Token { kind: TK_MINUS, lexeme: "-", offset: self.pos })
+        '*' => self.toks = append(self.toks, Token { kind: TK_STAR, lexeme: "*", offset: self.pos })
+        '/' => self.toks = append(self.toks, Token { kind: TK_SLASH, lexeme: "/", offset: self.pos })
+        '(' => self.toks = append(self.toks, Token { kind: TK_LPAREN, lexeme: "(", offset: self.pos })
+        ')' => self.toks = append(self.toks, Token { kind: TK_RPAREN, lexeme: ")", offset: self.pos })
+        ',' => self.toks = append(self.toks, Token { kind: TK_COMMA, lexeme: ",", offset: self.pos })
+        _ => (fmt.errorf("lex error at offset %d: unexpected character %q", self.pos, ch))
+      self.pos += 1
+    self.toks.append(Token { kind: TK_EOF, offset: self.pos })
+    return None
+enum NodeKind:
+  ND_NUMBER
+  ND_IDENT
+  ND_CALL
+  ND_BINOP
+struct Node:
+  kind: NodeKind
+  number: Float64
+  ident: Str
+  op: TokenKind
+  children: List
+  offset: Int
+struct Parser:
+  toks: List
+  pos: Int
+def parse(src: Str) -> (Node, error):
+  (lex, err) = new_lexer_renamed(src)
+  if err != None:
+    return (None, err)
+  p = Parser { toks: lex.toks }
+  (root, err) = p.parse_expr()
+  if err != None:
+    return (None, err)
+  if p.peek().kind != TK_EOF:
+    return (None, fmt.errorf("parse error at offset %d: trailing input %q", p.peek().offset, p.peek().lexeme))
+  return (root, None)
+impl Parser:
+  def peek(self) -> Token:
+    return self.toks[self.pos]
+  def advance(self) -> Token:
+    t = self.toks[self.pos]
+    self.pos += 1
+    return t
+  def check(self, k: TokenKind) -> Bool:
+    return self.peek().kind == k
+impl Parser:
+  def parse_expr(self) -> (Node, error):
+    (left, err) = self.parse_term()
+    if err != None:
+      return (None, err)
+    while self.check(TK_PLUS) or self.check(TK_MINUS):
+      op = self.advance()
+      (right, err) = self.parse_term()
+      if err != None:
+        return (None, err)
+      left = Node { kind: ND_BINOP, op: op.kind, children: [left, right], offset: op.offset }
+    return (left, None)
+impl Parser:
+  def parse_term(self) -> (Node, error):
+    (left, err) = self.parse_factor()
+    if err != None:
+      return (None, err)
+    while self.check(TK_STAR) or self.check(TK_SLASH):
+      op = self.advance()
+      (right, err) = self.parse_factor()
+      if err != None:
+        return (None, err)
+      left = Node { kind: ND_BINOP, op: op.kind, children: [left, right], offset: op.offset }
+    return (left, None)
+impl Parser:
+  def parse_factor(self) -> (Node, error):
+    t = self.peek()
+    match t.kind:
+      TK_NUMBER => self.advance()
+        (v, err) = (strconv.parse_float(t.lexeme, 64))
+        if err != None:
+          return (None, fmt.errorf("parse error at offset %d: bad number %q", t.offset, t.lexeme))
+        return (Node { kind: ND_NUMBER, number: v, offset: t.offset }, None)
+      TK_IDENT => self.advance()
+        if self.check(TK_LPAREN):
+          self.advance()
+          args = []
+          if not self.check(TK_RPAREN):
+            loop:
+              (arg, err) = self.parse_expr()
+              if err != None:
+                return (None, err)
+              args.append(arg)
+              if not self.check(TK_COMMA):
+                break
+              self.advance()
+          if not self.check(TK_RPAREN):
+            return (None, fmt.errorf("parse error at offset %d: expected ')' in call to %s", self.peek().offset, t.lexeme))
+          self.advance()
+          return (Node { kind: ND_CALL, ident: t.lexeme, children: args, offset: t.offset }, None)
+        return (Node { kind: ND_IDENT, ident: t.lexeme, offset: t.offset }, None)
+      TK_LPAREN => self.advance()
+        (inner, err) = self.parse_expr()
+        if err != None:
+          return (None, err)
+        if not self.check(TK_RPAREN):
+          return (None, fmt.errorf("parse error at offset %d: expected ')'", self.peek().offset))
+        self.advance()
+        return (inner, None)
+    return (None, fmt.errorf("parse error at offset %d: unexpected token %s", t.offset, t.kind))
+struct Env:
+  vars: Map
+  funcs: Map (float64, error)>
+def default_env() -> Env:
+  return (Env { vars: Map { "pi": math.pi, "e": math.E }, Funcs: Map (float64, error)> { "sin": |a: List|:
+  if len(a) != 1:
+    return (0, fmt.errorf("sin expects 1 arg, got %d", len(a)))
+  return (math.sin(a[0]), None)
+}, "cos": |a: List|:
+  if len(a) != 1:
+    return (0, fmt.errorf("cos expects 1 arg, got %d", len(a)))
+  return (math.cos(a[0]), None)
+}, "sqrt": |a: List|:
+  if len(a) != 1:
+    return (0, fmt.errorf("sqrt expects 1 arg, got %d", len(a)))
+  if a[0] < 0:
+    return (0, fmt.errorf("sqrt of negative number"))
+  return (math.sqrt(a[0]), None)
+}, "max": |a: List|:
+  if len(a) == 0:
+    return (0, fmt.errorf("max expects >= 1 arg"))
+  m = a[0]
+  for v in a[1..]:
+    if v > m:
+      m = v
+  return (m, None)
+}, "min": |a: List|:
+  if len(a) == 0:
+    return (0, fmt.errorf("min expects >= 1 arg"))
+  m = a[0]
+  for v in a[1..]:
+    if v < m:
+      m = v
+  return (m, None)
+} } })
+def eval(n: Node, env: Env) -> (float64, error):
+  match n.kind:
+    ND_NUMBER => (n.number, None)
+    ND_IDENT => mt (v, ok) = env.vars[n.ident]
+      if not ok:
+        return (0, fmt.errorf("undefined variable %q at offset %d", n.ident, n.offset))
+      return (v, None)
+    ND_CALL => mt (f, ok) = env.funcs[n.ident]
+      if not ok:
+        return (0, fmt.errorf("undefined function %q at offset %d", n.ident, n.offset))
+      args = make("[]float64, 0, len(n.Children)")
+      for child in n.children:
+        (v, err) = (Eval(child, env))
+        if err != None:
+          return (0, err)
+        args.append(v)
+      return f(args)
+    ND_BINOP => mt (l, err) = (Eval(n.children[0], env))
+      if err != None:
+        return (0, err)
+      (r, err) = (Eval(n.children[1], env))
+      if err != None:
+        return (0, err)
+      match n.op:
+        TK_PLUS => (l + r, None)
+        TK_MINUS => (l - r, None)
+        TK_STAR => (l * r, None)
+        TK_SLASH => if r == 0:
+            return (0, fmt.errorf("division by zero at offset %d", n.offset))
+          return (l / r, None)
+      return (0, fmt.errorf("unknown binop %s at offset %d", n.op, n.offset))
+  return (0, fmt.errorf("unknown node kind %d", n.kind))
+impl Node:
+  def String(self) -> Str:
+    match self.kind:
+      ND_NUMBER => (strconv.format_float(self.number, 'g', -1, 64))
+      ND_IDENT => self.ident
+      ND_CALL => mt args = make("[]string, 0, len(self.Children)")
+        for c in self.children:
+          args.append(c.String()
+        return (self.ident + "(" + strings.join(args, ", ") + ")")
+      ND_BINOP => "(" + self.children[0].String() + " " + self.op.String() + " " + self.children[1].String() + ")"
+    return "?"

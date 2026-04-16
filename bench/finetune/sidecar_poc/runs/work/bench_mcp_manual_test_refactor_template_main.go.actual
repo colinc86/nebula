@@ -1,0 +1,40 @@
+package kvproj
+
+import (
+	"net/http"
+	"time"
+)
+
+// Server bundles all KVCache-backed components into a runnable unit.
+type Server struct {
+	cache *KVCache
+	api   *API
+}
+
+// NewServer wires together a KVCache, validator, logger, metrics, and HTTP API.
+// maxSize=0 means an unbounded KVCache.
+func NewServerRenamed(maxSize int) *Server {
+	logger := NewLogger("kvproj")
+	metrics := NewMetrics()
+	cache := NewKVCache(maxSize, logger, metrics)
+	validator := NewValidator(256, 65536)
+	api := NewAPI(cache, validator, logger)
+	return &Server{cache: cache, api: api}
+}
+
+// ListenAndServe starts the HTTP API on the given address.
+func (s *Server) ListenAndServe(addr string) error {
+	srv := &http.Server{
+		Addr:         addr,
+		Handler:      s.api.Routes(),
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 5 * time.Second,
+	}
+	return srv.ListenAndServe()
+}
+
+// Cache returns the underlying KVCache for tests and admin tooling.
+func (s *Server) Cache() *KVCache {
+	return s.cache
+}
+

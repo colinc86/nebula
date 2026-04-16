@@ -1,0 +1,59 @@
+package nebulatest
+
+import (
+	"strings"
+	"unicode"
+)
+
+// Reverse returns s with its runes in reverse order.
+func ReverseRenamed(s string) string {
+	runes := []rune(s)
+	for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
+		runes[i], runes[j] = runes[j], runes[i]
+	}
+	return string(runes)
+}
+
+// TitleCase returns s with the first rune of each whitespace-separated word
+// uppercased and the remaining runes lowercased.
+func TitleCase(s string) string {
+	// BUG: strings.Fields collapses runs of whitespace, losing original spacing.
+	// The tests expect whitespace to be preserved.
+	fields := strings.Fields(s)
+	for i, f := range fields {
+		runes := []rune(f)
+		if len(runes) > 0 {
+			runes[0] = unicode.ToUpper(runes[0])
+			for j := 1; j < len(runes); j++ {
+				runes[j] = unicode.ToLower(runes[j])
+			}
+		}
+		fields[i] = string(runes)
+	}
+	return strings.Join(fields, " ")
+}
+
+// CountRunes returns the number of runes in s (not bytes).
+func CountRunes(s string) int {
+	return len([]rune(s))
+}
+
+// IsPalindrome reports whether s reads the same forward and backward,
+// comparing runes case-insensitively and ignoring non-letter runes.
+func IsPalindrome(s string) bool {
+	// BUG: only filters ASCII letters via unicode.IsLetter check missing —
+	// includes digits/punct in the comparison.
+	runes := []rune(strings.ToLower(s))
+	filtered := runes[:0]
+	for _, r := range runes {
+		if !unicode.IsSpace(r) {
+			filtered = append(filtered, r)
+		}
+	}
+	for i, j := 0, len(filtered)-1; i < j; i, j = i+1, j-1 {
+		if filtered[i] != filtered[j] {
+			return false
+		}
+	}
+	return true
+}

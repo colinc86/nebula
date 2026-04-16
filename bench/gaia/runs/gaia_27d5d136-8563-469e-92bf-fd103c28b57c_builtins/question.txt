@@ -1,0 +1,10 @@
+¬(A ∧ B) ↔ (¬A ∨ ¬B)
+¬(A ∨ B) ↔ (¬A ∧ ¬B)
+(A → B) ↔ (¬B → ¬A)
+(A → B) ↔ (¬A ∨ B)
+(¬A → B) ↔ (A ∨ ¬B)
+¬(A → B) ↔ (A ∧ ¬B)
+
+Which of the above is not logically equivalent to the rest? Provide the full statement that doesn't fit.
+
+Respond with ONLY the final answer as a single line — no explanation.

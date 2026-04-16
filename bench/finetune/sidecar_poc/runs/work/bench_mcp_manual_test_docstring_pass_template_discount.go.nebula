@@ -1,0 +1,15 @@
+struct Discount:
+  kind: Str
+  amount: Int64
+kind_percent := "percent"
+kind_fixed := "fixed"
+def new_percent_discount_renamed(pct: Int64) -> Discount:
+  return (Discount { kind: KindPercent, amount: pct })
+def new_fixed_discount(cents: Int64) -> Discount:
+  return (Discount { kind: KindFixed, amount: cents })
+impl Discount:
+  def apply(self, m: Money) -> Money:
+    match self.kind:
+      kind_percent => (Money { amount: m.amount * (100 - self.amount) / 100, currency: m.currency })
+      kind_fixed => (Money { amount: m.amount - self.amount, currency: m.currency })
+      _ => m

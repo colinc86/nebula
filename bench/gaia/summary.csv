@@ -1,0 +1,27 @@
+task_id,config,total_cost_usd,input_tokens,cache_read_tokens,output_tokens,num_turns,duration_ms,predicted,expected,correct
+27d5d136-8563-469e-92bf-fd103c28b57c,builtins,0.0331083,2,11991,25,1,2766,(¬A → B) ↔ (A ∨ ¬B),(¬A → B) ↔ (A ∨ ¬B),true
+27d5d136-8563-469e-92bf-fd103c28b57c,delegate,0.03545204999999999,2,11991,25,1,2065,(¬A → B) ↔ (A ∨ ¬B),(¬A → B) ↔ (A ∨ ¬B),true
+2d83110e-a098-4ebb-9987-066c06fa42d0,builtins,0.03227955,2,11991,1,1,5618,"API Error: Claude Code is unable to respond to this request, which appears to violate our Usage Policy (https://www.anth",Right,false
+2d83110e-a098-4ebb-9987-066c06fa42d0,delegate,0.034623299999999996,2,11991,1,1,1587,"API Error: Claude Code is unable to respond to this request, which appears to violate our Usage Policy (https://www.anth",Right,false
+389793a7-ca17-4e82-81cb-2b3a2391b4b9,builtins,0.070692,4,51650,1639,3,30412,3,3,true
+389793a7-ca17-4e82-81cb-2b3a2391b4b9,delegate,0.06219570000000001,4,52829,911,3,19220,3,3,true
+3cef3a44-215e-4aed-8e3b-b1e3f08063b7,builtins,0.0475308,2,11991,964,1,16381,"broccoli, celery, fresh basil, lettuce, sweet potatoes","broccoli, celery, fresh basil, lettuce, sweet potatoes",true
+3cef3a44-215e-4aed-8e3b-b1e3f08063b7,delegate,0.047159549999999995,2,11991,783,1,14010,"broccoli, celery, fresh basil, lettuce, sweet potatoes","broccoli, celery, fresh basil, lettuce, sweet potatoes",true
+42576abe-0deb-4869-8c63-225c2d75a95a,builtins,0.033307050000000005,2,11991,11,1,2366,Maktay Zapple Pa,Maktay mato apple,false
+42576abe-0deb-4869-8c63-225c2d75a95a,delegate,0.035650799999999996,2,11991,11,1,2071,Maktay Zapple Pa,Maktay mato apple,false
+4b650a35-8529-4695-89ed-8dc7a500a498,builtins,0.03249705,2,11991,6,1,1626,Guava,Guava,true
+4b650a35-8529-4695-89ed-8dc7a500a498,delegate,0.0348408,2,11991,6,1,1596,Guava,Guava,true
+50ad0280-0819-4bd9-b275-5de32d3b5bcb,builtins,0.0325608,2,11991,15,1,2451,The seagull glided peacefully to my chair.,The seagull glided peacefully to my chair.,true
+50ad0280-0819-4bd9-b275-5de32d3b5bcb,delegate,0.03719955,2,11991,168,1,3786,THE SEAGULL GLIDED PEACEFULLY TO MY CHAIR,The seagull glided peacefully to my chair.,true
+50ec8903-b81f-4257-9450-1085afd2c319,builtins,0.14006955000000001,2,11991,7157,1,105997,"green, white","green, white",true
+50ec8903-b81f-4257-9450-1085afd2c319,delegate,0.0817833,2,11991,3115,1,44517,"green, white","green, white",true
+6f37996b-2ac7-44b0-8e68-6d28256631b4,builtins,0.039652049999999994,2,11991,463,1,8127,"b, e","b, e",true
+6f37996b-2ac7-44b0-8e68-6d28256631b4,delegate,0.0387408,2,11991,246,1,6981,"b, e","b, e",true
+dc28cf18-6431-458b-83ef-64b3ce566c10,builtins,0.05258955,2,11991,1309,1,18146,2,2,true
+dc28cf18-6431-458b-83ef-64b3ce566c10,delegate,0.055488300000000004,2,11991,1346,1,19440,2,2,true
+e142056d-56ab-4352-b091-b56054bd1359,builtins,0.38414580000000004,2,11991,23410,1,326100,"$12,000",16000,false
+e142056d-56ab-4352-b091-b56054bd1359,delegate,0.27706455,2,11991,16115,1,218631,"$12,000",16000,false
+ec09fa32-d03f-4bf8-84b0-1f16922c3ae4,builtins,0.1296483,2,11991,6383,1,89648,3,3,true
+ec09fa32-d03f-4bf8-84b0-1f16922c3ae4,delegate,0.14952705,2,11991,7552,1,89116,3,3,true
+f918266a-b3e0-4914-865d-4faa564f1aef,builtins,0.0757434,4,43788,263,3,22729,0,0,true
+f918266a-b3e0-4914-865d-4faa564f1aef,delegate,0.0535395,4,52725,336,3,60772,0,0,true

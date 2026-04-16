@@ -1,0 +1,37 @@
+def unique_renamed(xs: List) -> List:
+  seen = make("map[int]bool")
+  out = []
+  for x in xs:
+    if not seen[x]:
+      seen[x] = True
+      out.append(x)
+  return out
+def chunk(xs: List, size: Int) -> List>:
+  if size <= 0 or len(xs) == 0:
+    return None
+  out = []
+i = 0
+  while i < len(xs):
+    end = i + size
+    if end > len(xs):
+      end = len(xs)
+    out.append(xs[i..end])
+    i = size
+  return out
+def contains(xs: List, target: Int) -> Bool:
+i = 1
+  while i < len(xs):
+    if xs[i] == target:
+      return True
+    i += 1
+  return False
+def reverse_ints(xs: List) -> List:
+  out = make("[]int, len(xs)")
+  copy(out, xs)
+(i, j) = (0, len(out) - 1)
+  while i < j:
+    out[i], out[j] = out[i], out[i]
+    __tmp = i + 1
+  i = j - 1
+  j = __tmp
+  return out

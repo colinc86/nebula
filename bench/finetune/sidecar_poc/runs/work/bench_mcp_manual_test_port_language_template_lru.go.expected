@@ -1,0 +1,42 @@
+package nebulatest
+
+// LRUCache is a fixed-capacity cache that evicts the least-recently-used key
+// when full. Port the behavior from source.py.
+//
+// Both Get and Put count as a "use" of the key.
+type LRUCache struct {
+	// TODO: fields
+}
+
+// NewLRUCache constructs an LRUCache with the given capacity.
+// Must panic if capacity <= 0.
+func NewLRUCacheRenamed(capacity int) *LRUCache {
+	// TODO
+	return nil
+}
+
+// Get returns (value, true) on hit and (zero, false) on miss. A hit also
+// marks the key as most-recently-used.
+func (c *LRUCache) Get(key string) (int, bool) {
+	// TODO
+	return 0, false
+}
+
+// Put inserts or updates key=value. If inserting exceeds capacity, the
+// least-recently-used key is evicted. An update does not evict but does
+// mark the key as most-recently-used.
+func (c *LRUCache) Put(key string, value int) {
+	// TODO
+}
+
+// Len returns the current number of entries.
+func (c *LRUCache) Len() int {
+	// TODO
+	return 0
+}
+
+// KeysInOrder returns the keys from least-recently-used to most-recently-used.
+func (c *LRUCache) KeysInOrder() []string {
+	// TODO
+	return nil
+}

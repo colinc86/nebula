@@ -1,0 +1,48 @@
+{
+  "n": 60,
+  "byte": 1,
+  "trail": 33,
+  "norm": 33,
+  "tokens_in": 102078,
+  "tokens_out": 44351,
+  "by_lang": {
+    "py": {
+      "n": 51,
+      "byte": 1,
+      "trail": 30,
+      "norm": 30
+    },
+    "go": {
+      "n": 9,
+      "byte": 0,
+      "trail": 3,
+      "norm": 3
+    }
+  },
+  "by_edit": {
+    "rename_func_py": {
+      "n": 51,
+      "byte": 1,
+      "trail": 30,
+      "norm": 30
+    },
+    "rename_func_go": {
+      "n": 2,
+      "byte": 0,
+      "trail": 1,
+      "norm": 1
+    },
+    "add_param_go": {
+      "n": 4,
+      "byte": 0,
+      "trail": 2,
+      "norm": 2
+    },
+    "rename_method_go": {
+      "n": 3,
+      "byte": 0,
+      "trail": 0,
+      "norm": 0
+    }
+  }
+}

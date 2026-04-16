@@ -1,0 +1,19 @@
+22:36:59 poll  1 elapsed=0s status=queued
+22:38:01 poll  3 elapsed=62s status=running
+22:44:09 poll 15 elapsed=430s status=uploading
+22:45:40 poll 18 elapsed=521s status=completed
+22:45:40 TERMINAL  status=completed  output=None
+01:16:35 poll  1 elapsed=0s status=pending
+01:17:06 poll  2 elapsed=31s status=queued
+01:17:36 poll  3 elapsed=61s status=running
+01:30:19 poll 28 elapsed=824s status=compressing
+01:31:20 poll 30 elapsed=885s status=uploading
+01:34:23 poll 36 elapsed=1067s status=completed
+01:34:23 TERMINAL  status=completed  output=None
+16:38:55 poll  1 elapsed=0s status=pending
+16:39:25 poll  2 elapsed=30s status=queued
+16:39:55 poll  3 elapsed=60s status=running
+16:53:31 poll 30 elapsed=876s status=compressing
+16:54:32 poll 32 elapsed=937s status=uploading
+16:56:33 poll 36 elapsed=1058s status=completed
+16:56:33 TERMINAL  status=completed  output=None

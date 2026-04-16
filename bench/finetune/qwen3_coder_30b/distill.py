@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""Distillation runner — runs Sonnet through Nebula MCP on each task and
-captures the agent traces as fine-tuning data.
+"""Distillation runner — drives Qwen3-Coder-480B (Apache 2.0, via Together AI)
+through Nebula MCP on each task and captures the agent traces as fine-tuning
+data.
 
 For every task in tasks/:
     1. Copy seed/ to a fresh trial directory
-    2. Run `claude -p --model sonnet --mcp-config ... --output-format stream-json`
+    2. Run the agent loop against Qwen3-Coder-480B-A35B-Instruct on Together
        with the task's prompt against that trial dir
     3. Run the verify command in the trial dir
     4. If verify passes (or for explain tasks, the final message contains the
-       expected keywords), convert the stream into Qwen3 chat-template format
-       and append to the output JSONL
+       expected keywords), convert the messages into Qwen3 chat-template
+       format and append to the output JSONL
     5. If verify fails, drop the trace and log the failure
 
 The Qwen3 chat-template format produced is OpenAI-style:
@@ -30,7 +31,14 @@ Usage:
         --output bench/finetune/qwen3_coder_30b/data/validation_train.jsonl \
         --max-tasks 60
 
-Cost: ~$0.20 per task on Sonnet 4.6.
+Teacher choice: Qwen3-Coder-480B-A35B-Instruct is Apache 2.0 and its license
+permits distillation into derivative models. Anthropic's Claude models are
+NOT usable as teachers here — their consumer/commercial terms prohibit using
+model outputs to train any other ML model (see
+https://www.anthropic.com/legal/consumer-terms §3). Do not add a Claude
+teacher path; do not feed Claude-derived traces into this pipeline.
+
+Cost: ~$0.10-0.30 per task on Qwen3-Coder-480B via Together AI.
 """
 
 import argparse
@@ -47,45 +55,6 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 NEBULA_BIN = REPO_ROOT / "compiler" / "target" / "release" / "nebula"
-NEBULA_MCP_CONFIG = REPO_ROOT / "bench" / "mcp_manual_test" / "nebula_mcp.json"
-
-
-CLAUDE_P_DISALLOWED = " ".join([
-    # Built-in file/edit tools — we want everything to go through MCP
-    "Read", "Edit", "Write", "Grep", "MultiEdit", "NotebookEdit", "Glob",
-    # Planning/agent tools — we don't want them in Qwen training data
-    "TodoWrite", "Task", "ToolSearch", "WebFetch", "WebSearch",
-    "ExitPlanMode", "EnterPlanMode", "EnterWorktree", "ExitWorktree",
-    "AskUserQuestion", "Skill", "ScheduleWakeup",
-    "CronCreate", "CronDelete", "CronList", "RemoteTrigger",
-    "Monitor", "TaskOutput", "TaskStop", "LSP",
-])
-
-
-def run_claude_p(task_dir, prompt, output_jsonl, max_budget=2.0):
-    """Run a one-shot claude -p session with Nebula MCP enabled.
-    Tool surface is restricted to: Bash + the 5 mcp__nebula__* tools."""
-    cmd = [
-        "claude", "--print",
-        "--mcp-config", str(NEBULA_MCP_CONFIG),
-        "--strict-mcp-config",
-        "--disallowed-tools", CLAUDE_P_DISALLOWED,
-        "--permission-mode", "bypassPermissions",
-        "--model", "sonnet",
-        "--output-format", "stream-json",
-        "--verbose",
-        "--max-budget-usd", str(max_budget),
-        "--no-session-persistence",
-        "--setting-sources", "user",
-        prompt,
-    ]
-    with open(output_jsonl, "w") as out:
-        proc = subprocess.run(
-            cmd, cwd=task_dir,
-            stdout=out, stderr=subprocess.PIPE,
-            timeout=600,
-        )
-    return proc.returncode == 0, proc.stderr.decode(errors="replace")[:1000]
 
 
 # ── Together AI / Qwen3-Coder-480B teacher driver ─────────────────────────
@@ -264,7 +233,8 @@ def run_teacher_together(work_dir, prompt, canonical_tools, max_turns=30, system
 
             assistant_msg = {"role": "assistant", "content": content}
             if tool_calls:
-                # Normalize tool_calls to the shape parse_stream_json produces
+                # Normalize tool_calls to the OpenAI-style shape that
+                # to_qwen_chat_format expects downstream.
                 norm_tcs = []
                 for tc in tool_calls:
                     fn = tc.get("function") or {}
@@ -323,91 +293,6 @@ def run_verify(verify_cmd, task_dir, timeout=120):
         capture_output=True, text=True, timeout=timeout,
     )
     return p.returncode == 0, (p.stdout + p.stderr)[-2000:]
-
-
-# ── Stream-json → Qwen chat-template conversion ────────────────────────────
-
-def parse_stream_json(stream_path):
-    """Read a claude -p stream-json file and return (messages, tools, final_text, usage)."""
-    messages = []
-    tools = None
-    final_text = ""
-    final_usage = None
-
-    for raw in open(stream_path):
-        raw = raw.strip()
-        if not raw:
-            continue
-        try:
-            ev = json.loads(raw)
-        except Exception:
-            continue
-
-        if ev.get("type") == "system" and ev.get("subtype") == "init":
-            t = ev.get("tools") or []
-            if t:
-                tools = t
-            continue
-
-        if ev.get("type") == "result":
-            final_usage = ev.get("usage")
-            final_text = (ev.get("result") or "")[:4000]
-            continue
-
-        msg = ev.get("message")
-        if not isinstance(msg, dict):
-            continue
-
-        role = msg.get("role")
-        if role not in ("user", "assistant"):
-            continue
-        content = msg.get("content")
-        if not isinstance(content, list):
-            continue
-
-        if role == "assistant":
-            text_parts = []
-            tool_calls = []
-            for block in content:
-                btype = block.get("type")
-                if btype == "text":
-                    text_parts.append(block.get("text", ""))
-                elif btype == "tool_use":
-                    tool_calls.append({
-                        "id": block.get("id", ""),
-                        "type": "function",
-                        "function": {
-                            "name": block.get("name", ""),
-                            "arguments": json.dumps(block.get("input", {})),
-                        },
-                    })
-            assistant_msg = {"role": "assistant", "content": "\n".join(text_parts).strip()}
-            if tool_calls:
-                assistant_msg["tool_calls"] = tool_calls
-            messages.append(assistant_msg)
-
-        elif role == "user":
-            for block in content:
-                btype = block.get("type")
-                if btype == "tool_result":
-                    tc_id = block.get("tool_use_id", "")
-                    inner = block.get("content")
-                    text = ""
-                    if isinstance(inner, str):
-                        text = inner
-                    elif isinstance(inner, list):
-                        for sub in inner:
-                            if isinstance(sub, dict) and sub.get("type") == "text":
-                                text += sub.get("text", "")
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc_id,
-                        "content": text,
-                    })
-                elif btype == "text":
-                    messages.append({"role": "user", "content": block.get("text", "")})
-
-    return messages, tools, final_text, final_usage
 
 
 RENAME_DISCIPLINE_BLOCK = """
@@ -514,7 +399,7 @@ def fetch_mcp_tools_as_openai_schema():
 
 
 def to_qwen_chat_format(messages, canonical_tools, system_prompt):
-    """Convert a parsed claude -p stream into Qwen3 fine-tuning format.
+    """Convert a normalized OpenAI-style message list into Qwen3 fine-tuning format.
     `canonical_tools` is the inference-time tool list (from fetch_mcp_tools_as_openai_schema).
 
     Post-processes the message list:
@@ -608,8 +493,9 @@ def main():
     p.add_argument("--max-tasks", type=int, default=200)
     p.add_argument("--skip-existing", action="store_true")
     p.add_argument("--dry-run", action="store_true")
-    p.add_argument("--teacher", choices=["sonnet", "qwen3-coder-480b"], default="qwen3-coder-480b",
-                   help="Which teacher model to use for distillation")
+    # Teacher is fixed to qwen3-coder-480b (Apache 2.0, distillation permitted).
+    # DO NOT re-add a Claude teacher path: Anthropic's consumer/commercial terms
+    # §3 prohibit using Claude outputs to train any other ML model.
     p.add_argument("--only-task", default=None,
                    help="Run just one task (by task_id) — for smoke testing")
     p.add_argument("--only-tasks", default=None,
@@ -663,7 +549,7 @@ def main():
                         pass
             pending = filtered
         pending = pending[:args.max_tasks]
-    print(f"Distillation: teacher={args.teacher} variant={args.system_prompt_variant}, {len(pending)} tasks pending (output: {out_path})", flush=True)
+    print(f"Distillation: teacher=qwen3-coder-480b variant={args.system_prompt_variant}, {len(pending)} tasks pending (output: {out_path})", flush=True)
     if not pending:
         return
 
@@ -680,7 +566,7 @@ def main():
     print(f"  got {len(canonical_tools)} canonical tools: {[t['function']['name'] for t in canonical_tools]}", flush=True)
 
     out_fp = open(out_path, "a")
-    stats = {"pass": 0, "verify_fail": 0, "explain_fail": 0, "validate_fail": 0, "tool_drift": 0, "claude_fail": 0, "exception": 0}
+    stats = {"pass": 0, "verify_fail": 0, "explain_fail": 0, "validate_fail": 0, "tool_drift": 0, "teacher_fail": 0, "exception": 0}
     t_start = time.time()
     canonical_tool_names = {t["function"]["name"] for t in canonical_tools}
 
@@ -699,35 +585,20 @@ def main():
             print(f"[{i}/{len(pending)}] {task_id} ({meta['type']})", flush=True)
 
             t0 = time.time()
-            if args.teacher == "qwen3-coder-480b":
-                try:
-                    messages, final_text, teacher_stats = run_teacher_together(
-                        work_dir, prompt, canonical_tools, max_turns=30,
-                        system_prompt_variant=args.system_prompt_variant,
-                    )
-                    wall = time.time() - t0
-                    print(f"    teacher: turns={teacher_stats['turns']} "
-                          f"tools={teacher_stats['tool_calls']} "
-                          f"in={teacher_stats['input_tokens']} "
-                          f"out={teacher_stats['output_tokens']}", flush=True)
-                except Exception as e:
-                    stats["claude_fail"] += 1
-                    _log_failure(fail_log, task_id, "teacher_failed", str(e))
-                    continue
-            else:
-                stream_path = trial / "stream.jsonl"
-                ok, stderr = run_claude_p(work_dir, prompt, stream_path)
+            try:
+                messages, final_text, teacher_stats = run_teacher_together(
+                    work_dir, prompt, canonical_tools, max_turns=30,
+                    system_prompt_variant=args.system_prompt_variant,
+                )
                 wall = time.time() - t0
-                if not ok and not stream_path.exists():
-                    stats["claude_fail"] += 1
-                    _log_failure(fail_log, task_id, "claude_p_failed", stderr)
-                    continue
-                try:
-                    messages, tools, final_text, usage = parse_stream_json(stream_path)
-                except Exception as e:
-                    stats["exception"] += 1
-                    _log_failure(fail_log, task_id, "parse_exception", str(e))
-                    continue
+                print(f"    teacher: turns={teacher_stats['turns']} "
+                      f"tools={teacher_stats['tool_calls']} "
+                      f"in={teacher_stats['input_tokens']} "
+                      f"out={teacher_stats['output_tokens']}", flush=True)
+            except Exception as e:
+                stats["teacher_fail"] += 1
+                _log_failure(fail_log, task_id, "teacher_failed", str(e))
+                continue
 
             v_ok, v_out = run_verify(verify_cmd, work_dir)
 
@@ -750,9 +621,9 @@ def main():
                 continue
 
             # Tool-drift check: every tool call in the trace must use a tool we
-            # actually expose at inference time. If Sonnet snuck in a Glob / Task
-            # / etc. (via the disallowed-tools fence somehow being incomplete),
-            # the trace teaches the wrong thing — drop it.
+            # actually expose at inference time. If the teacher called a tool
+            # outside the canonical set, the trace would teach the student to
+            # reach for tools that don't exist at inference time — drop it.
             drift = []
             for m in trace["messages"]:
                 for tc in m.get("tool_calls") or []:

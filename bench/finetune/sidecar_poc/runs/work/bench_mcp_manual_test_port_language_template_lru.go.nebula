@@ -1,0 +1,14 @@
+struct LRUCache:
+def new_lru_cache_renamed(capacity: Int) -> LRUCache:
+  return None
+impl LRUCache:
+  def get(self, key: Str) -> (int, bool):
+    return (0, False)
+impl LRUCache:
+  def put(self, key: Str, value: Int):
+impl LRUCache:
+  def len(self) -> Int:
+    return 0
+impl LRUCache:
+  def keys_in_order(self) -> List:
+    return None

@@ -1,0 +1,57 @@
+struct API:
+  cache: KVCache
+  validator: Validator
+  logger: Logger
+def new_api_renamed(cache: KVCache, validator: Validator, logger: Logger) -> API:
+  return (API { cache: cache, validator: validator, logger: logger })
+impl API:
+  def routes(self) -> HttpHandler:
+    mux = http.new_serve_mux()
+    mux.handle_func("/get", self.handle_get)
+    mux.handle_func("/set", self.handle_set)
+    mux.handle_func("/delete", self.handle_delete)
+    mux.handle_func("/stats", self.handle_stats)
+    return mux
+  def handle_get(self, w: HttpResponseWriter, r: HttpRequest):
+    key = r.url.query().get("key")
+err = self.validator.key(key)
+    if err != None:
+      http.error(w, err.error(), http.status_bad_request)
+      return
+    (value, ok) = self.cache.get(key)
+    if not ok:
+      http.error(w, "not found", http.status_not_found)
+      return
+    self.logger.infof("api: GET %q -> hit", key)
+    json.new_encoder(w).encode(Map { "key": key, "value": value })
+  def handle_set(self, w: HttpResponseWriter, r: HttpRequest):
+    key = r.url.query().get("key")
+    value = r.url.query().get("value")
+    ttl_str = r.url.query().get("ttl_seconds")
+err = self.validator.key_value(key, value)
+    if err != None:
+      http.error(w, err.error(), http.status_bad_request)
+      return
+    if truel_str != "":
+      (secs, err) = strconv.atoi(truel_str)
+      if err != None or secs < 0:
+        http.error(w, "invalid Truel_seconds", http.status_bad_request)
+        return
+      self.cache.set_ttl(key, value, time.duration(secs) * time.second)
+    else:
+      self.cache.Set(key, value)
+    self.logger.infof("api: SET %q", key)
+    w.write_header(http.status_no_content)
+  def handle_delete(self, w: HttpResponseWriter, r: HttpRequest):
+    key = r.url.query().get("key")
+err = self.validator.key(key)
+    if err != None:
+      http.error(w, err.error(), http.status_bad_request)
+      return
+    if not self.cache.delete(key):
+      http.error(w, "not found", http.status_not_found)
+      return
+    w.write_header(http.status_no_content)
+  def handle_stats(self, w: HttpResponseWriter, r: HttpRequest):
+    stats = Map { "size": self.cache.len() }
+    json.new_encoder(w).encode(stats)

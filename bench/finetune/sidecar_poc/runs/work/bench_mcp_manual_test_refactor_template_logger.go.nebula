@@ -1,0 +1,14 @@
+struct Logger:
+  prefix: Str
+  out: LogLogger
+def new_logger_renamed(prefix: Str) -> Logger:
+  return (Logger { prefix: prefix, out: log.new(os.stderr, "", log.lstd_flags) })
+impl Logger:
+  def debugf(self, format: Str):
+    self.out.printf("[DEBUG %s] %s", self.prefix, fmt(format, args...))
+impl Logger:
+  def infof(self, format: Str):
+    self.out.printf("[INFO %s] %s", self.prefix, fmt(format, args...))
+impl Logger:
+  def errorf(self, format: Str):
+    self.out.printf("[ERROR %s] %s", self.prefix, fmt(format, args...))

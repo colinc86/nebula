@@ -1,0 +1,10 @@
+{
+  "n": 19,
+  "byte_exact": 0,
+  "trailing_eq": 13,
+  "normalized_eq": 13,
+  "extract_fail": 1,
+  "total_tokens_in": 27176,
+  "total_tokens_out": 7948,
+  "total_wall_s": 91.80000000000001
+}

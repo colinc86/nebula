@@ -1,0 +1,29 @@
+package pricing
+
+type Discount struct {
+	Kind   string
+	Amount int64
+}
+
+const KindPercent = "percent"
+
+const KindFixed = "fixed"
+
+func NewPercentDiscountRenamed(pct int64) Discount {
+	return Discount{Kind: KindPercent, Amount: pct}
+}
+
+func NewFixedDiscount(cents int64) Discount {
+	return Discount{Kind: KindFixed, Amount: cents}
+}
+
+func (d Discount) Apply(m Money) Money {
+	switch d.Kind {
+	case KindPercent:
+		return Money{Amount: m.Amount * (100 - d.Amount) / 100, Currency: m.Currency}
+	case KindFixed:
+		return Money{Amount: m.Amount - d.Amount, Currency: m.Currency}
+	default:
+		return m
+	}
+}

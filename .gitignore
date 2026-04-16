@@ -16,6 +16,8 @@ __pycache__/
 # Secrets
 *.env
 
+bench/mcp_manual_test/
+
 # Model weights and training data (published to HuggingFace)
 # - Models:   electrocampbell/nebula-8lang-{1.5b,7b,14b}, electrocampbell/nebula-host-30b-gguf
 # - Datasets: electrocampbell/nebula-8lang-{68k,203k}

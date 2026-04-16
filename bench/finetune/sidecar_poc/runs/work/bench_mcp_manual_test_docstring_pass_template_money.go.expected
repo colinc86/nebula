@@ -1,0 +1,36 @@
+package pricing
+
+import "fmt"
+
+type Money struct {
+	Amount   int64
+	Currency string
+}
+
+const USD = "USD"
+
+const EUR = "EUR"
+
+const GBP = "GBP"
+
+func NewMoneyRenamed(amount int64, currency string) Money {
+	return Money{Amount: amount, Currency: currency}
+}
+
+func (m Money) Add(other Money) Money {
+	if m.Currency != other.Currency {
+		panic("currency mismatch")
+	}
+	return Money{Amount: m.Amount + other.Amount, Currency: m.Currency}
+}
+
+func (m Money) Sub(other Money) Money {
+	if m.Currency != other.Currency {
+		panic("currency mismatch")
+	}
+	return Money{Amount: m.Amount - other.Amount, Currency: m.Currency}
+}
+
+func (m Money) Format() string {
+	return fmt.Sprintf("%.2f %s", float64(m.Amount)/100, m.Currency)
+}

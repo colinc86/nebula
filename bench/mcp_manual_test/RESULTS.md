@@ -648,3 +648,64 @@ cd /tmp/nebula_run   && go test ./...   # expect: 12/12 pass
 ```
 
 Trial count was 1 baseline + 2 Nebula (one to capture token totals, one to capture the stream-json trace). Variance between Nebula runs was substantial (24% on cost, 20% on cache_creation), so single-trial numbers should be treated as directional, not precise.
+
+---
+
+## Phase 20 — combined multi-task fine-tune (iter-20, 2026-04-15)
+
+Shift of measurement axis from host-cost (settled −51% in iter-18) to **inner-loop wall-clock**. Delegate loop instrumented with per-turn prefill/gen/tool-dispatch/bash timing in `compiler/src/mcp_delegate.rs`. 8-shape benchmark re-run against the stock `qwen3-coder:30b` baseline, then re-run against the new combined multi-task fine-tune `colinc86_4aa1/Qwen3-Coder-30B-A3B-Instruct-nebcombined-130ab3f9` deployed as `nebula-combined-30b` Q4_K_M on the user's native Ollama (port 11435, 22 GB at 32K context, 100% GPU after the iGPU desktop switch).
+
+Both configs use the same templates, same verify commands, `NEBULA_DELEGATE_NUM_CTX=32768`, and the same RTX 3090.
+
+### N=3 variance results
+
+| Shape | Baseline (s) | Combined mean (s) | Range | Δ vs baseline | Pass |
+|---|---:|---:|---:|---:|:---:|
+| add_feature | 31.5 | 10.2 | 7.0–14.7 | **−67.5%** | 3/3 |
+| bugfix | 87.7 | 47.2 | 19.0–101.0 | **−46.2%** | 3/3 |
+| extract_helper | 32.5 (Ollama errored) | 24.3 | 21.8–25.6 | −25.2% | 3/3 |
+| port_language | 78.6 | 52.4 | 24.8–96.3 | **−33.3%** | 3/3 |
+| write_from_spec | 65.5 | 13.9 | 8.7–23.2 | **−78.8%** | 3/3 |
+| refactor | 345.2 | 142.9 | 110.3–160.6 | **−58.6%** | 3/3 |
+| docstring_pass | 49.5 | 21.4 | 15.8–26.0 | **−56.7%** | 3/3 |
+| large_file | 382.2 | 391.4 | 203.8–596.9 | +2.4% | **1/3** |
+| **7-shape aggregate** | **690.4** | **312.3** | | **−54.8%** | 21/21 |
+| **8-shape aggregate** | **1072.6** | **703.7** | | **−34.4%** | 22/24 |
+
+Per-shape variance is real on bugfix (5.3× spread) and port_language (3.9× spread) — driven by whether the model nails the patch in one try (~20 s) or burns multiple repair rounds (~100 s). Refactor is tight (110–161 s). Large_file is a capability gap (no large-file shapes in the 126-task training mix) and is the one shape where the combined model is honestly weaker than stock.
+
+### How to reproduce
+
+```bash
+# 1. Data capture (Together teacher, NEBULA_FULL_NEBULA=1 spoofed MCP)
+cd bench/finetune/qwen3_coder_30b
+python3 generate_tasks.py --output-dir tasks --types implement,refactor,bugfix,cross_lang --clean
+NEBULA_FULL_NEBULA=1 NEBULA_SIDECAR_URL=http://127.0.0.1:8765/correct \
+  python3 distill.py --tasks tasks --output data/spoofed_traces.jsonl --max-tasks 200
+
+# 2. Combine with sidecar triples, submit fine-tune
+cd ../sidecar_poc
+python3 combine_train.py
+python3 launch_combined_finetune.py
+
+# 3. Download merged checkpoint, deploy to GPU box
+python3 download_finetune.py merged   # ~44 GB .tar.zst
+bash deploy_combined.sh               # scp + HF→GGUF→Q4_K_M + ollama create
+
+# 4. Benchmark
+cd ../../mcp_manual_test
+NEBULA_DELEGATE_MODEL=nebula-combined-30b \
+NEBULA_DELEGATE_OLLAMA_URL=http://192.168.68.94:11435 \
+NEBULA_DELEGATE_NUM_CTX=32768 \
+python3 phase20_baseline.py a b c
+```
+
+### Environment-variable knobs landed in Phase 20
+
+- `NEBULA_DELEGATE_NUM_CTX` — runtime override of the inner-agent context window (default 8192; set to 32768 for production).
+- `NEBULA_DELEGATE_ENABLE_STALL_DETECT` — opt into the iteration-9 "same stall twice" early-exit guard. **Off by default** after the combined model showed it fires on false positives. The guard remains in the code for future stock-model regressions.
+- `NEBULA_DELEGATE_LOG_STALLS` — dump the stall prefix to stderr when a repeat is detected. Debug only.
+- `NEBULA_FULL_NEBULA` — force `read_code` to return Nebula IL regardless of file size, and route all `patch_code` calls through the sidecar HTTP service. **Not used in production** — the combined-model benchmark showed spoof routing costs 15–30 s per patch, making it a net tax. Kept for future spoof experiments.
+- `NEBULA_SIDECAR_URL`, `NEBULA_SIDECAR_BACKEND`, `NEBULA_SIDECAR_MODEL` — sidecar HTTP service configuration (see `bench/finetune/sidecar_poc/sidecar_server.py`). Relevant when spoof mode is on.
+
+Other `mcp_delegate.rs` defaults raised in Phase 20: `max_verify_retries` 5 → 8 (combined model legitimately uses more repair rounds on complex shapes; large_file passed in one trial at 8 rounds where it would have failed at 5).
