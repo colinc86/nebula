@@ -1,0 +1,9 @@
+{
+  "candidates": {
+    "candA": "ft-f7e93688-0736",
+    "candB": "ft-cc054260-d68c",
+    "candC": "ft-9c11b2fd-f70c"
+  },
+  "base_model": "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+  "launched": "2026-04-16 00:04:26"
+}

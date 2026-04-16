@@ -1,0 +1,176 @@
+{
+  "candA": [
+    {
+      "shape": "add_feature",
+      "verify_passed": true,
+      "turns_used": 5,
+      "wall_s": 7.83,
+      "stopped": "final_message"
+    },
+    {
+      "shape": "bugfix",
+      "verify_passed": true,
+      "turns_used": 24,
+      "wall_s": 33.81,
+      "stopped": "final_message"
+    },
+    {
+      "shape": "extract_helper",
+      "verify_passed": true,
+      "turns_used": 17,
+      "wall_s": 19.45,
+      "stopped": "final_message"
+    },
+    {
+      "shape": "port_language",
+      "verify_passed": true,
+      "turns_used": 11,
+      "wall_s": 23.62,
+      "stopped": "final_message"
+    },
+    {
+      "shape": "write_from_spec",
+      "verify_passed": true,
+      "turns_used": 6,
+      "wall_s": 5.98,
+      "stopped": "final_message"
+    },
+    {
+      "shape": "refactor",
+      "verify_passed": true,
+      "turns_used": 38,
+      "wall_s": 65.63,
+      "stopped": "final_message"
+    },
+    {
+      "shape": "docstring_pass",
+      "verify_passed": true,
+      "turns_used": 24,
+      "wall_s": 20.4,
+      "stopped": "final_message"
+    },
+    {
+      "shape": "large_file",
+      "verify_passed": false,
+      "turns_used": 60,
+      "wall_s": 39.64,
+      "stopped": "max_turns"
+    }
+  ],
+  "candB": [
+    {
+      "shape": "add_feature",
+      "verify_passed": true,
+      "turns_used": 5,
+      "wall_s": 6.33,
+      "stopped": "final_message"
+    },
+    {
+      "shape": "bugfix",
+      "verify_passed": true,
+      "turns_used": 16,
+      "wall_s": 15.29,
+      "stopped": "final_message"
+    },
+    {
+      "shape": "extract_helper",
+      "verify_passed": true,
+      "turns_used": 11,
+      "wall_s": 6.89,
+      "stopped": "final_message"
+    },
+    {
+      "shape": "port_language",
+      "verify_passed": true,
+      "turns_used": 6,
+      "wall_s": 6.77,
+      "stopped": "final_message"
+    },
+    {
+      "shape": "write_from_spec",
+      "verify_passed": true,
+      "turns_used": 9,
+      "wall_s": 9.64,
+      "stopped": "final_message"
+    },
+    {
+      "shape": "refactor",
+      "verify_passed": true,
+      "turns_used": 48,
+      "wall_s": 38.36,
+      "stopped": "final_message"
+    },
+    {
+      "shape": "docstring_pass",
+      "verify_passed": true,
+      "turns_used": 24,
+      "wall_s": 15.7,
+      "stopped": "final_message"
+    },
+    {
+      "shape": "large_file",
+      "verify_passed": false,
+      "turns_used": 60,
+      "wall_s": 25.61,
+      "stopped": "max_turns"
+    }
+  ],
+  "candC": [
+    {
+      "shape": "add_feature",
+      "verify_passed": true,
+      "turns_used": 8,
+      "wall_s": 11.67,
+      "stopped": "final_message"
+    },
+    {
+      "shape": "bugfix",
+      "verify_passed": true,
+      "turns_used": 14,
+      "wall_s": 18.22,
+      "stopped": "final_message"
+    },
+    {
+      "shape": "extract_helper",
+      "verify_passed": true,
+      "turns_used": 13,
+      "wall_s": 11.62,
+      "stopped": "final_message"
+    },
+    {
+      "shape": "port_language",
+      "verify_passed": true,
+      "turns_used": 11,
+      "wall_s": 23.92,
+      "stopped": "final_message"
+    },
+    {
+      "shape": "write_from_spec",
+      "verify_passed": true,
+      "turns_used": 8,
+      "wall_s": 10.03,
+      "stopped": "final_message"
+    },
+    {
+      "shape": "refactor",
+      "verify_passed": false,
+      "turns_used": 60,
+      "wall_s": 110.18,
+      "stopped": "max_turns"
+    },
+    {
+      "shape": "docstring_pass",
+      "verify_passed": true,
+      "turns_used": 24,
+      "wall_s": 15.72,
+      "stopped": "final_message"
+    },
+    {
+      "shape": "large_file",
+      "verify_passed": false,
+      "turns_used": 60,
+      "wall_s": 55.74,
+      "stopped": "max_turns"
+    }
+  ]
+}

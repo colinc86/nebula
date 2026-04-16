@@ -1,0 +1,20 @@
+{
+  "candA": {
+    "id": "endpoint-5ab5d21d-4d03-458e-ba6c-48e34863896b",
+    "model": "colinc86_4aa1/Qwen3-Coder-30B-A3B-Instruct-nebcandA-9c3aa452",
+    "state": "STARTING",
+    "ep_name": "colinc86_4aa1/Qwen3-Coder-30B-A3B-Instruct-nebcandA-9c3aa452-dcc45622"
+  },
+  "candB": {
+    "id": "endpoint-274011ca-88d9-4837-aa43-198046601a50",
+    "model": "colinc86_4aa1/Qwen3-Coder-30B-A3B-Instruct-nebcandB-2637ef7b",
+    "state": "STARTED",
+    "ep_name": "colinc86_4aa1/Qwen3-Coder-30B-A3B-Instruct-nebcandB-2637ef7b-9faee732"
+  },
+  "candC": {
+    "id": "endpoint-feb4503d-d3d7-4b86-9847-a1714e23b806",
+    "model": "colinc86_4aa1/Qwen3-Coder-30B-A3B-Instruct-nebcandC-4f495660",
+    "state": "STARTED",
+    "ep_name": "colinc86_4aa1/Qwen3-Coder-30B-A3B-Instruct-nebcandC-4f495660-5cb90ac0"
+  }
+}

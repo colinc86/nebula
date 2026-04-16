@@ -1,14 +1,14 @@
 {
-  "job_id": "ft-857bdaeb-89c8",
+  "job_id": "ft-cb69126f-bb5e",
   "base_model": "Qwen/Qwen3-Coder-30B-A3B-Instruct",
-  "train_file_id": "file-c2b7d69f-7379-44c5-be4b-42ca89a0f60f",
-  "val_file_id": "file-40cfe9e2-c3c0-441b-b7d8-5374f0e38622",
-  "n_train": 252,
-  "n_val": 28,
+  "train_file_id": "file-c58570bc-e477-4f20-9740-1c424cf86499",
+  "val_file_id": "file-badb7d84-f03a-4f8b-bda8-a1c7b8dde75c",
+  "n_train": 308,
+  "n_val": 34,
   "epochs": 3,
   "lr": 0.0001,
   "lora_r": 16,
   "lora_alpha": 32,
   "suffix": "nebcombined",
-  "started": "2026-04-15 16:38:46"
+  "started": "2026-04-15 22:24:33"
 }

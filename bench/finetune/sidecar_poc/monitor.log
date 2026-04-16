@@ -17,3 +17,10 @@
 16:54:32 poll 32 elapsed=937s status=uploading
 16:56:33 poll 36 elapsed=1058s status=completed
 16:56:33 TERMINAL  status=completed  output=None
+22:24:40 poll  1 elapsed=0s status=pending
+22:25:10 poll  2 elapsed=30s status=queued
+22:25:41 poll  3 elapsed=60s status=running
+22:40:48 poll 33 elapsed=967s status=compressing
+22:41:48 poll 35 elapsed=1028s status=uploading
+22:44:20 poll 40 elapsed=1179s status=completed
+22:44:20 TERMINAL  status=completed  output=None
