@@ -28,6 +28,21 @@ The current checkpoint is **Phase 12** — 47 of the 138 training traces are ref
 
 Paired with `bench/finetune/host_agent_runner.py` (the Python agent loop with runtime nudges) it passes both the round-9 implement test (19 turns, 12/12 tests) and the round-9 refactor test (57 turns, 12/12 tests), where stock Qwen3-Coder regresses on refactor without the runner nudges. See `bench/finetune/qwen3_coder_30b/USAGE.md` for end-to-end setup.
 
+**Combined agent model (Phase 20)** — multi-task fine-tune that serves as both the inner coding agent and the sidecar error corrector. Supersedes `nebula-host-30b` as the production default for `code_task`.
+
+| Model | Base | Data | HuggingFace |
+|---|---|---|---|
+| `nebula-combined-30b` | Qwen3-Coder-30B-A3B-Instruct | [342 multi-task traces](https://huggingface.co/datasets/electrocampbell/nebula-combined-30b-traces) (agent traces + sidecar correction triples, 50/50 by count, 10% large-file) | [electrocampbell/nebula-combined-30b-gguf](https://huggingface.co/electrocampbell/nebula-combined-30b-gguf) |
+
+`nebula-combined-30b` is a QLoRA fine-tune (r=16, α=32, lr=1e-4, batch=2, 3 epochs, all-linear) trained on 342 multi-task examples: 50% agent traces (distilled from Qwen3-Coder-480B teacher through the Nebula MCP) and 50% sidecar Nebula→native correction triples (synthesized rename edits on Go and Python files). The training set includes 10% large-file traces (>200 LoC, short sequences only — the "candB" dosage that preserves core performance while adding large-file exposure). Together AI job: `ft-cc054260-d68c`. Cost: ~$4.
+
+Benchmark (Phase 20, 8 shapes, N=3 each, inner-loop wall-clock vs stock Qwen3-Coder-30B):
+- 7-shape aggregate (excl. large_file): **−54.8%** mean wall-clock, 21/21 verify_passed
+- 8-shape aggregate (incl. large_file at 1/3 pass): −34.4%, 22/24 verify_passed
+- Per-shape: add_feature −67.5%, bugfix −46.2%, extract_helper −25.2%, port_language −33.3%, write_from_spec −78.8%, refactor −58.6%, docstring_pass −56.7%, large_file +2.4%
+
+Runs on a single RTX 3090 at Q4_K_M (~22 GB) via native Ollama (port 11435). Designed to run as the `code_task` inner agent with `NEBULA_DELEGATE_MODEL=nebula-combined-30b`.
+
 ### Earlier Models (6 languages, superseded)
 
 | Model | Base | Languages | Data | Together Job | Pass@1 (HumanEval) |

@@ -860,6 +860,238 @@ fn tool_translate_code(args: &Value) -> Result<String, String> {
     lang_detect::from_nebula_lenient(&nebula, tgt_lang)
 }
 
+// ── Translation fast-path ──
+
+const LANG_EXTENSIONS: &[(&str, &str)] = &[
+    ("python", "py"), ("go", "go"), ("rust", "rs"), ("javascript", "js"),
+    ("typescript", "ts"), ("swift", "swift"), ("kotlin", "kt"), ("c", "c"),
+];
+
+/// Check if a language name appears at a word boundary in text.
+fn has_lang_word(text: &str, lang: &str) -> bool {
+    let bytes = text.as_bytes();
+    let pat = lang.as_bytes();
+    let mut start = 0;
+    while let Some(pos) = text[start..].find(lang) {
+        let abs = start + pos;
+        let before_ok = abs == 0 || !bytes[abs - 1].is_ascii_alphanumeric();
+        let after_ok = abs + pat.len() >= bytes.len()
+            || !bytes[abs + pat.len()].is_ascii_alphanumeric();
+        if before_ok && after_ok {
+            return true;
+        }
+        start = abs + 1;
+    }
+    false
+}
+
+/// Detect translation-shaped tasks. Returns (source_lang, target_lang) if the
+/// instruction matches "port/translate/convert ... to <language>".
+fn detect_translation(instruction: &str) -> Option<(String, String)> {
+    let lower = instruction.to_lowercase();
+    let has_verb = ["port ", "translate ", "convert ", "rewrite "]
+        .iter().any(|v| lower.contains(v));
+    if !has_verb { return None; }
+
+    // Extract target language after "to <lang>" or "into <lang>"
+    let target = LANG_EXTENSIONS.iter()
+        .find(|(name, _)| {
+            lower.contains(&format!(" to {} ", name))
+                || lower.contains(&format!(" to {}\n", name))
+                || lower.ends_with(&format!(" to {}", name))
+                || lower.contains(&format!(" into {} ", name))
+                || lower.contains(&format!(" into {}\n", name))
+        })
+        .map(|(name, _)| name.to_string())?;
+
+    // Detect source language via file extensions (.py, .go, .rs) or word-boundary
+    // name matches, excluding the target language.
+    let source = LANG_EXTENSIONS.iter()
+        .find(|(name, ext)| {
+            *name != target.as_str() && (
+                lower.contains(&format!(".{} ", ext))
+                || lower.contains(&format!(".{}\n", ext))
+                || lower.ends_with(&format!(".{}", ext))
+                || lower.contains(&format!(".{}`", ext))
+                || (name.len() >= 3 && has_lang_word(&lower, name))
+            )
+        })
+        .map(|(name, _)| name.to_string())?;
+
+    Some((source, target))
+}
+
+/// Find the source file in cwd matching the source language.
+fn find_source_file(cwd: &str, src_lang: &str) -> Option<(String, String)> {
+    let ext = LANG_EXTENSIONS.iter()
+        .find(|(n, _)| *n == src_lang)
+        .map(|(_, e)| *e)?;
+    let dir = std::fs::read_dir(cwd).ok()?;
+    for entry in dir.flatten() {
+        let path = entry.path();
+        if let Some(e) = path.extension() {
+            if e == ext {
+                let name = path.file_name()?.to_string_lossy().into_owned();
+                // Skip test files
+                if name.contains("_test.") || name.contains("test_") || name.ends_with("_test.go") {
+                    continue;
+                }
+                let full = path.to_string_lossy().into_owned();
+                let content = std::fs::read_to_string(&full).ok()?;
+                return Some((full, content));
+            }
+        }
+    }
+    None
+}
+
+/// Find the target file in cwd matching the target language.
+fn find_target_file(cwd: &str, tgt_lang: &str) -> Option<String> {
+    let ext = LANG_EXTENSIONS.iter()
+        .find(|(n, _)| *n == tgt_lang)
+        .map(|(_, e)| *e)?;
+    let dir = std::fs::read_dir(cwd).ok()?;
+    for entry in dir.flatten() {
+        let path = entry.path();
+        if let Some(e) = path.extension() {
+            if e == ext {
+                let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                if name.contains("_test.") || name.contains("test_") {
+                    continue;
+                }
+                return Some(path.to_string_lossy().into_owned());
+            }
+        }
+    }
+    None
+}
+
+/// Extract code from a markdown fenced block if present, otherwise return as-is.
+fn extract_code_block(text: &str) -> &str {
+    if let Some(start) = text.find("```") {
+        let after_fence = &text[start + 3..];
+        // Skip the language tag on the opening fence
+        let code_start = after_fence.find('\n').map(|i| i + 1).unwrap_or(0);
+        let code = &after_fence[code_start..];
+        if let Some(end) = code.find("```") {
+            return code[..end].trim();
+        }
+    }
+    text.trim()
+}
+
+/// Try the compiler translation fast-path. Returns Some(Ok/Err) if the fast-path
+/// handled the task (success or hard error), None to fall through to the agent loop.
+fn try_translation_fast_path(
+    instruction: &str,
+    cwd: &str,
+    verify: Option<&str>,
+    preamble: &str,
+) -> Option<Result<String, String>> {
+    let (src_lang, tgt_lang) = detect_translation(instruction)?;
+
+    let (source_path, source_code) = find_source_file(cwd, &src_lang)?;
+    let target_path = find_target_file(cwd, &tgt_lang)?;
+
+    eprintln!("[translate-fast] detected: {} → {}", src_lang, tgt_lang);
+    eprintln!("[translate-fast] source: {}, target: {}", source_path, target_path);
+
+    let original_target = std::fs::read_to_string(&target_path).unwrap_or_default();
+    let t0 = std::time::Instant::now();
+
+    // Direct translation prompt — give the model the source code and target API
+    // signatures, let it produce idiomatic target code in one shot.
+    let translate_prompt = format!(
+        "Translate this {} code to {}.\n\n\
+         {} source:\n```{}\n{}\n```\n\n\
+         {} target file with API signatures to match:\n```{}\n{}\n```\n\n\
+         Write a complete {} implementation that preserves the exact same \
+         semantics and matches the API signatures above. Output ONLY the {} code.",
+        src_lang, tgt_lang,
+        src_lang, src_lang, source_code,
+        tgt_lang, tgt_lang, original_target,
+        tgt_lang, tgt_lang,
+    );
+
+    eprintln!("[translate-fast] sending direct translation prompt to model");
+
+    let max_passes = 2;
+    let mut current_prompt = translate_prompt;
+
+    for pass in 1..=max_passes {
+        match mcp_delegate::run_single_correction(&current_prompt) {
+            Ok(response) => {
+                let code = extract_code_block(&response);
+                if std::fs::write(&target_path, code).is_err() {
+                    break;
+                }
+
+                if let Some(cmd) = verify {
+                    let output = std::process::Command::new("sh")
+                        .arg("-c").arg(cmd).current_dir(cwd).output();
+                    if let Ok(out) = &output {
+                        if out.status.success() {
+                            eprintln!("[translate-fast] pass {} passed verify!", pass);
+                            let result = serde_json::json!({
+                                "summary": format!(
+                                    "Translation fast-path: direct {} → {} translation \
+                                     succeeded in {} pass(es). All tests pass.{}",
+                                    src_lang, tgt_lang, pass, preamble
+                                ),
+                                "turns_used": pass,
+                                "tool_calls": 0,
+                                "elapsed_ms": t0.elapsed().as_millis() as u64,
+                                "stopped_reason": format!("translate_fast_path_pass_{}", pass),
+                                "verify_passed": true,
+                                "files_touched": [&target_path],
+                            });
+                            return Some(Ok(serde_json::to_string_pretty(&result).unwrap()));
+                        }
+                        // Build next prompt from current code + errors
+                        if pass < max_passes {
+                            let mut combined = String::from_utf8_lossy(&out.stdout).into_owned();
+                            combined.push_str(&String::from_utf8_lossy(&out.stderr));
+                            if combined.len() > 3000 { combined.truncate(3000); }
+                            eprintln!("[translate-fast] pass {} failed, retrying with errors", pass);
+                            current_prompt = format!(
+                                "Fix this {} code so all tests pass.\n\n\
+                                 Current code:\n```{}\n{}\n```\n\n\
+                                 Test errors:\n```\n{}\n```\n\n\
+                                 Output ONLY the corrected file.",
+                                tgt_lang, tgt_lang, code, combined
+                            );
+                        }
+                    }
+                } else {
+                    // No verify command — can't validate, just return
+                    let result = serde_json::json!({
+                        "summary": format!(
+                            "Translation fast-path: direct {} → {} translation. \
+                             No verify command provided.{}",
+                            src_lang, tgt_lang, preamble
+                        ),
+                        "turns_used": pass,
+                        "tool_calls": 0,
+                        "elapsed_ms": t0.elapsed().as_millis() as u64,
+                        "stopped_reason": "translate_fast_path_no_verify",
+                        "verify_passed": serde_json::Value::Null,
+                        "files_touched": [&target_path],
+                    });
+                    return Some(Ok(serde_json::to_string_pretty(&result).unwrap()));
+                }
+            }
+            Err(e) => {
+                eprintln!("[translate-fast] pass {} failed: {}", pass, e);
+                break;
+            }
+        }
+    }
+
+    eprintln!("[translate-fast] all passes exhausted, falling through to agent");
+    let _ = std::fs::write(&target_path, &original_target);
+    None
+}
+
 /// `code_task` — delegate a natural-language coding task to the inner
 /// Nebula-native agent (default: nebula-host-30b on Ollama). The inner agent
 /// drives the existing read_code/write_code/patch_code/search_code tools
@@ -962,6 +1194,18 @@ fn tool_code_task(args: &Value) -> Result<String, String> {
         String::new()
     };
     let model_override = args.get("model").and_then(|v| v.as_str());
+
+    // ── Translation fast-path ──
+    // If the instruction is a pure translation/porting task, try the compiler
+    // pipeline (instant, free) before spinning up the agent loop. Compiler
+    // translates source → Nebula → target; if verify passes, return immediately.
+    // If verify fails, do a single-pass Ollama correction. Falls through to the
+    // normal agent loop only if both fail.
+    if let Some(fast_result) = try_translation_fast_path(
+        instruction, &cwd_owned, verify, &preamble,
+    ) {
+        return fast_result;
+    }
 
     let mut config = mcp_delegate::DelegateConfig::with_defaults();
     // Respect a caller-supplied max_turns only if larger than the default —

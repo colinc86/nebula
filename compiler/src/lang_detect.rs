@@ -88,7 +88,10 @@ pub fn from_nebula(nebula: &str, lang: Language) -> Result<String, String> {
         nebula.to_string()
     };
 
-    let tokens = lexer::tokenize(&expanded)
+    // Ingesters emit indent-block Nebula; convert to brace blocks for the parser.
+    let braced = indent_to_braces(&expanded);
+
+    let tokens = lexer::tokenize(&braced)
         .map_err(|e| format!("Lex error at {}:{}: {}", e.line, e.col, e.message))?;
     let program = parser::parse(tokens)
         .map_err(|e| format!("Parse error at {}:{}: {}", e.line, e.col, e.message))?;
@@ -310,14 +313,21 @@ fn indent_to_braces(code: &str) -> String {
         // If line ends with ':', convert to opening brace
         if stripped.ends_with(':') && !stripped.starts_with('#') && !stripped.starts_with("//") {
             let without_colon = &stripped[..stripped.len() - 1];
-            result.push(format!("{}{} {{", " ".repeat(indent), without_colon));
-            // Next line should be indented — track it
-            if i + 1 < lines.len() {
+            let next_is_indented = if i + 1 < lines.len() {
                 let next_stripped = lines[i + 1].trim_start();
-                let next_indent = lines[i + 1].len() - next_stripped.len();
-                if next_indent > indent {
-                    indent_stack.push(next_indent);
-                }
+                let next_indent = if next_stripped.is_empty() { indent + 1 } else { lines[i + 1].len() - next_stripped.len() };
+                next_indent > indent
+            } else {
+                false
+            };
+            if next_is_indented {
+                result.push(format!("{}{} {{", " ".repeat(indent), without_colon));
+                let next_stripped = lines[i + 1].trim_start();
+                let next_indent = if next_stripped.is_empty() { indent + 1 } else { lines[i + 1].len() - next_stripped.len() };
+                indent_stack.push(next_indent);
+            } else {
+                // Empty body (next line not indented) — emit empty block
+                result.push(format!("{}{} {{}}", " ".repeat(indent), without_colon));
             }
         } else {
             result.push(line.to_string());

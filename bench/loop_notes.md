@@ -2576,3 +2576,39 @@ This mirrors and extends the Opus routing-propensity finding from iter-18: then 
 - Runner scripts: `bench/mcp_manual_test/run_crosslang_{addfeature,bugfix}.sh` (8-language, skip-existing)
 - CSVs: `bench/mcp_manual_test/runs/crosslang_{addfeature,bugfix}_summary.csv` (48 rows each, N=3 per cell)
 - Spend this iteration: ~$8 Sonnet (48 bugfix + 24 new add_feature runs; existing 24 add_feature cached from the 4-lang pilot).
+
+## Iteration 22 — 2026-04-16 — Translation fast-path for port_language
+
+**Problem.** port_language (Python→Go LRU cache) has the highest variance of any shape (3.9× spread, 24.8–96.3 s) and the second-weakest wall-clock improvement (−33.3%). The task is literally what Nebula's compiler was built for — cross-language translation — but the delegate's inner agent re-derives the translation turn by turn.
+
+**Approach.** Add a translation fast-path inside `tool_code_task` that fires before the agent loop:
+1. Detect translation intent from the instruction (regex: "port/translate/convert ... to {language}").
+2. Find source and target files in the working directory by extension.
+3. Send a single Ollama call with a direct translation prompt (source code + target API signatures).
+4. Verify. If pass → return immediately (1 turn). If fail → retry with errors (up to 2 passes).
+5. If all passes fail → restore original target file, fall through to normal agent loop.
+
+**Key finding.** We also tried the compiler-first approach (ingest Python → Nebula → Go codegen → error correction), but the compiler draft was counterproductive. The Go codegen produces Go-syntax-Python (e.g., `ordered_dict()`, `sf._data.con(key)`) that confused the correction model into making the same type-assertion bug repeatedly. Direct model translation — giving it the Python source and Go stub signatures — succeeds 3/3 on the first pass.
+
+**Bug fix.** `from_nebula()` in `lang_detect.rs` couldn't parse indent-block Nebula (which the ingesters always produce). Added indent→brace conversion before lexing. Also fixed `indent_to_braces` to handle empty bodies (from dropped `raise` statements). This enables AST-aware codegen for the full translate pipeline across all 8×8 language pairs.
+
+**Results (N=3, nebula-combined-30b on 3090, port_language Python→Go):**
+
+| Trial | Turns | Wall-clock | Stopped reason |
+|---|---:|---:|---|
+| a | 1 | 5.65 s | translate_fast_path_pass_1 |
+| b | 1 | 5.43 s | translate_fast_path_pass_1 |
+| c | 1 | 5.20 s | translate_fast_path_pass_1 |
+
+**Comparison to Phase 20 baseline:** 3 turns / 52.4 s mean / 3.9× spread → **1 turn / 5.4 s mean / 1.1× spread**. Variance collapsed. 7/7 Go tests pass on all trials.
+
+**Does NOT change host cost.** The −37% host cost savings for port_language measures Sonnet's billing (builtins vs. delegate). The host still makes one `code_task` call either way. The fast-path is a wall-clock and reliability improvement, not a host-cost improvement.
+
+**No regressions.** `detect_translation` returns `None` on all 21 non-translation benchmark prompts. `cargo test`: 264 pass. Bugfix shape tested: no fast-path triggered, verify_passed as expected.
+
+**Code changes:**
+- `compiler/src/lang_detect.rs` — `from_nebula` indent→brace fix, `indent_to_braces` empty-body fix
+- `compiler/src/mcp.rs` — `detect_translation`, `find_source_file`, `find_target_file`, `extract_code_block`, `try_translation_fast_path`
+- `compiler/src/mcp_delegate.rs` — `run_single_correction` (one-shot Ollama call without agent loop)
+
+**Spend.** ~$0 Anthropic, ~$0.02 Ollama (local inference on 3090).

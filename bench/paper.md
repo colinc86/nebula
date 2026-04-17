@@ -400,6 +400,37 @@ To test whether Swift and Kotlin's routing refusal is a *choice* or a *capabilit
 
 The honest framing is that **delegation on code-editing tasks is gated by host routing propensity, which is (language × shape × host)-dependent**. The architecture works everywhere; the savings attach to the subset of (language, shape) pairs where the host chooses to delegate. A forcing function (`--disallowed-tools Read Edit Write Grep`) would likely push Regime B into Regime A at the cost of changing the baseline comparison — the same tradeoff documented for Opus in §5.4 and flagged as future work.
 
+### 5.8 Translation fast-path (iter 22)
+
+port_language — porting a Python LRU cache to Go — had the highest inner-loop variance of any shape (3.9× spread, 24.8–96.3 s under the Phase 20 combined model) and the second-weakest wall-clock improvement (−33.3%). The task is literally what the Nebula compiler was built for: cross-language translation via the IL.
+
+**Approach.** We added a translation fast-path inside `code_task` that fires before the agent loop. When the instruction matches a translation pattern ("port/translate/convert ... to {language}"), the MCP:
+
+1. Finds the source file and target file in the working directory.
+2. Sends a single Ollama call with a direct translation prompt: the source code, the target file's existing API signatures, and a "produce idiomatic target code" instruction.
+3. Writes the model's output to the target file and runs the verify command.
+4. If verify passes, returns immediately (1 inner turn). If it fails, retries with the test errors (up to 2 passes total).
+5. If all passes fail, restores the original target file and falls through to the normal agent loop.
+
+**Dead end: compiler-first correction.** We initially tried having the Nebula compiler do the translation (Python → Nebula IL → Go codegen) and then asking the model to fix the result. The Go codegen produces structurally recognizable but non-idiomatic output — Python idioms like `ordered_dict()` and `.move_to_end()` survive as literal Go function calls. The correction model consistently made the same type-assertion error (storing `int` in `list.PushBack` then asserting `string` on eviction), passing 3/7 tests but never all 7. After two attempts, we abandoned the compiler draft entirely.
+
+**What works: direct model translation.** Giving the model the Python source code and the Go stub file (which contains the exact API signatures and package name) lets it produce correct, idiomatic Go in a single inference call.
+
+**Bug fix unlocked along the way.** `from_nebula()` in `lang_detect.rs` could not parse indent-block Nebula — the format all ingesters produce — because it lexed the raw indent blocks without converting to brace blocks first. We added indent→brace conversion before the lexer, enabling AST-aware codegen for the full `translate_code` pipeline across all 8×8 language pairs. This is orthogonal to the fast-path but was discovered during implementation.
+
+**Results (N=3, nebula-combined-30b, port_language Python→Go):**
+
+| Config | Turns | Mean wall-clock | Spread | Verify |
+|---|---:|---:|---:|:---:|
+| Phase 20 baseline (agent loop) | 3 | 52.4 s | 3.9× (24.8–96.3 s) | 3/3 |
+| **Translation fast-path** | **1** | **5.4 s** | **1.1× (5.2–5.7 s)** | **3/3** |
+
+The fast-path reduces inner-loop wall-clock by **−90%** and collapses variance from 3.9× to 1.1×.
+
+**Host cost is unchanged.** The −37.0% host cost savings for port_language (§4.2) measures Sonnet's billing under builtins vs. delegate. The host makes one `code_task` call in either case; the fast-path makes that call resolve faster internally but does not change the host-side token exchange. The fast-path is a product improvement (faster, more reliable delegate), not a cost-model improvement.
+
+**Generalization.** The fast-path applies to any translation-shaped instruction across all 8 Nebula-supported language pairs. Detection is conservative (requires both a translation verb and a " to {language}" target pattern with a valid source language); false negatives fall through to the normal agent loop with zero overhead.
+
 ## 6. Cost model
 
 \[PENDING — Thread C. Will derive `C_b = N_b · t_b`, `C_d = F + N_d · t_d + ε_host`, break-even `N_b* = (F + N_d · t_d + ε_host) / t_b`, and report MAPE on held-out shapes.]

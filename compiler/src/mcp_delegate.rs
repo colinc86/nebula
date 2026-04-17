@@ -165,6 +165,36 @@ pub fn is_available() -> bool {
         .is_ok()
 }
 
+/// Single-shot Ollama call for translation error correction. No tool use, no
+/// agent loop — just one prompt and one response. Returns the model's text output.
+pub fn run_single_correction(prompt: &str) -> Result<String, String> {
+    let config = DelegateConfig::with_defaults();
+    let chat_url = format!("{}/api/chat", config.ollama_url);
+    let payload = json!({
+        "model": config.model,
+        "messages": [
+            {"role": "user", "content": prompt}
+        ],
+        "stream": false,
+        "options": {
+            "num_ctx": config.num_ctx,
+            "temperature": 0.1,
+            "num_predict": 4096,
+        },
+    });
+    let resp: Value = ureq::post(&chat_url)
+        .timeout(Duration::from_secs(120))
+        .send_json(&payload)
+        .map_err(|e| format!("Ollama error: {}", e))?
+        .into_json()
+        .map_err(|e| format!("parse error: {}", e))?;
+    resp.get("message")
+        .and_then(|m| m.get("content"))
+        .and_then(|c| c.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| "No content in Ollama response".to_string())
+}
+
 /// Convert an MCP tool descriptor (shape emitted by `mcp.rs::tools_list`) into
 /// the OpenAI-compatible tool schema that Ollama's `/api/chat` expects.
 pub fn mcp_tool_to_openai(mcp_tool: &Value) -> Value {

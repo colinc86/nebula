@@ -112,6 +112,8 @@ flowchart LR
 
 The host sees one tool call and one JSON response. Everything inside the dashed region — reads, patches, verify loop, retries — is invisible and uncharged. If `verify_passed: true`, the work is done and tested; you do not need to re-verify.
 
+**Translation fast-path.** When `code_task` detects a translation instruction ("port X to Y"), it bypasses the agent loop entirely: one model call with the source code + target API signatures, verify, done. On port_language this completes in ~5 s vs ~52 s through the agent loop.
+
 ### Configuration
 
 Environment variables (all optional):
@@ -172,6 +174,7 @@ We collapse the code-editing tool surface to a single natural-language MCP tool 
 | Inner-loop wall-clock | 7-shape, multi-task fine-tuned 30B-Coder, N=3 | **−54.8%** mean wall-clock vs stock inner agent, 21/21 trials correct (8th shape `large_file`: 1/3 pass, capability gap from no-large-file training data) | [`bench/paper.md §5.6`](bench/paper.md#56-phase-20-multi-task-fine-tune-as-a-wall-clock-lever) |
 | End-to-end correctness | GAIA subset (13 code-editing tasks, N=1) | accuracy-invariant: 10/13 correct under both configs, identical failures | [`bench/gaia/`](bench/gaia/) |
 | Host routing | Opus 4.6 on 15 small-shape trials | Opus delegated 1/15 → savings collapse to noise on small tasks | [`bench/cost_model.md §4.5`](bench/cost_model.md#45-host-model-behavior-opus-check) |
+| Translation fast-path | port_language (Python→Go, N=3) | **1 turn, 5.4 s mean** vs 3 turns / 52.4 s baseline (−90% wall-clock). Translation-shaped tasks bypass the agent loop entirely. | [`bench/paper.md §5.8`](bench/paper.md#58-translation-fast-path-iter-22) |
 
 ### What we claim (and what we don't)
 

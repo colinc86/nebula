@@ -709,3 +709,31 @@ python3 phase20_baseline.py a b c
 - `NEBULA_SIDECAR_URL`, `NEBULA_SIDECAR_BACKEND`, `NEBULA_SIDECAR_MODEL` — sidecar HTTP service configuration (see `bench/finetune/sidecar_poc/sidecar_server.py`). Relevant when spoof mode is on.
 
 Other `mcp_delegate.rs` defaults raised in Phase 20: `max_verify_retries` 5 → 8 (combined model legitimately uses more repair rounds on complex shapes; large_file passed in one trial at 8 rounds where it would have failed at 5).
+
+## Translation fast-path (Iteration 22, 2026-04-16)
+
+Translation-shaped tasks (e.g., "port Python to Go") are now detected by `code_task` and handled via a single-shot Ollama call before the agent loop. The fast-path sends the source code + target API signatures in one prompt, verifies, and returns immediately if tests pass.
+
+### port_language (Python→Go LRU cache, nebula-combined-30b, N=3)
+
+| Trial | Turns | Wall-clock (s) | Stopped reason | Verify |
+|---|---:|---:|---|:---:|
+| a | 1 | 5.65 | translate_fast_path_pass_1 | pass |
+| b | 1 | 5.43 | translate_fast_path_pass_1 | pass |
+| c | 1 | 5.20 | translate_fast_path_pass_1 | pass |
+| **Mean** | **1** | **5.43** | | **3/3** |
+
+### Comparison to Phase 20 baseline (agent loop)
+
+| Metric | Baseline | Fast-path | Change |
+|---|---:|---:|---:|
+| Inner turns | 3 | 1 | −67% |
+| Mean wall-clock | 52.4 s | 5.4 s | −90% |
+| Variance (spread) | 3.9× (24.8–96.3 s) | 1.1× (5.2–5.7 s) | collapsed |
+| Pass rate | 3/3 | 3/3 | same |
+
+Host cost (−37.0%) is unchanged — the fast-path makes the delegate faster internally but doesn't change the Sonnet host-side token exchange.
+
+### Regression check
+
+Bugfix shape (N=1): no fast-path triggered, verify_passed. `detect_translation` returns `None` on all 21 non-translation benchmark prompts (7 Go shapes + 14 cross-language shapes).
