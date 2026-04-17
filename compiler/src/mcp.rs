@@ -11,7 +11,7 @@ use std::io::{self, BufRead, Write};
 use std::fs;
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 use crate::lang_detect;
 use crate::mcp_delegate;
@@ -257,10 +257,6 @@ fn handle_request(request: &Value) -> Option<Value> {
                                 "glob": {
                                     "type": "string",
                                     "description": "Bulk mode: file pattern like '*.go' or '*.py'. When set, `path` must be a directory; the patch is applied to every matching file that contains `old_str`. One call covers the whole package."
-                                },
-                                "nebula": {
-                                    "type": "boolean",
-                                    "description": "Phase-20 spoof mode. When true (or when NEBULA_FULL_NEBULA=1 is set globally), `old_str` and `new_str` are interpreted as Nebula IL snippets. The MCP routes them through a sidecar corrector service (NEBULA_SIDECAR_URL, default http://localhost:8765/correct) that reads the original native file and translates the Nebula snippets into the file's native syntax before applying the byte-replace. Default: false."
                                 }
                             },
                             "required": ["path", "old_str", "new_str"]
@@ -406,25 +402,10 @@ fn tool_read_code(args: &Value) -> Result<String, String> {
     let il_disabled = std::env::var("NEBULA_DISABLE_IL")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
-    // NEBULA_FULL_NEBULA=1 is the Phase 20 spoof mode: always return Nebula
-    // (ignoring SMALL_FILE_THRESHOLD) so the inner agent operates in a
-    // monolingual-Nebula world. Used in conjunction with `patch_code`'s
-    // `nebula=true` flag and a sidecar corrector.
-    let full_nebula = std::env::var("NEBULA_FULL_NEBULA")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-    let bypass_compression = if full_nebula {
-        // Force Nebula form regardless of file size; only fall through for
-        // actually-Nebula or unknown-language files (no IL to produce).
-        il_disabled
-            || lang == lang_detect::Language::Nebula
-            || lang == lang_detect::Language::Unknown
-    } else {
-        il_disabled
-            || raw_line_count <= SMALL_FILE_THRESHOLD
-            || lang == lang_detect::Language::Nebula
-            || lang == lang_detect::Language::Unknown
-    };
+    let bypass_compression = il_disabled
+        || raw_line_count <= SMALL_FILE_THRESHOLD
+        || lang == lang_detect::Language::Nebula
+        || lang == lang_detect::Language::Unknown;
 
     let body = if bypass_compression { &raw } else { &nebula };
     let lines: Vec<&str> = body.lines().collect();
@@ -497,48 +478,6 @@ fn tool_write_code(args: &Value) -> Result<String, String> {
     Ok(format!("Wrote {} bytes to {} ({})", output.len(), path, lang_name))
 }
 
-/// POST a Phase-20 sidecar correction request to a local HTTP service. The
-/// service is expected to accept JSON `{original_native, nebula_old_str,
-/// nebula_new_str, lang}` and return `{native_old_str, native_new_str}`.
-/// Endpoint URL comes from `NEBULA_SIDECAR_URL` (default
-/// `http://localhost:8765/correct`). Timeout 60s — sidecar inference plus
-/// network round-trip.
-fn sidecar_translate(
-    original_native: &str,
-    nebula_old: &str,
-    nebula_new: &str,
-    lang_name: &str,
-) -> Result<(String, String), String> {
-    let url = std::env::var("NEBULA_SIDECAR_URL")
-        .unwrap_or_else(|_| "http://localhost:8765/correct".to_string());
-    let payload = json!({
-        "original_native": original_native,
-        "nebula_old_str": nebula_old,
-        "nebula_new_str": nebula_new,
-        "lang": lang_name,
-    });
-    let resp_text = ureq::post(&url)
-        .timeout(Duration::from_secs(60))
-        .send_json(&payload)
-        .map_err(|e| format!("HTTP error from sidecar at {}: {}", url, e))?
-        .into_string()
-        .map_err(|e| format!("read sidecar body: {}", e))?;
-    let resp: Value = serde_json::from_str(&resp_text)
-        .map_err(|e| format!("sidecar returned non-JSON ({}): {}", e, &resp_text[..resp_text.len().min(200)]))?;
-    if let Some(err) = resp.get("error").and_then(|v| v.as_str()) {
-        return Err(format!("sidecar error: {}", err));
-    }
-    let native_old = resp.get("native_old_str")
-        .and_then(|v| v.as_str())
-        .ok_or("sidecar response missing native_old_str")?
-        .to_string();
-    let native_new = resp.get("native_new_str")
-        .and_then(|v| v.as_str())
-        .ok_or("sidecar response missing native_new_str")?
-        .to_string();
-    Ok((native_old, native_new))
-}
-
 fn tool_patch_code(args: &Value) -> Result<String, String> {
     let path = args.get("path")
         .and_then(|v| v.as_str())
@@ -553,51 +492,19 @@ fn tool_patch_code(args: &Value) -> Result<String, String> {
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     let glob = args.get("glob").and_then(|v| v.as_str());
-    // Phase 20 spoof mode: when nebula=true (or NEBULA_FULL_NEBULA=1 is set
-    // globally), `old_str` and `new_str` arrive in Nebula IL form. We route
-    // them through the sidecar corrector, which translates them into the
-    // file's native syntax using the original source as a style anchor. The
-    // result is two native-language strings we apply with the normal
-    // byte-replace path below.
-    let nebula_mode = args.get("nebula").and_then(|v| v.as_bool()).unwrap_or(false)
-        || std::env::var("NEBULA_FULL_NEBULA")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
 
     if old_str_arg.is_empty() {
         return Err("old_str must not be empty".to_string());
     }
 
     if let Some(glob_pattern) = glob {
-        // Bulk mode never goes through the sidecar — package-wide renames are
-        // a regex-style task and the snippets are usually tiny native-form
-        // strings the inner agent already wrote correctly.
         return tool_patch_code_bulk(path, glob_pattern, old_str_arg, new_str_arg);
     }
 
     let (source, _nebula) = read_source_cached(path)?;
     let lang = lang_detect::detect(path);
     let lang_name = lang.name();
-
-    // Sidecar translation pass (only if nebula_mode and the file has a real
-    // native language). On translation failure we surface the error to the
-    // inner agent so it can retry with native bytes.
-    let (old_str_owned, new_str_owned): (String, String);
-    let (old_str, new_str) = if nebula_mode
-        && lang != lang_detect::Language::Nebula
-        && lang != lang_detect::Language::Unknown
-    {
-        match sidecar_translate(&source, old_str_arg, new_str_arg, lang_name) {
-            Ok((o, n)) => {
-                old_str_owned = o;
-                new_str_owned = n;
-                (old_str_owned.as_str(), new_str_owned.as_str())
-            }
-            Err(e) => return Err(format!("sidecar translation failed: {}", e)),
-        }
-    } else {
-        (old_str_arg, new_str_arg)
-    };
+    let (old_str, new_str) = (old_str_arg, new_str_arg);
 
     let occurrences = source.matches(old_str).count();
     if occurrences == 0 {

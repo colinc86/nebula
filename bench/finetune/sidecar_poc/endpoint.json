@@ -1,6 +1,0 @@
-{
-  "id": "endpoint-f26ee378-b05e-4345-80f7-8e0e77092952",
-  "model": "colinc86_4aa1/Qwen2.5-7B-Instruct-nebsidecar-46dbe118",
-  "hardware": "2x_nvidia_h100_80gb_sxm",
-  "started_unix": 1776225131.3961658
-}

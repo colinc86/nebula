@@ -79,11 +79,9 @@ impl DelegateConfig {
         Self {
             model: default_delegate_model(),
             ollama_url: default_delegate_url(),
-            // Configurable via NEBULA_DELEGATE_NUM_CTX. Default lowered from
-            // 32768 → 8192 in Phase 20 to keep qwen3-coder:30b fully on GPU
-            // when the sidecar (also a few GB of VRAM) is loaded concurrently.
-            // The 8K floor handles ~95% of benchmark shapes; the 4 large ones
-            // (refactor, large_file) exceed it and need an override.
+            // Configurable via NEBULA_DELEGATE_NUM_CTX. Default 8192 handles
+            // ~95% of benchmark shapes; large shapes (refactor, large_file)
+            // need an override.
             num_ctx: std::env::var("NEBULA_DELEGATE_NUM_CTX")
                 .ok()
                 .and_then(|v| v.parse::<u32>().ok())
