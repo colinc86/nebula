@@ -85,28 +85,84 @@ TS, Go, Swift, Kotlin, Rust, C). Small files (≤100 lines) come back as raw sou
 Larger files come back as Nebula with a 5-line native preview header showing real \
 syntax — that preview is enough to anchor your edits, no need to Bash-cat the file.\n\
 \n\
-PREFERRED WORKFLOW — `code_task`: describe your ENTIRE task in plain English \
-in ONE call and let the inner Nebula-native coder handle read/edit/verify for \
-you. Example: `code_task(instruction=\"add a TitleCase helper to strings_util.go \
-and make go test ./... pass\", verify=\"go test ./...\")`. The delegate runs \
-your verify command at the end of the session and returns `verify_passed: \
-true/false` — this is authoritative, trust it, do not re-verify yourself. If \
-verify_passed is true, the work is done and tested; respond to the user with a \
-short summary and STOP calling tools. Calling `code_task` more than once per \
-task is almost always wrong: the circuit breaker refuses calls past #5 in a \
-single session. If `code_task` is unavailable (no inner model reachable), fall \
-back to the low-level tools below.\n\
+`code_task` is a PIECEWISE delegate, not a whole-task autopilot. The inner \
+model is a 30B local coder that excels at small, focused, benchmark-shaped \
+chunks (single verb, scoped to 1 file or a small cluster, ~5 minute task, \
+clear acceptance) but flounders on open-ended multi-file work. For real-world \
+tasks you plan the decomposition at the host layer, then delegate each chunk \
+in a separate `code_task` call.\n\
+\n\
+WHEN TO DELEGATE vs. WHEN TO DO IT NATIVELY. Delegation has a fixed per-call \
+overhead (~300–500 cache tokens in, one 30B round-trip of ~5–30 s). It only \
+pays off when the chunk would have cost you MORE than that in native work. \
+Rule of thumb by task size:\n\
+  • ≤ 2 native turns (one Read + one Edit is enough): DO NOT DELEGATE. Use \
+read_code + patch_code/write_code directly. A one-line bugfix, a known-location \
+typo, a trivial rename in one file — all of these are faster and cheaper native. \
+The delegate will lose to native by 50–100% on host cost for tasks this small.\n\
+  • 3–8 native turns (add a small function + one test, rename across 2–3 files, \
+fix a bug that takes a few tries): delegate is roughly break-even. Do whichever \
+feels cleaner; default to delegate when the generated code volume is ≥ ~30 LoC.\n\
+  • ≥ 10 native turns (implement a new module from spec, port a file, \
+package-wide refactor with many consumers, a feature you'd otherwise spend \
+dozens of Edits on): DELEGATE — savings compound with generated-code volume.\n\
+Translation tasks (`port X.py to X.go`) always delegate: the compiler-assisted \
+translation fast-path makes them a 1-turn 5-second win.\n\
+\n\
+WHAT A GOOD CHUNK LOOKS LIKE (pattern after the validated benchmark shapes):\n\
+  • implement_one: \"add func BandpassFilter(v Vector, low, high float64) Vector \
+to filter.go\" + verify=\"go test ./... -run TestBandpass\"\n\
+  • refactor_one:  \"rename KVCache → SnapCache across pkg/cache/*.go\" + verify=\"go test ./pkg/cache/...\"\n\
+  • extract_one:   \"extract the tapered-window loop in Hamming/Hanning in window.go \
+into a shared helper\" + verify=\"go test ./... -run TestWindow\"\n\
+  • bugfix_one:    \"Mean() in stat.go returns NaN on empty input — make it return \
+0 and add a test\" + verify=\"go test ./... -run TestMean\"\n\
+  • port_one_file: \"port lru_cache.py to lru_cache.go, matching signatures in \
+cache.go\" + verify=\"go test ./...\"\n\
+  • docstring_one: \"add godoc comments to all exported funcs in interpolation.go\"\n\
+\n\
+WHAT A BAD CHUNK LOOKS LIKE (these blow the 60-turn budget):\n\
+  • \"Remove the Vector type and update everything\" (13 files, implicit scope)\n\
+  • \"Refactor the cache layer to be thread-safe\" (no acceptance criterion)\n\
+  • \"Make the code more idiomatic\" (no scope, no verify)\n\
+\n\
+HOW TO DECOMPOSE A REAL-WORLD ASK. Before the first `code_task` call, take one \
+minute to plan. Use `search_code` + `read_code` to survey the blast radius, then \
+spell out an ordered chunk list. Example — user says \"remove the Vector type, keep \
+VectorComplex\":\n\
+  1. Inventory: `search_code` for Vector uses → list files.\n\
+  2. code_task: \"remove Vector-only functions from vector.go; keep the file \
+compiling\" + verify=\"go build ./...\"\n\
+  3. code_task (per consumer file, or a tight cluster): \"update filter.go \
+to use VectorComplex instead of Vector\" + verify=\"go build ./filter.go\"\n\
+  4. code_task: \"delete the `type Vector []float64` line and its tests in \
+vector.go/vector_test.go\" + verify=\"go test ./...\"\n\
+Each chunk is 1 file (or a tight 2–3-file cluster), 1 verb, ≤10 inner-agent turns.\n\
+\n\
+PICK `verify` CAREFULLY — run the tests, not just the build. If the project \
+has tests (any `*_test.go`, `*.test.ts`, `test_*.py`, etc.), `verify` MUST invoke \
+them. `go build ./...` or `tsc --noEmit` alone is insufficient: the delegate will \
+happily report `verify_passed: true` for compile-clean code whose tests crash at \
+runtime. Prefer `go test ./...`, `pytest`, `npm test`, `cargo test`. Response \
+includes `tests_run` and a `warnings` array that flags this. For intermediate \
+chunks where tests will legitimately fail until the whole sequence is done, a \
+narrower verify (`go build ./...` or a `-run TestSpecific` filter) is fine — \
+just make the final chunk run the full suite.\n\
+\n\
+HOW TO USE THE RESULT. `verify_passed: true` + no `tests_not_run` warning = chunk \
+done, move on to the next. `verify_passed: false` with a non-empty `final_message` \
+and `files_touched` = chunk partially done; look at what changed, decide whether \
+to narrow the instruction and re-call, or finish by hand. Same instruction twice \
+in a row is an oscillation signal — switch to low-level tools.\n\
 \n\
 LOW-LEVEL WORKFLOW: read_code to view, patch_code to edit, write_code only for \
 new files or full rewrites. patch_code is byte-level on the raw source bytes, \
 so old_str / new_str must be in the file's NATIVE language (Go, Python, etc.) \
-— NOT Nebula. Use replace_all=true for repetitive substitutions within one file.\n\
-\n\
-For package-wide renames across many files, use patch_code BULK mode in a \
-SINGLE call: pass `path` as the directory and `glob` like '*.go'. It walks \
-the directory and applies the replacement to every matching file — one tool \
-call, not one per file. Prefer this over `bash sed -i` loops: same semantics, \
-lower tool-call overhead, and you get a structured per-file report back.\n\
+— NOT Nebula. Use replace_all=true for repetitive substitutions within one file. \
+For package-wide renames across many files, use patch_code BULK mode in a SINGLE \
+call: pass `path` as the directory and `glob` like '*.go'. It walks the directory \
+and applies the replacement to every matching file — one tool call, not one per \
+file, and you get a structured per-file report back.\n\
 \n\
 Nebula syntax (only needed for low-level workflow): `fn name(a: Int) -> Int:` \
 indent body / `rt x` / `fo i in 0..n:` / `x := 5` immutable, `x = 5` mutable / \
@@ -286,13 +342,13 @@ fn handle_request(request: &Value) -> Option<Value> {
                     },
                     {
                         "name": "code_task",
-                        "description": "Delegate an entire coding task to a Nebula-native inner agent in ONE call. Give it a complete natural-language instruction + a `verify` shell command (e.g. 'go test ./...' or 'pytest'). The inner agent reads/edits the files, runs verify, and auto-retries repairs up to 3 times if verify fails — all inside this single tool call. The returned JSON contains `verify_passed: true/false` which is authoritative: the delegate literally ran your verify command at the end of the session and the boolean reflects the real exit status. You do NOT need to re-verify after this tool returns — if `verify_passed: true`, the work is done and tested. Re-verifying wastes tokens. Call this ONCE per task with a complete instruction; do not decompose. The circuit breaker will refuse calls past #5 in one session. Returns summary + metrics (turns_used, files_touched, verify_passed, verify_retries_used, input/output_tokens, elapsed_ms).",
+                        "description": "Delegate ONE piecewise coding chunk to a Nebula-native 30B inner agent. Each call should be a small, scoped, benchmark-shaped task (single verb, 1 file or a tight cluster, clear acceptance, ≤10 inner-agent turns): implement one helper, refactor one thing, extract one function, add one feature, fix one bug, port one file, add docstrings to one file, write one module from a spec. **Do not pass vague multi-file rewrites** — they blow the 60-turn budget and time out. Plan decomposition at the host layer (use `search_code` to survey), then delegate each chunk in a separate call. Give it a natural-language instruction + a `verify` shell command. For intermediate chunks where a full test pass will legitimately fail until later chunks land, a narrower verify (`go build ./...`, `-run TestX`) is fine; just make the final chunk run the full suite. **Pick verify carefully**: if the project has tests and the chunk is the last one, `verify` MUST run them, not a build-only check — a green build with broken tests is a silent regression. If `verify_passed: true` AND no `tests_not_run` warning, the chunk is done; move on. `verify_passed: false` → inspect `files_touched` + `final_message`, narrow the instruction, re-call or finish by hand. Passing the SAME instruction twice signals oscillation — switch to low-level tools. The circuit breaker refuses calls past #20 in one session (real-world tasks legitimately need 5–15 chunks). Returns metrics: turns_used, files_touched, verify_passed, tests_run, verify_retries_used, input/output_tokens, elapsed_ms, warnings.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
                                 "instruction": {
                                     "type": "string",
-                                    "description": "Natural-language task description. Be explicit about which files/directories are in scope and what success looks like."
+                                    "description": "Natural-language chunk description. Scope to ONE verb × ONE file (or a tight 2–3-file cluster) with an explicit acceptance criterion. Good: 'add func Bandpass(v Vector, low, high float64) Vector to filter.go and a TestBandpass case'. Bad: 'refactor the filter layer' (no scope), 'remove Vector everywhere and fix callers' (13 files, too broad — split into one chunk per consumer file)."
                                 },
                                 "cwd": {
                                     "type": "string",
@@ -300,7 +356,7 @@ fn handle_request(request: &Value) -> Option<Value> {
                                 },
                                 "verify": {
                                     "type": "string",
-                                    "description": "Shell command to run for success verification, e.g. 'go test ./...' or 'pytest'. If set, the inner agent is required to run it and confirm green before returning."
+                                    "description": "Shell command that runs the full test suite, e.g. 'go test ./...', 'pytest', 'npm test', 'cargo test'. **If the project has tests, verify MUST run them** — a build-only check ('go build', 'tsc --noEmit') is insufficient because the delegate will report `verify_passed: true` for compile-clean code that has runtime regressions. The response includes a `tests_run` field indicating whether your verify command actually invoked tests; if it's false but the project has tests, the delegate also emits a warning."
                                 },
                                 "max_turns": {
                                     "type": "integer",
@@ -999,6 +1055,63 @@ fn try_translation_fast_path(
     None
 }
 
+/// Does the directory (recursively, shallow) contain any test files for a
+/// language Nebula knows? Used to warn the host when `verify` skipped tests.
+fn dir_has_tests(cwd: &str) -> bool {
+    fn is_test_name(name: &str) -> bool {
+        name.ends_with("_test.go")
+            || name.ends_with(".test.ts")
+            || name.ends_with(".test.tsx")
+            || name.ends_with(".test.js")
+            || name.ends_with(".test.jsx")
+            || name.ends_with(".spec.ts")
+            || name.ends_with(".spec.js")
+            || name.starts_with("test_") && (name.ends_with(".py") || name.ends_with(".rs"))
+            || name.ends_with("_test.py")
+            || name.ends_with("_test.rs")
+    }
+    fn walk(dir: &Path, depth: usize) -> bool {
+        if depth > 4 { return false; } // shallow walk — tests usually near the root
+        let Ok(entries) = std::fs::read_dir(dir) else { return false; };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            if name.starts_with('.') || name == "node_modules" || name == "target" || name == "vendor" {
+                continue;
+            }
+            if path.is_file() && is_test_name(&name) { return true; }
+            if path.is_dir() && walk(&path, depth + 1) { return true; }
+        }
+        false
+    }
+    walk(Path::new(cwd), 0)
+}
+
+/// Heuristic: does the verify command actually invoke a test runner? We're
+/// deliberately lenient — a false positive here (command matches but skips
+/// tests) is just noise; a false negative (tests run but we say they didn't)
+/// would be an annoying warning on legit commands.
+fn verify_runs_tests(cmd: &str) -> bool {
+    let lower = cmd.to_lowercase();
+    lower.contains("go test")
+        || lower.contains("pytest")
+        || lower.contains("npm test")
+        || lower.contains("npm run test")
+        || lower.contains("yarn test")
+        || lower.contains("pnpm test")
+        || lower.contains("cargo test")
+        || lower.contains("swift test")
+        || lower.contains("./gradlew test")
+        || lower.contains("gradle test")
+        || lower.contains("mvn test")
+        || lower.contains("ctest")
+        || lower.contains("unittest")
+        || lower.contains("vitest")
+        || lower.contains("jest")
+        || lower.contains("node --test")
+        || lower.contains("bun test")
+}
+
 /// `code_task` — delegate a natural-language coding task to the inner
 /// Nebula-native agent (default: nebula-host-30b on Ollama). The inner agent
 /// drives the existing read_code/write_code/patch_code/search_code tools
@@ -1021,36 +1134,49 @@ fn tool_code_task(args: &Value) -> Result<String, String> {
         ));
     }
 
-    // Session-level call-count circuit breaker. Iteration 5 saw an implement-
-    // task run where Sonnet made 17 `code_task` calls in a repair death
-    // spiral (+242% cost vs builtins). If the host calls us 5+ times in a
-    // single MCP server lifetime, that's a strong signal the task shape
-    // isn't a delegate fit — refuse further calls with a structured hint.
+    // Session-level guard. Iteration 5 saw a repair death-spiral at +242% cost
+    // when the host kept re-calling on the same broken task. Iteration 23 (the
+    // piecewise pivot) raised the cap from 5 → 20: real-world tasks legitimately
+    // decompose into 5–15 benchmark-shaped chunks, and the old cap was the main
+    // reason multi-step gdsp-style work dead-ended. The real death-spiral signal
+    // is SAME-INSTRUCTION oscillation, not call count — guarded separately below.
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
     static CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
+    static LAST_INSTRUCTIONS: Mutex<Vec<String>> = Mutex::new(Vec::new());
     let this_call = CALL_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
     let mut preamble = String::new();
-    if this_call >= 5 {
+    if this_call >= 20 {
         return Err(format!(
-            "code_task: refusing call #{} in this MCP session. The delegate \
-             tool is designed for one-call-handles-the-whole-task workflows; \
-             calling it 5+ times usually means the task shape doesn't fit \
-             delegation, or the inner agent is drifting. Switch to the \
-             low-level tools (read_code, patch_code, write_code) for the \
-             remaining work, or restart the MCP server if you really need \
-             the delegate again. Override by unsetting NEBULA_MCP_TOOLS to \
-             expose the low-level tools too.",
+            "code_task: refusing call #{} in this MCP session. 20+ delegate \
+             calls on one task usually means the decomposition is too fine \
+             (sub-benchmark-sized chunks) or the inner agent is drifting. \
+             Review what's been done, finish the remainder with low-level \
+             tools (read_code, patch_code, write_code), or restart the MCP \
+             server if the task genuinely needs another round.",
             this_call
         ));
     }
-    if this_call >= 3 {
-        preamble.push_str(&format!(
-            "\n\n[delegate hint] This is code_task call #{} in this session. \
-             Consider batching remaining work into ONE more call with a \
-             complete instruction + verify command, or switch to low-level \
-             tools. Further calls past #5 will be refused.",
-            this_call
-        ));
+    // Oscillation guard: same instruction text two calls in a row is the real
+    // death-spiral signal (host asking the delegate to redo the exact same
+    // chunk that just failed). Refuse with a structured hint. Keep last 3 for
+    // near-duplicate detection.
+    {
+        let mut hist = LAST_INSTRUCTIONS.lock().unwrap();
+        let normalized = instruction.trim().to_string();
+        if hist.last().map(|s| s == &normalized).unwrap_or(false) {
+            return Err(format!(
+                "code_task: refusing near-identical repeat of the previous \
+                 instruction (call #{}). If the last call returned \
+                 verify_passed: false, narrow the instruction (smaller \
+                 scope, more explicit acceptance), or switch to low-level \
+                 tools to finish by hand. Re-asking the 30B to redo the \
+                 same chunk rarely helps.",
+                this_call
+            ));
+        }
+        hist.push(normalized);
+        if hist.len() > 3 { hist.remove(0); }
     }
 
     let cwd_arg = args.get("cwd").and_then(|v| v.as_str());
@@ -1173,7 +1299,7 @@ fn tool_code_task(args: &Value) -> Result<String, String> {
         format!("{}{}", instruction, preflight_note)
     };
 
-    let result = mcp_delegate::run_delegate(
+    let mut result = mcp_delegate::run_delegate(
         &config,
         &full_instruction,
         &inner_tools,
@@ -1182,40 +1308,89 @@ fn tool_code_task(args: &Value) -> Result<String, String> {
         dispatch,
     )?;
 
-    // run_delegate already ran verify in-loop (with up to max_verify_retries
-    // repair rounds) and populated result.verify_passed / verify_output_tail.
+    // Test-coverage heuristic: did the verify command actually invoke the
+    // project's tests? Scan the cwd for common test-file patterns; if any exist
+    // but the verify command has no "test" token, emit a `tests_not_run`
+    // warning so the host knows `verify_passed: true` only covered a build
+    // check. This is the source of silent regressions where a refactor ships
+    // compile-clean code whose tests panic at runtime.
+    let project_has_tests = dir_has_tests(&cwd_owned);
+    let tests_run = match verify {
+        Some(cmd) => verify_runs_tests(cmd),
+        None => false,
+    };
+    if project_has_tests && !tests_run {
+        let msg = if verify.is_some() {
+            format!(
+                "tests_not_run: project has test files but verify command `{}` does not run them. \
+                 verify_passed: {:?} only reflects the build/check — runtime test failures are not caught. \
+                 Re-call code_task with verify='go test ./...' / 'pytest' / 'npm test' / etc.",
+                verify.unwrap_or(""), result.verify_passed
+            )
+        } else {
+            "tests_not_run: project has test files but no `verify` command was set. \
+             The inner agent may have introduced runtime regressions. \
+             Re-call code_task with a test-running verify command.".to_string()
+        };
+        result.warnings.push(msg);
+    }
+
     let summary_text = if preamble.is_empty() {
         result.final_message.clone()
     } else {
         format!("{}{}", result.final_message, preamble)
     };
 
-    let summary = serde_json::json!({
+    // Iteration 23: trim the default response payload. Sonnet-host's decision
+    // loop only needs summary + verify_passed + files_touched + warnings to
+    // choose the next chunk. The per-turn telemetry array and the *_ms roll-ups
+    // were ~2.5k chars per call — multiplied by 12 piecewise calls and then
+    // cache-reread every host turn, they dominated delegate-mode cache spend.
+    // Verbose payload is still available via NEBULA_DELEGATE_VERBOSE_RESULT=1
+    // for paper/benchmark analysis; the external runner reads per-turn metrics
+    // from the stream log, not from the tool result.
+    let verbose = std::env::var("NEBULA_DELEGATE_VERBOSE_RESULT")
+        .ok()
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    // On verify failures, truncate output tail hard — 600 chars is enough to
+    // read a typical compiler error; anything longer bloats the cache.
+    let tail_short = if !matches!(result.verify_passed, Some(true)) {
+        let t = &result.verify_output_tail;
+        if t.len() > 600 { t[t.len() - 600..].to_string() } else { t.clone() }
+    } else {
+        String::new()
+    };
+
+    let mut summary = serde_json::json!({
         "summary": summary_text,
         "turns_used": result.turns_used,
-        "tool_calls": result.tool_calls,
-        "tool_calls_by_name": result.tool_calls_by_name,
         "files_touched": result.files_touched,
-        "input_tokens": result.input_tokens,
-        "output_tokens": result.output_tokens,
         "elapsed_ms": result.elapsed_ms,
-        // Phase 20 instrumentation: inner-loop wall-clock breakdown so external
-        // runners can answer "is Ollama inference the bottleneck, or is it tool
-        // dispatch / bash / verify?" without re-plumbing the delegate.
-        "total_prefill_ms": result.total_prefill_ms,
-        "total_gen_ms": result.total_gen_ms,
-        "total_ollama_wall_ms": result.total_ollama_wall_ms,
-        "total_tool_dispatch_ms": result.total_tool_dispatch_ms,
-        "total_bash_ms": result.total_bash_ms,
-        "per_turn": result.per_turn,
         "stopped_reason": result.stopped_reason,
         "verify_passed": result.verify_passed,
         "verify_retries_used": result.verify_retries_used,
-        "verify_output_tail": result.verify_output_tail,
+        "verify_output_tail": tail_short,
+        "tests_run": tests_run,
+        "project_has_tests": project_has_tests,
         "warnings": result.warnings,
-        "session_call_number": this_call,
-        "model": config.model,
     });
+    if verbose {
+        if let Some(obj) = summary.as_object_mut() {
+            obj.insert("tool_calls".into(), json!(result.tool_calls));
+            obj.insert("tool_calls_by_name".into(), json!(result.tool_calls_by_name));
+            obj.insert("input_tokens".into(), json!(result.input_tokens));
+            obj.insert("output_tokens".into(), json!(result.output_tokens));
+            obj.insert("total_prefill_ms".into(), json!(result.total_prefill_ms));
+            obj.insert("total_gen_ms".into(), json!(result.total_gen_ms));
+            obj.insert("total_ollama_wall_ms".into(), json!(result.total_ollama_wall_ms));
+            obj.insert("total_tool_dispatch_ms".into(), json!(result.total_tool_dispatch_ms));
+            obj.insert("total_bash_ms".into(), json!(result.total_bash_ms));
+            obj.insert("per_turn".into(), json!(result.per_turn));
+            obj.insert("session_call_number".into(), json!(this_call));
+            obj.insert("model".into(), json!(config.model));
+        }
+    }
 
     Ok(serde_json::to_string_pretty(&summary).unwrap_or_else(|_| result.final_message.clone()))
 }

@@ -87,12 +87,18 @@ impl DelegateConfig {
                 .and_then(|v| v.parse::<u32>().ok())
                 .unwrap_or(8192),
             temperature: 0.2,
-            max_turns: 60,
+            max_turns: std::env::var("NEBULA_DELEGATE_MAX_TURNS")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(60),
             // Raised from 5 → 8 in Phase 20: combined model legitimately
             // needs more repair rounds on complex shapes (e.g. large_file
             // hitting 49 turns). The stall detector is off by default so
             // retries can actually be used.
-            max_verify_retries: 8,
+            max_verify_retries: std::env::var("NEBULA_DELEGATE_MAX_VERIFY_RETRIES")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(8),
             extra_system_note: None,
         }
     }
@@ -161,6 +167,21 @@ pub fn is_available() -> bool {
         .timeout(Duration::from_secs(2))
         .call()
         .is_ok()
+}
+
+/// Heuristic: does the user instruction contain verbs that require file
+/// changes? Used by the zero-files-on-green retry logic to decide whether
+/// "task done with no edits" is a legitimate no-op (e.g. "run the tests and
+/// report") or a silent stall we should push back on.
+pub fn instruction_implies_changes(instruction: &str) -> bool {
+    let lower = instruction.to_lowercase();
+    const VERBS: &[&str] = &[
+        "remove", "delete", "add ", "adds ", "implement", "fix ", "fixes ",
+        "refactor", "rename", "port ", "ports ", "translate", "convert",
+        "rewrite", "replace", "update ", "modify", "change ", "create ",
+        "extract", "extend", "introduce", "migrate",
+    ];
+    VERBS.iter().any(|v| lower.contains(v))
 }
 
 /// Single-shot Ollama call for translation error correction. No tool use, no
@@ -319,6 +340,17 @@ where
     let mut last_stall_prefix: Option<String> = None;
     let mut stall_repeat_count: u32 = 0;
 
+    // Per-chunk wall-clock cap. Iteration 23 observed the 30B going 60 turns /
+    // 19 minutes on a single remove_vector chunk that dominated total wall clock
+    // under parallel dispatch (parallel chunks block the host until the slowest
+    // returns). Default 300s / 5 min — past that, give up, return the current
+    // state, and let the host fall back to low-level tools. Override via
+    // NEBULA_DELEGATE_MAX_WALL_S.
+    let max_wall_s: u64 = std::env::var("NEBULA_DELEGATE_MAX_WALL_S")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(300);
+
     // Outer loop bound: max_turns is the cap on Ollama /api/chat calls across
     // the whole session, including any repair rounds after verify failures.
     let mut turn = 0usize;
@@ -327,6 +359,18 @@ where
             result.stopped_reason = "max_turns".to_string();
             result.elapsed_ms = t0.elapsed().as_millis() as u64;
             // Run verify one last time so the host knows the real state.
+            if let Some(cmd) = verify_cmd {
+                let cwd = bash_cwd.unwrap_or(".");
+                let (ok, text) = run_bash(cmd, cwd, 180);
+                result.verify_passed = Some(ok);
+                result.verify_output_tail = tail(&text, 1200);
+            }
+            return Ok(result);
+        }
+        if t0.elapsed().as_secs() >= max_wall_s {
+            result.stopped_reason = "wall_clock_cap".to_string();
+            result.elapsed_ms = t0.elapsed().as_millis() as u64;
+            // Verify once so the host knows whether whatever landed still works.
             if let Some(cmd) = verify_cmd {
                 let cwd = bash_cwd.unwrap_or(".");
                 let (ok, text) = run_bash(cmd, cwd, 180);
@@ -347,35 +391,89 @@ where
             + 0.15 * result.verify_retries_used as f32)
             .min(0.7);
 
-        let payload = json!({
-            "model": config.model,
-            "messages": &messages,
-            "tools": &tool_schemas,
-            "stream": false,
-            "options": {
-                "num_ctx": config.num_ctx,
-                "temperature": turn_temperature,
-                "num_predict": 2048,
-            },
-        });
-
+        // Retry transient Ollama errors (notably HTTP 500 from the qwen3-coder
+        // XML tool-call parser rejecting malformed model output). Bumping
+        // temperature on each retry usually shakes the model out of whatever
+        // attractor produced the bad XML. Cap at 3 retries; if we're still
+        // failing after that, the session error is real and we bail.
+        const MAX_OLLAMA_RETRIES: u32 = 3;
         let ollama_start = Instant::now();
-        let http = ureq::post(&chat_url)
-            .timeout(Duration::from_secs(300))
-            .send_json(&payload);
+        let mut retry_attempt: u32 = 0;
+        let resp: Value = loop {
+            let attempt_temp = (turn_temperature + 0.2 * retry_attempt as f32).min(0.9);
+            let payload = json!({
+                "model": config.model,
+                "messages": &messages,
+                "tools": &tool_schemas,
+                "stream": false,
+                "options": {
+                    "num_ctx": config.num_ctx,
+                    "temperature": attempt_temp,
+                    "num_predict": 2048,
+                },
+            });
 
-        let resp: Value = match http {
-            Ok(r) => r.into_json().map_err(|e| format!("parse /api/chat response: {}", e))?,
-            Err(e) => {
-                result.stopped_reason = format!("ollama_error: {}", e);
-                result.elapsed_ms = t0.elapsed().as_millis() as u64;
-                return Err(format!(
-                    "Delegate session failed: Ollama /api/chat error at {}: {}",
-                    chat_url, e
-                ));
+            let http = ureq::post(&chat_url)
+                .timeout(Duration::from_secs(300))
+                .send_json(&payload);
+
+            match http {
+                Ok(r) => match r.into_json::<Value>() {
+                    Ok(v) => break v,
+                    Err(e) => {
+                        if retry_attempt < MAX_OLLAMA_RETRIES {
+                            retry_attempt += 1;
+                            eprintln!(
+                                "[delegate] /api/chat response parse error (retry {}/{}): {}",
+                                retry_attempt, MAX_OLLAMA_RETRIES, e
+                            );
+                            std::thread::sleep(Duration::from_millis(500));
+                            continue;
+                        }
+                        result.stopped_reason = format!("ollama_parse_error: {}", e);
+                        result.elapsed_ms = t0.elapsed().as_millis() as u64;
+                        return Err(format!("Delegate session failed: /api/chat response parse: {}", e));
+                    }
+                },
+                Err(e) => {
+                    let err_str = e.to_string();
+                    // ureq renders 500/502/503/504 responses as Err(Status(code, ...))
+                    // whose Display contains the status code. Match loosely.
+                    let is_transient = err_str.contains(" 500 ")
+                        || err_str.contains(" 502 ")
+                        || err_str.contains(" 503 ")
+                        || err_str.contains(" 504 ")
+                        || err_str.ends_with("500")
+                        || err_str.ends_with("502")
+                        || err_str.ends_with("503")
+                        || err_str.ends_with("504")
+                        || err_str.contains("Connection reset")
+                        || err_str.contains("broken pipe");
+                    if is_transient && retry_attempt < MAX_OLLAMA_RETRIES {
+                        retry_attempt += 1;
+                        eprintln!(
+                            "[delegate] Ollama transient error (retry {}/{}, temp→{:.2}): {}",
+                            retry_attempt, MAX_OLLAMA_RETRIES, attempt_temp + 0.2, err_str
+                        );
+                        std::thread::sleep(Duration::from_millis(1000));
+                        continue;
+                    }
+                    result.stopped_reason = format!("ollama_error: {}", e);
+                    result.elapsed_ms = t0.elapsed().as_millis() as u64;
+                    return Err(format!(
+                        "Delegate session failed: Ollama /api/chat error at {}: {}",
+                        chat_url, e
+                    ));
+                }
             }
         };
         let ollama_wall_ms = ollama_start.elapsed().as_millis() as u64;
+        if retry_attempt > 0 {
+            result.warnings.push(format!(
+                "ollama_transient_retry: turn {} succeeded after {} retry(ies)",
+                turn, retry_attempt
+            ));
+        }
 
         // Phase 20 instrumentation: capture Ollama's own timing breakdown
         // (nanoseconds → ms). These fields may be absent on some Ollama
@@ -455,6 +553,28 @@ where
             result.verify_output_tail = tail(&vtext, 1200);
 
             if ok {
+                // Zero-files-on-green retry: if the instruction clearly demands
+                // code changes (remove/add/fix/refactor/port/rename/implement)
+                // but the session ended with an empty files_touched, treat
+                // verify-green as a false positive — the starting repo was
+                // probably already compile-clean and the model just said "done"
+                // without doing the work. Force a retry with an explicit nudge
+                // until we burn the retry budget. Without this, Sonnet sees
+                // ZERO_FILES_MODIFIED after the fact and has to restart; far
+                // cheaper to catch it in-loop.
+                if result.files_touched.is_empty()
+                    && instruction_implies_changes(user_instruction)
+                    && result.verify_retries_used < config.max_verify_retries
+                {
+                    result.verify_retries_used += 1;
+                    let nudge = format!(
+                        "You reported the task is complete and `{}` passes, but you have not modified any files in this session. The task explicitly requires code changes — examine the source files and make the edits now using patch_code or write_code. Do NOT respond with a summary until real changes have been applied. Then re-run the verify command.",
+                        verify,
+                    );
+                    messages.push(json!({"role": "user", "content": nudge}));
+                    result.per_turn.push(turn_metric);
+                    continue;
+                }
                 // Silent non-completion guard: iteration 10 observed a case
                 // where verify passed but the inner agent never actually
                 // edited any files (returned a stall-prefix summary and the

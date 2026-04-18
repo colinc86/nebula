@@ -2612,3 +2612,250 @@ This mirrors and extends the Opus routing-propensity finding from iter-18: then 
 - `compiler/src/mcp_delegate.rs` — `run_single_correction` (one-shot Ollama call without agent loop)
 
 **Spend.** ~$0 Anthropic, ~$0.02 Ollama (local inference on 3090).
+
+## Iteration 23 — 2026-04-17 — piecewise primer; real-world gdsp sanity check
+
+**Problem.** Phase 20 and iter-21 benchmarks all showed big wins, but all those
+benchmarks were *single-shape*. In real-world multi-step tasks (e.g. "remove the
+Vector type and fix all callers" on colinc86/gdsp — 13 Go files) Sonnet would
+dump the whole task into one `code_task` call, the 30B would blow its 60-turn
+budget, the MCP's call-#5 circuit-breaker would refuse follow-ups, and the run
+would dead-end with nothing committed. The user reported: "benchmarks work great
+but real-world tasks flop from timeouts, max iterations, and it takes way too
+long."
+
+**Root cause.** The primer and `code_task` tool description both explicitly
+told Sonnet: *"describe your ENTIRE task in plain English in ONE call"* and
+*"Call this ONCE per task; do not decompose."* That guidance is right for
+benchmark shapes (each shape is by construction one call) and exactly wrong
+for real-world multi-file work. The 30B is a benchmark-shape-sized tool, not a
+whole-task autopilot; the host has to plan the decomposition.
+
+**Fix.** Four code changes, tested on three gdsp tasks (add a Reverse helper,
+fix Mean on empty input, remove the Vector type):
+
+1. **`NEBULA_PRIMER` rewrite** (`compiler/src/mcp.rs`) — flip "one call, do
+   not decompose" to "piecewise delegate; decompose at the host layer into
+   benchmark-shaped chunks (single verb, 1 file or tight 2–3-file cluster,
+   explicit acceptance, ≤10 inner-agent turns)." Include good-chunk examples
+   aligned to the 8 validated benchmark shapes, bad-chunk examples ("remove
+   Vector everywhere"), and a full decomposition walkthrough for the gdsp-style
+   ask.
+
+2. **`code_task` tool description rewrite** (`compiler/src/mcp.rs`) — same
+   flip. Raise the session call-count cap from 5 → 20 (real-world tasks need
+   5–15 chunks), add a same-instruction oscillation guard (the real
+   death-spiral signal). Narrow the `instruction` param description to enforce
+   the scope rule with concrete good/bad examples.
+
+3. **Response-payload trim** (`compiler/src/mcp.rs`) — the code_task tool
+   result was dumping the full per-turn metrics array (16 entries × 8 fields) +
+   `*_ms` roll-ups + full `verify_output_tail`. Average 2,893 chars / call.
+   Across 12 piecewise calls, this accumulated to ~35 kB of telemetry noise
+   that cache-rereaded every subsequent host turn. The trim keeps only what
+   Sonnet needs to plan the next chunk (summary, verify_passed, files_touched,
+   warnings, turns_used, elapsed_ms, stopped_reason). Verbose payload still
+   available via `NEBULA_DELEGATE_VERBOSE_RESULT=1` for paper/benchmark runners.
+   Trial-b response length after trim: 696–1,528 chars (−50% median).
+
+4. **Per-chunk wall-clock cap** (`compiler/src/mcp_delegate.rs`) — iter-23
+   observed one trial-b chunk that hit `stopped=max_turns` at 60 turns /
+   1,132 s (19 min) and single-handedly blew total wall clock. Under parallel
+   dispatch, the host blocks until the slowest chunk returns. Default 300 s
+   cap via `NEBULA_DELEGATE_MAX_WALL_S`; past that the chunk returns
+   `stopped_reason=wall_clock_cap` and the host can fall back.
+
+**Results (N=1 per cell, Sonnet host, nebula-combined-30b on 3090):**
+
+| task | mode | wall (s) | host $ | Δ $ vs builtins | verify |
+|---|---|---:|---:|---:|---|
+| add_reverse (add 1 func + test) | delegate (trim) | 144 | $0.21 | **−18%** | pass |
+| add_reverse | builtins | 23 | $0.26 | — | pass |
+| fix_mean_empty (1-chunk bugfix) | delegate | 66 | $0.27 | +92% | pass |
+| fix_mean_empty | builtins | 20 | $0.14 | — | pass |
+| remove_vector (13-file refactor, pre-trim) | delegate | 611 | $2.90 | +27% | pass |
+| remove_vector (trim) | delegate | 1,564 | $2.42 | +6% | pass |
+| remove_vector | builtins | 254 | $2.28 | — | pass |
+
+**Findings.**
+
+1. **Completion unlocked.** Before iter-23, the Vector-removal ask was the
+   user's canonical "MCP flops on real tasks" case — it timed out. After the
+   primer rewrite, it runs piecewise through 10–12 benchmark-shaped chunks and
+   completes end-to-end with `go test ./...` passing. Trial a: 10 min / 12
+   chunks. Trial b: 26 min / 10 chunks (dominated by one 19-min stuck chunk).
+
+2. **Savings are shape-dependent and non-monotonic.** Delegate beats builtins
+   on host $ for add_reverse (−18%), is break-even on remove_vector (+6%), and
+   *loses* on fix_mean_empty (+92%). The pattern: delegation pays when Sonnet
+   would otherwise do lots of output-token work (writing code lines); it costs
+   more on shapes where Sonnet's native Read+Edit loop is already short.
+   fix_mean_empty is 1 Read + 1 Edit in builtins (235 output tokens) — the
+   delegate's one round-trip adds overhead that's larger than Sonnet saved.
+
+3. **Wall-clock is always worse.** Across all three tasks delegate is 2–6×
+   slower wall-clock. The 30B is genuinely ~5× slower than Sonnet at the same
+   small edit. The wall-clock cap (item 4 above) protects against the
+   worst-case outliers (the 19-min stuck chunk) but doesn't close the gap on
+   the median.
+
+4. **30B variance matters.** remove_vector trial a (611 s) vs trial b (1564 s)
+   — 2.5× spread on a N=2 sample. One chunk in trial b triggered a slow-oscillation
+   path that trial a did not. Parallel dispatch of 10+ chunks in one host turn
+   amplifies this (max vs. mean). Sonnet's built-in cleanup pass caught 3–5
+   inner-agent silent failures per trial (Nebula-syntax leak, package-declaration
+   loss, `Float64` typo for `float64`) and finished them with Edit/Write — the
+   primer's "verify_passed=false → narrow and retry or finish by hand" fallback
+   pattern working as designed.
+
+**Honest framing.** The /loop premise — "meaningful token savings AND speedups"
+— isn't met across the board. The mechanism **unblocks** real-world tasks that
+previously timed out, and produces **savings on some shapes** (larger-output
+shapes), but a blanket claim of "savings + speedup" is not supportable at
+N=1 across this sample. The wall-clock penalty is real and structural — the
+30B on a 3090 is slower than Sonnet on Anthropic's hardware, full stop.
+
+**When to use `code_task`.** Heuristic from the three-task sample:
+- Tasks where Sonnet would output ≥1,000 tokens of code → delegate likely wins
+- Tasks where Sonnet-builtins would be done in 1–2 turns → delegate likely loses
+- Large multi-file refactors that Sonnet can't fit in one sitting → delegate
+  makes them *possible* even if cost-neutral
+
+**Code changes:**
+- `compiler/src/mcp.rs` — `NEBULA_PRIMER` (iter-23 piecewise rewrite),
+  `code_task` tool description, instruction param doc, session circuit-breaker
+  5 → 20, same-instruction oscillation guard, response-payload trim with
+  `NEBULA_DELEGATE_VERBOSE_RESULT` escape hatch.
+- `compiler/src/mcp_delegate.rs` — `NEBULA_DELEGATE_MAX_WALL_S` per-chunk
+  wall-clock cap (default 300 s), returns `stopped_reason=wall_clock_cap`.
+
+**Artifacts:**
+- Harness: `bench/mcp_manual_test/iter23_piecewise.py` (3 tasks × 2 modes)
+- Runs: `bench/mcp_manual_test/runs/iter23/{task}/{mode}/stream_{trial}.jsonl`
+  + `summary_{trial}.json`
+
+**Spend.** ~$12 Sonnet across 7 runs (3 builtins baselines + 4 delegate runs
+on a mix of trim/no-trim). ~$0.05 Ollama (local on 3090).
+
+**Cargo test**: 264/264 pass after both code changes.
+
+### Iteration 23b — routing heuristic + generation-heavy task (same day)
+
+**Premise to test.** Iter-23 numbers above still had the delegate losing on
+tiny tasks (fix_mean_empty +92%) despite the rewritten primer. Maybe the fix
+was that Sonnet shouldn't route tiny tasks through `code_task` at all — it
+should skip to native tools when a one-Read-one-Edit handles the job. And for
+the tasks where the delegate should actually shine (generation-heavy, the
+benchmark's `write_from_spec` shape), we need a real test.
+
+**What changed.**
+
+1. Primer addendum (`mcp.rs` `NEBULA_PRIMER`) — added a routing heuristic
+   block: *≤ 2 native turns → do NOT delegate; 3–8 → break-even, prefer
+   delegate when generated-code volume ≥ 30 LoC; ≥ 10 → delegate; translation
+   always delegates*.
+
+2. New benchmark task `write_welch_psd` — "add welch.go implementing Welch's
+   method + welch_test.go with 3 test cases". ~150–200 LoC of new Go.
+
+3. Softer sys-hint in the harness — instead of "use the Nebula MCP for all
+   code edits", say "MCP is loaded; use it where its primer's heuristic says
+   it pays off." Let Sonnet exercise judgment.
+
+**Results (all N=1, Sonnet host, nebula-combined-30b):**
+
+| task | mode | wall (s) | host $ | code_task calls | Δ $ vs builtins | verify |
+|---|---|---:|---:|---:|---:|---|
+| add_reverse | delegate (soft hint, trial c) | 31 | $0.35 | 0 | +33% | pass |
+| add_reverse | builtins | 23 | $0.26 | 0 | — | pass |
+| fix_mean_empty | delegate (soft hint, trial c) | 24 | $0.20 | 0 | +46% | pass |
+| fix_mean_empty | builtins | 20 | $0.14 | 0 | — | pass |
+| **write_welch_psd** | **delegate** | **509** | **$1.17** | **1** | **+149%** | **pass (after Sonnet recovered)** |
+| write_welch_psd | builtins | 33 | $0.47 | 0 | — | pass |
+| remove_vector (trim) | delegate | 1564 | $2.42 | 10 | +6% | pass |
+| remove_vector | builtins | 254 | $2.28 | 0 | — | pass |
+
+**Finding 1 — Routing heuristic works.** With the new guidance, Sonnet correctly
+skips `code_task` on trivial tasks (add_reverse trial c, fix_mean_empty trial c
+both called `code_task` 0 times). The host-side decision is right — the 30B
+would lose to native Read+Edit on those tasks anyway.
+
+**Finding 2 — MCP presence has fixed overhead.** Even when Sonnet doesn't call
+`code_task`, just having the MCP loaded (primer in system prompt + tool schema
+in every request) adds ~30–50% to host cost vs. pure builtins on small tasks.
+Primer is ~4.8 kB; tool schemas add more. Cached, but every host turn pays the
+cache-read cost. This is the structural tax of "hiding tools behind the MCP
+surface" — it's real and it's not going away without a much shorter primer.
+
+**Finding 3 — The generation-heavy test failed badly for the delegate.**
+write_welch_psd was supposed to be the delegate's best shape: lots of code to
+write, clear spec. Instead:
+
+- Sonnet dispatched the whole task to one `code_task` (reasonable given the
+  ~200 LoC envelope).
+- The 30B ran 60 turns / 278 s (just under the 300 s wall-cap), hit
+  `stopped=max_turns` with `verify_passed=false`, created 4 files including
+  two spurious `test_welch*.go` that weren't asked for, and overwrote several
+  unrelated files (`dft.go`, `window.go`, `common.go`, `dft_test.go`) with
+  content that broke `go build` — "undefined: WindowType" etc. Likely the
+  30B called `write_code` with empty bodies or wrong imports on those files.
+- Sonnet's recovery phase: 22 Bash calls rooting around in `.git/objects` to
+  restore the clobbered files from pack data, then 3 Edits to land the real
+  welch.go. Total wall: 509 s vs 33 s for pure builtins.
+
+**Sonnet alone wrote the 200-LoC welch.go + welch_test.go in 2 Write calls,
+33 seconds, $0.47, first try, all tests pass.** The delegate took 15× longer
+and cost 2.5× more, all to land the same output.
+
+**Honest conclusion — `code_task` doesn't beat Sonnet-builtins for real-world
+tasks on this inner model.** The research plan's pitch was "let Sonnet drive,
+have a cheap local coder do the typing, save host tokens." The numbers from
+iter-23 say:
+
+- On benchmark shapes (single-shape, paper-native tasks): −54.8% wall, −51.2%
+  host cost. Real.
+- On real-world gdsp tasks (4 shapes, iter-23b): delegate is +6% to +149%
+  more expensive than builtins and 2×–15× slower wall-clock. No task shape
+  showed a host-cost win for the delegate.
+
+The gap between the two: **Sonnet at holistic generation is dramatically
+better than the 30B at turn-by-turn tool-use generation**. The benchmarks
+measured the latter by construction. Real-world Sonnet usage looks like the
+former (few large Write calls, not many small Edit calls), which plays to
+Sonnet's strengths and the 30B's weaknesses.
+
+**What would change the picture:**
+- Stronger inner model (Qwen3-Coder-Next 80B, etc. — tested in iter-22,
+  comparable quality at 10× the cost of local 30B; endpoint stopped).
+- API-level prompt-cache sharing across tool results (out of our control).
+- Narrower scope: use `code_task` only for the 1 task type where it's reliably
+  best — compiler-assisted translation (iter-22 fast-path, −94% wall, locked
+  in).
+
+**Safety finding — inner agent can damage adjacent files.** The 30B on
+write_welch_psd clobbered `dft.go`, `window.go`, `common.go`, `dft_test.go`
+— files not mentioned in its instruction. The 4-file `files_touched` field
+only logged the welch.go/welch_test.go/test_welch*.go; the other file damage
+was silent. Root cause is likely `write_code` / `patch_code` being called
+with wrong path + empty content. Follow-up task: sandbox the inner agent's
+write paths to files it has read or that the host explicitly named in the
+instruction.
+
+**Decision — stop this /loop thread.** The /loop's success condition
+("meaningful token savings and speedup on real coding tasks") is not
+achievable with the current research stack. The mechanism works for
+specific narrow shapes already shipped (translation fast-path, the 8
+benchmark shapes in their single-shape form), and for real multi-file
+refactors it at least now *completes* instead of timing out (iter-23 primer
+rewrite). That is the honest research result, and further prompt-engineering
+won't close the gap — the limit is the inner model's reliability and speed
+vs. Sonnet's at direct generation.
+
+**Artifacts.** Same as iter-23 plus:
+- Updated `NEBULA_PRIMER` routing heuristic block (`compiler/src/mcp.rs`).
+- New task `write_welch_psd` in `bench/mcp_manual_test/iter23_piecewise.py`.
+- Runs: `bench/mcp_manual_test/runs/iter23/write_welch_psd/{mode}/...`.
+
+**Spend (iter-23b increment).** ~$4 Sonnet (1 delegate welch_psd run at
+$1.17 + builtins at $0.47 + re-tests of small tasks with soft hint + misc).
+Total iter-23+23b: ~$16 Sonnet, ~$0.05 Ollama.

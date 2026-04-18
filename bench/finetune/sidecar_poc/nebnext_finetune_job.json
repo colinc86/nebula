@@ -1,0 +1,15 @@
+{
+  "job_id": "ft-53a5e0cd-87b3",
+  "base_model": "Qwen/Qwen3-Next-80B-A3B-Instruct",
+  "train_file_id": "file-c58570bc-e477-4f20-9740-1c424cf86499",
+  "val_file_id": "file-badb7d84-f03a-4f8b-bda8-a1c7b8dde75c",
+  "n_train": 308,
+  "n_val": 34,
+  "epochs": 3,
+  "lr": 0.0001,
+  "batch_size": 16,
+  "lora_r": 16,
+  "lora_alpha": 32,
+  "suffix": "nebnext",
+  "started": "2026-04-17 20:20:09"
+}

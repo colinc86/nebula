@@ -43,6 +43,12 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--model", default=BASE_MODEL)
+    ap.add_argument("--batch-size", type=int, default=2,
+                    help="Training batch size (default 2 for 30B-A3B MoE; use 8 for 14B dense)")
+    ap.add_argument("--lr", type=float, default=LR,
+                    help="Learning rate (default 1e-4 for MoE; 1e-5 is typical for 14B dense)")
+    ap.add_argument("--suffix", default=SUFFIX,
+                    help="Together job suffix (default nebcombined)")
     args = ap.parse_args()
 
     train_path = HERE / "data" / "combined_train.jsonl"
@@ -60,15 +66,17 @@ def main() -> None:
     est_tokens = n_train * avg_tokens * EPOCHS
     est_cost = est_tokens / 1_000_000 * 0.80
 
-    print("=== Combined Phase 20 fine-tune ===")
+    print("=== Combined multi-task fine-tune ===")
     print(f"  Base model : {args.model}")
     print(f"  Train      : {n_train} examples → {train_path}")
     print(f"  Val        : {n_val} examples → {val_path}")
     print(f"  Epochs     : {EPOCHS}")
     print(f"  LoRA r/α   : {LORA_R}/{LORA_ALPHA}")
+    print(f"  Batch size : {args.batch_size}")
+    print(f"  LR         : {args.lr}")
     print(f"  Est tokens : ~{est_tokens:,}")
     print(f"  Est cost   : ~${est_cost:.2f}")
-    print(f"  Suffix     : {SUFFIX}")
+    print(f"  Suffix     : {args.suffix}")
 
     if args.dry_run:
         print("Dry run — exiting.")
@@ -87,18 +95,14 @@ def main() -> None:
     print(f"       {vl.id}")
 
     print("[2/3] Launching fine-tune...")
-    # Together's 30B-A3B max batch size is 2 (the SDK caps it; larger batches
-    # don't fit in their training hardware for this MoE model).
-    batch_size = 2
-
     job = client.fine_tuning.create(
         training_file=tr.id,
         validation_file=vl.id,
         model=args.model,
         n_epochs=EPOCHS,
-        learning_rate=LR,
-        batch_size=batch_size,
-        suffix=SUFFIX,
+        learning_rate=args.lr,
+        batch_size=args.batch_size,
+        suffix=args.suffix,
         lora=True,
         lora_r=LORA_R,
         lora_alpha=LORA_ALPHA,
@@ -114,14 +118,16 @@ def main() -> None:
         "n_train": n_train,
         "n_val": n_val,
         "epochs": EPOCHS,
-        "lr": LR,
+        "lr": args.lr,
+        "batch_size": args.batch_size,
         "lora_r": LORA_R,
         "lora_alpha": LORA_ALPHA,
-        "suffix": SUFFIX,
+        "suffix": args.suffix,
         "started": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
-    (HERE / "combined_finetune_job.json").write_text(json.dumps(info, indent=2))
-    print(f"\nSaved → {HERE / 'combined_finetune_job.json'}")
+    out_path = HERE / f"{args.suffix}_finetune_job.json"
+    out_path.write_text(json.dumps(info, indent=2))
+    print(f"\nSaved → {out_path}")
 
 
 if __name__ == "__main__":
