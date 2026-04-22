@@ -1914,9 +1914,25 @@ impl GoGen {
                 let v = self.gen_expr(value);
                 self.declare(name);
                 let top_level = self.indent == 0;
+                // At top level, only literal / pure-constant expressions can
+                // be `const`. Anything involving a function call needs `var`.
+                // Compound expressions with `iota` or pure literals are also
+                // valid in const declarations.
+                fn is_const_expr(e: &Expr) -> bool {
+                    match e {
+                        Expr::IntLit(_) | Expr::FloatLit(_) | Expr::StringLit(_)
+                        | Expr::BoolLit(_) | Expr::CharLit(_) | Expr::Nil => true,
+                        Expr::Ident(n) => n == "iota",
+                        Expr::BinaryOp { left, right, .. } => is_const_expr(left) && is_const_expr(right),
+                        Expr::UnaryOp { operand, .. } => is_const_expr(operand),
+                        _ => false,
+                    }
+                }
+                let is_constable = is_const_expr(value);
                 match (top_level, ty) {
                     (true, Some(t)) => format!("var {} {} = {}", name, t, v),
-                    (true, None) => format!("const {} = {}", name, v),
+                    (true, None) if is_constable => format!("const {} = {}", name, v),
+                    (true, None) => format!("var {} = {}", name, v),
                     (false, Some(t)) => format!("{}var {} {} = {}", self.ind(), name, t, v),
                     (false, None) => format!("{}{} := {}", self.ind(), name, v),
                 }
@@ -2068,6 +2084,12 @@ impl GoGen {
                     AssignOp::DivAssign => "/=", AssignOp::ModAssign => "%=",
                 };
                 if matches!(op, AssignOp::Assign) {
+                    // `_ = x` stays as-is (Go's discard syntax).
+                    if let Expr::Ident(name) = target {
+                        if name == "_" {
+                            return format!("{}_ = {}", self.ind(), self.gen_expr(value));
+                        }
+                    }
                     // `(a, b) = rhs` with all-fresh names → Go `a, b := rhs`
                     if let Expr::Tuple(items) = target {
                         let all_idents_fresh = items.iter().all(|e| matches!(e,
@@ -2093,6 +2115,10 @@ impl GoGen {
                         if !self.is_declared(name) {
                             let v = self.gen_expr(value);
                             self.declare(name);
+                            // `:=` is only valid inside a function body.
+                            if self.indent == 0 {
+                                return format!("var {} = {}", name, v);
+                            }
                             return format!("{}{} := {}", self.ind(), name, v);
                         }
                     }
@@ -2130,6 +2156,7 @@ impl GoGen {
     }
 
     fn gen_block(&mut self, block: &Block) -> String {
+        self.scopes.push(std::collections::HashSet::new());
         let mut out = String::new();
         for s in &block.statements { out.push_str(&self.gen_stmt(s)); out.push('\n'); }
         if let Some(e) = &block.expr {
