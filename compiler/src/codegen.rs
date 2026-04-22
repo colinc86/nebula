@@ -3999,6 +3999,23 @@ impl RustGen {
         if !path_needs.is_empty() {
             prefix.push_str(&format!("use std::path::{{{}}};\n", path_needs.join(", ")));
         }
+        // std::fmt imports for common trait usage.
+        let fmt_needs: Vec<&str> = ["Display", "Debug", "Formatter"]
+            .iter()
+            .filter(|t| {
+                let used = body.contains(&format!(" {} ", t))
+                    || body.contains(&format!(" {}\n", t))
+                    || body.contains(&format!("impl {} ", t))
+                    || body.contains(&format!(": {}", t))
+                    || body.contains(&format!("<{}>", t));
+                let already = body.contains(&format!("std::fmt::{}", t));
+                used && !already
+            })
+            .copied()
+            .collect();
+        if !fmt_needs.is_empty() {
+            prefix.push_str(&format!("use std::fmt::{{{}}};\n", fmt_needs.join(", ")));
+        }
         let time_needs: Vec<&str> = ["Duration", "Instant"]
             .iter()
             .filter(|t| {
@@ -4724,15 +4741,28 @@ impl RustGen {
             Expr::FloatLit(f) => format!("{f:?}"),
             Expr::BoolLit(b) => b.to_string(),
             Expr::StringLit(s) => {
-                // A non-empty Interpolation becomes a `{}` with an arg.
-                // An empty Interpolation (e.g. literal `{}` in the source)
-                // stays as `{}` without consuming an arg — lets callers like
-                // `panic!("x: {}", v)` get their positional placeholder back.
-                let has_real_interp = s.parts.iter().any(|p| matches!(p, StringPart::Interpolation(t) if !t.is_empty()));
+                // Classify each interpolation:
+                //   empty tokens            → `{}` (positional placeholder)
+                //   starts with `:`         → format spec (inline, no arg)
+                //   single IntLit           → positional index `{N}` inline
+                //   otherwise               → `{}` + arg
+                let is_bare_positional = |tokens: &Vec<Token>| -> bool {
+                    tokens.len() == 1 && matches!(tokens.first(), Some(Token::Int(_)))
+                };
+                let has_real_interp = s.parts.iter().any(|p| match p {
+                    StringPart::Interpolation(t) if !t.is_empty() => {
+                        !matches!(t.first(), Some(Token::Colon)) && !is_bare_positional(t)
+                    }
+                    _ => false,
+                });
                 if !has_real_interp {
                     let text: String = s.parts.iter().map(|p| match p {
                         StringPart::Literal(t) => t.as_str().to_string(),
-                        StringPart::Interpolation(_) => "{}".to_string(),
+                        StringPart::Interpolation(tokens) if tokens.is_empty() => "{}".to_string(),
+                        StringPart::Interpolation(tokens) => {
+                            let spec: String = tokens.iter().map(|t| interpolation_token_to_target(t, "self")).collect();
+                            format!("{{{}}}", spec)
+                        }
                     }).collect();
                     return format!("\"{}\"", text);
                 }
@@ -4742,8 +4772,15 @@ impl RustGen {
                     match part {
                         StringPart::Literal(t) => out.push_str(&t.replace('\n', "\\n").replace('\t', "\\t")),
                         StringPart::Interpolation(tokens) if tokens.is_empty() => {
-                            // Bare `{}` — leave as positional placeholder with no arg.
                             out.push_str("{}");
+                        }
+                        StringPart::Interpolation(tokens) if matches!(tokens.first(), Some(Token::Colon)) => {
+                            let spec: String = tokens.iter().map(|t| interpolation_token_to_target(t, "self")).collect();
+                            out.push_str(&format!("{{{}}}", spec));
+                        }
+                        StringPart::Interpolation(tokens) if is_bare_positional(tokens) => {
+                            let spec: String = tokens.iter().map(|t| interpolation_token_to_target(t, "self")).collect();
+                            out.push_str(&format!("{{{}}}", spec));
                         }
                         StringPart::Interpolation(tokens) => {
                             out.push_str("{}");
@@ -4798,6 +4835,11 @@ impl RustGen {
                         else if c == "fmt" { "format".to_string() }
                         else { c };
                     let a: Vec<String> = args.iter().map(|arg| self.gen_expr(&arg.value)).collect();
+                    // If the only arg is already a `format!(...)` call
+                    // (from a StringLit with interpolation), just return it.
+                    if a.len() == 1 && a[0].starts_with("format!(") && name == "format" {
+                        return a[0].clone();
+                    }
                     return format!("{}!({})", name, a.join(", "));
                 }
                 let a: Vec<String> = args.iter().map(|a| self.gen_expr(&a.value)).collect();
@@ -5080,10 +5122,17 @@ impl CGen {
                 "Char" => "char".into(),
                 "Nil" => "void".into(),
                 "Any" => "void*".into(),
-                // Dotted qualified paths flatten to underscores for C (no
-                // native namespace). `io.Reader` → `io_Reader*`.
                 other if other.contains('.') => format!("{}*", other.replace('.', "_")),
                 other => format!("{}*", other),
+            },
+            TypeExpr::Generic(name, args) => match name.as_str() {
+                "List" | "Array" | "Vec" => {
+                    let inner = args.first().map(|a| self.c_type(a)).unwrap_or_else(|| "void".into());
+                    // `const T*` becomes `const T *` (mutable buffer typically).
+                    let inner = inner.trim_start_matches("const ").to_string();
+                    format!("{}*", inner)
+                }
+                _ => format!("{}*", name),
             },
             TypeExpr::Option(inner) => format!("{}*", self.c_type(inner)),
             _ => "void*".into(),

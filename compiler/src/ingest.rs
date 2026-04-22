@@ -12630,12 +12630,20 @@ mod c {
                 //   `X *`            → X (drop pointer since Nebula ignores)
                 let ty_norm = ty_raw.as_deref().map(normalize_c_type);
                 let annotation = if is_array {
-                    ": List".to_string()
+                    match &ty_norm {
+                        Some(t) if !t.is_empty() => format!(": List[{}]", t),
+                        _ => ": List".to_string(),
+                    }
                 } else {
                     match ty_norm {
                         Some(t) if !t.is_empty() => {
                             if has_pointer && t == "Char" {
                                 ": Str".to_string()
+                            } else if has_pointer {
+                                // `int *xs` is conventionally an array/buffer
+                                // — emit as List[T] so subscript ops work in
+                                // downstream codegen.
+                                format!(": List[{}]", t)
                             } else {
                                 format!(": {}", t)
                             }

@@ -1,16 +1,16 @@
 {
   "summary": {
     "total": 91,
-    "clean": 54,
+    "clean": 55,
     "minor": 0,
-    "major": 37,
+    "major": 36,
     "critical": 0,
     "by_lang": {
       "c": {
         "total": 10,
-        "clean": 0,
+        "clean": 1,
         "minor": 0,
-        "major": 10,
+        "major": 9,
         "critical": 0
       },
       "go": {
@@ -72,9 +72,9 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: <tmp>/probe.c:10:20: error: subscripted value is not an array, pointer, or vector |    10 |         total += xs[i]; |       |                  ~~^~ | <tmp>/probe.c:20:20: error: subscripted value is not an array, pointer, or vector |    20 ...",
+      "phase4_native_compile": "err: <tmp>/probe.c:36:26: error: subscripted value is not an array, pointer, or vector |    36 |             total += m[i][j]; |       |                      ~~~~^~ | 1 error generated.",
       "antipatterns": [],
-      "nebula_len": 523,
+      "nebula_len": 545,
       "severity": "major",
       "antipattern_detail": []
     },
@@ -85,9 +85,9 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: <tmp>/probe.c:22:20: error: unknown type name 'List' |    22 | int64_t sum_matrix(List* m) { |       |                    ^ | <tmp>/probe.c:40:18: error: subscripted value is not an array, pointer, or vector |    40 |         s += nums[i]; ...",
+      "phase4_native_compile": "err: <tmp>/probe.c:28:26: error: subscripted value is not an array, pointer, or vector |    28 |             total += m[i][j]; |       |                      ~~~~^~ | 1 error generated.",
       "antipatterns": [],
-      "nebula_len": 564,
+      "nebula_len": 575,
       "severity": "major",
       "antipattern_detail": []
     },
@@ -100,7 +100,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "err: <tmp>/probe.c:7:13: error: incompatible pointer to integer conversion initializing 'int64_t' (aka 'long long') with an expression of type 'FILE *' (aka 'struct __sFILE *') [-Wint-conversion] |     7 |     int64_t f = fopen(path, \"r\"); |    ...",
       "antipatterns": [],
-      "nebula_len": 434,
+      "nebula_len": 440,
       "severity": "major",
       "antipattern_detail": []
     },
@@ -113,7 +113,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "err: <tmp>/probe.c:8:5: error: unknown type name 'binop' |     8 |     binop* op; |       |     ^ | <tmp>/probe.c:20:15: error: unknown type name 'binop' |    20 | int64_t apply(binop* op, int64_t a, int64_t b) { |       |               ^ | <tmp...",
       "antipatterns": [],
-      "nebula_len": 529,
+      "nebula_len": 541,
       "severity": "major",
       "antipattern_detail": []
     },
@@ -124,10 +124,10 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: <tmp>/probe.c:44:21: error: subscripted value is not an array, pointer, or vector |    44 |             if (((xs[i] + xs[j]) == target)) { |       |                   ~~^~ | <tmp>/probe.c:44:29: error: subscripted value is not an array, poi...",
+      "phase4_native_compile": "ok",
       "antipatterns": [],
-      "nebula_len": 552,
-      "severity": "major",
+      "nebula_len": 558,
+      "severity": "clean",
       "antipattern_detail": []
     },
     {
@@ -150,9 +150,9 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: <tmp>/probe.c:19:20: error: subscripted value is not an array, pointer, or vector |    19 |         total += xs[i]; |       |                  ~~^~ | <tmp>/probe.c:26:13: error: incompatible pointer to integer conversion initializing 'int64...",
+      "phase4_native_compile": "err: <tmp>/probe.c:26:13: error: incompatible pointer to integer conversion initializing 'int64_t' (aka 'long long') with an expression of type 'void *' [-Wint-conversion] |    26 |     int64_t a = malloc(sizeof(Account)); |       |             ...",
       "antipatterns": [],
-      "nebula_len": 810,
+      "nebula_len": 816,
       "severity": "major",
       "antipattern_detail": []
     },
@@ -165,7 +165,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "err: <tmp>/probe.c:12:5: error: call to undeclared function '__deref'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration] |    12 |     __deref(q) = (a / b); |       |     ^ | <tmp>/probe.c:12:16: e...",
       "antipatterns": [],
-      "nebula_len": 388,
+      "nebula_len": 406,
       "severity": "major",
       "antipattern_detail": []
     },
@@ -176,9 +176,9 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: <tmp>/probe.c:17:11: error: member reference type 'Value *' is a pointer; did you mean to use '->'? |    17 |     if ((v.kind == T_INT)) { |       |          ~^ |       |           -> | <tmp>/probe.c:17:20: error: use of undeclared identifi...",
+      "phase4_native_compile": "err: <tmp>/probe.c:17:11: error: member reference base type 'Value **' is not a structure or union |    17 |     if ((v.kind == T_INT)) { |       |          ~^~~~~ | <tmp>/probe.c:17:20: error: use of undeclared identifier 'T_INT' |    17 |     ...",
       "antipatterns": [],
-      "nebula_len": 224,
+      "nebula_len": 230,
       "severity": "major",
       "antipattern_detail": []
     },
@@ -191,7 +191,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "err: <tmp>/probe.c:7:5: error: unknown type name 'ShapeVTable' |     7 |     ShapeVTable* vt; |       |     ^ | <tmp>/probe.c:17:13: error: incompatible pointer to integer conversion initializing 'int64_t' (aka 'long long') with an expression of...",
       "antipatterns": [],
-      "nebula_len": 352,
+      "nebula_len": 364,
       "severity": "major",
       "antipattern_detail": []
     },
@@ -938,7 +938,7 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: error: expected expression, found `:` |  --> <tmp>/probe.rs:5:27 |   | | 5 |     format!(format!(\"{}\", :.2), x) |   |                           ^ expected expression |  | error: format argument must be a string literal |  --> <tmp>/probe.rs...",
+      "phase4_native_compile": "err: error[E0053]: method `fmt` has an incompatible type for trait |   --> <tmp>/probe.rs:23:22 |    | | 23 |     fn fmt(&self, f: fmt::Formatter) -> fmt::Result { |    |                      ^^^^^^^^^^^^^^ expected `&mut Formatter<'_>`, found `...",
       "antipatterns": [],
       "nebula_len": 459,
       "severity": "major",
