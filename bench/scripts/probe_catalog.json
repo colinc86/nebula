@@ -1,9 +1,9 @@
 {
   "summary": {
     "total": 91,
-    "clean": 48,
+    "clean": 50,
     "minor": 0,
-    "major": 43,
+    "major": 41,
     "critical": 0,
     "by_lang": {
       "c": {
@@ -15,9 +15,9 @@
       },
       "go": {
         "total": 13,
-        "clean": 2,
+        "clean": 4,
         "minor": 0,
-        "major": 11,
+        "major": 9,
         "critical": 0
       },
       "javascript": {
@@ -228,10 +228,10 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: # probe | ./main.go:30:20: nil is not constant | ./main.go:31:19: nil is not constant",
+      "phase4_native_compile": "ok",
       "antipatterns": [],
       "nebula_len": 322,
-      "severity": "major",
+      "severity": "clean",
       "antipattern_detail": []
     },
     {
@@ -293,7 +293,7 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: # probe | ./main.go:17:11: invalid operation: p == nil (mismatched types int and untyped nil) | ./main.go:24:2: undefined: a | ./main.go:24:5: undefined: b | ./main.go:25:9: undefined: a | ./main.go:25:12: undefined: b",
+      "phase4_native_compile": "err: # probe | ./main.go:17:11: invalid operation: p == nil (mismatched types int and untyped nil)",
       "antipatterns": [],
       "nebula_len": 235,
       "severity": "major",
@@ -354,10 +354,10 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: # probe | ./main.go:17:8: syntax error: unexpected keyword default, expected expression | ./main.go:18:4: syntax error: unexpected keyword return, expected :",
+      "phase4_native_compile": "ok",
       "antipatterns": [],
       "nebula_len": 443,
-      "severity": "major",
+      "severity": "clean",
       "antipattern_detail": []
     },
     {

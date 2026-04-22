@@ -1808,16 +1808,66 @@ impl GoGen {
         p.type_ann.as_ref().map(|t| self.gen_type(t)).unwrap_or_else(|| "interface{}".into())
     }
 
+    /// Turn a run of Go `const` statements where an iota-bearing const is
+    /// followed by `const NAME = nil` continuations into a single
+    /// `const ( ... )` block. Go rejects `const X = nil`; the original
+    /// pattern is a shared-type iota block whose `= iota` clause propagates.
+    fn fold_iota_consts(body: &str) -> String {
+        let lines: Vec<&str> = body.lines().collect();
+        let mut out = String::new();
+        let mut i = 0;
+        while i < lines.len() {
+            let line = lines[i];
+            let is_iota_seed = line.starts_with("const ") && line.contains("iota");
+            if is_iota_seed {
+                // Scan forward for contiguous `const NAME = nil` lines.
+                let mut j = i + 1;
+                let mut tail_names: Vec<String> = Vec::new();
+                while j < lines.len() {
+                    let l = lines[j];
+                    if let Some(rest) = l.strip_prefix("const ") {
+                        if let Some(eq_idx) = rest.find(" = ") {
+                            let name = &rest[..eq_idx];
+                            let val = rest[eq_idx + 3..].trim();
+                            if val == "nil" {
+                                tail_names.push(name.to_string());
+                                j += 1;
+                                continue;
+                            }
+                        }
+                    }
+                    break;
+                }
+                if !tail_names.is_empty() {
+                    let first_rest = &line[6..];
+                    out.push_str("const (\n\t");
+                    out.push_str(first_rest);
+                    out.push('\n');
+                    for n in &tail_names { out.push_str(&format!("\t{}\n", n)); }
+                    out.push_str(")\n");
+                    i = j;
+                    continue;
+                }
+            }
+            out.push_str(line);
+            out.push('\n');
+            i += 1;
+        }
+        out
+    }
+
     fn gen_program(&mut self, program: &Program) -> String {
         // Collect imports by scanning the program
         let pkg = self.package_name.as_deref().unwrap_or("main");
         let mut out = format!("package {}\n\n", pkg);
-        // We'll add imports after scanning
         let mut body = String::new();
         for stmt in &program.statements {
             body.push_str(&self.gen_stmt(stmt));
             body.push('\n');
         }
+        // Fold iota-continuation `const x = nil` lines into the preceding
+        // iota-initiated const into a single `const ( ... )` block.
+        body = Self::fold_iota_consts(&body);
         // Simple import detection
         let mut imports = Vec::new();
         if body.contains("fmt.") { imports.push("\"fmt\""); }
@@ -2010,9 +2060,28 @@ impl GoGen {
                     AssignOp::SubAssign => "-=", AssignOp::MulAssign => "*=",
                     AssignOp::DivAssign => "/=", AssignOp::ModAssign => "%=",
                 };
-                // Nebula bare `x = 5` at first use becomes Go `x := 5`.
-                // Subsequent reassigns stay `x = 5`.
                 if matches!(op, AssignOp::Assign) {
+                    // `(a, b) = rhs` with all-fresh names → Go `a, b := rhs`
+                    if let Expr::Tuple(items) = target {
+                        let all_idents_fresh = items.iter().all(|e| matches!(e,
+                            Expr::Ident(n) if !self.is_declared(n)
+                        ));
+                        if all_idents_fresh && !items.is_empty() {
+                            let names: Vec<String> = items.iter().map(|e| {
+                                if let Expr::Ident(n) = e { n.clone() } else { "_".into() }
+                            }).collect();
+                            // RHS: if it's a tuple, drop the outer parens so
+                            // Go sees multiple return values, otherwise keep it.
+                            let v = match value {
+                                Expr::Tuple(rhs_items) => rhs_items.iter()
+                                    .map(|e| self.gen_expr(e))
+                                    .collect::<Vec<_>>().join(", "),
+                                _ => self.gen_expr(value),
+                            };
+                            for n in &names { self.declare(n); }
+                            return format!("{}{} := {}", self.ind(), names.join(", "), v);
+                        }
+                    }
                     if let Expr::Ident(name) = target {
                         if !self.is_declared(name) {
                             let v = self.gen_expr(value);
@@ -2291,23 +2360,69 @@ impl GoGen {
             }
             Expr::Match { subject, arms } => {
                 let subj = self.gen_expr(subject);
-                let mut out = format!("switch {} {{\n", subj);
+                // If every arm is a Wildcard/`_` binding with a guard, render
+                // as a Go expression switch (`switch { case guard: ... }`) —
+                // otherwise subject-less guards can't compile.
+                // If any arm carries a guard and all arm patterns are
+                // wildcards, render as a Go expression switch (subject-less).
+                // Unguarded wildcard arms become the `default:` branch.
+                let any_guard = arms.iter().any(|a| a.guard.is_some());
+                let all_wild = arms.iter().all(|a|
+                    matches!(&a.pattern, Pattern::Wildcard)
+                    || matches!(&a.pattern, Pattern::Binding(n) if n == "_")
+                );
+                if any_guard && all_wild {
+                    let mut out = "switch {\n".to_string();
+                    self.indent += 1;
+                    for arm in arms {
+                        if let Some(g) = &arm.guard {
+                            out.push_str(&format!("{}case {}:\n", self.ind(), self.gen_expr(g)));
+                        } else {
+                            out.push_str(&format!("{}default:\n", self.ind()));
+                        }
+                        self.indent += 1;
+                        match &arm.body {
+                            Expr::Block(block) => out.push_str(&self.gen_block(block)),
+                            other => out.push_str(&format!("{}return {}\n", self.ind(), self.gen_expr(other))),
+                        }
+                        self.indent -= 1;
+                    }
+                    self.indent -= 1;
+                    out.push_str(&format!("{}}}", self.ind()));
+                    return out;
+                }
+                // If pattern list contains type-like names and `default`
+                // keyword pattern (which ingest leaks through), treat as a
+                // type switch.
+                let looks_like_type_switch = arms.iter().any(|a|
+                    match &a.pattern {
+                        Pattern::Binding(n) => n == "default" || n == "int" || n == "string"
+                            || n == "bool" || n.starts_with("slice_"),
+                        _ => false,
+                    }
+                );
+                let mut out = if looks_like_type_switch {
+                    format!("switch v := {}.(type) {{\n", subj)
+                } else {
+                    format!("switch {} {{\n", subj)
+                };
                 self.indent += 1;
                 for arm in arms {
                     match &arm.pattern {
                         Pattern::Wildcard => {
                             out.push_str(&format!("{}default:\n", self.ind()));
                         }
-                        Pattern::Binding(n) if n == "_" => {
+                        Pattern::Binding(n) if n == "_" || n == "default" => {
                             out.push_str(&format!("{}default:\n", self.ind()));
                         }
                         Pattern::Binding(n) => {
-                            // In Nebula's match grammar, a bare identifier is
-                            // ambiguous — it could be a pattern variable OR a
-                            // constant/enum name. In Go switch cases we prefer
-                            // the constant interpretation unless the name is
-                            // `_`, which is handled above.
-                            out.push_str(&format!("{}case {}:\n", self.ind(), n));
+                            // Type-switch style rewrite for ingested slice names.
+                            let case_val = if n.starts_with("slice_") {
+                                format!("[]{}", &n[6..])
+                            } else {
+                                n.clone()
+                            };
+                            out.push_str(&format!("{}case {}:\n", self.ind(), case_val));
                         }
                         Pattern::Literal(lit) => {
                             out.push_str(&format!("{}case {}:\n", self.ind(), self.gen_expr(lit)));
