@@ -1699,6 +1699,49 @@ impl GoGen {
         if let Some(top) = self.scopes.last_mut() { top.insert(name.to_string()); }
     }
 
+    /// Scan a block for idents used as operands of `<` / `>` / `<=` / `>=`.
+    /// Drives `cmp.Ordered` bound on generic params in Go fn signatures.
+    fn scan_ordered_idents(
+        stmts: &[Statement],
+        trailing: &Option<Box<Expr>>,
+        out: &mut std::collections::BTreeSet<String>,
+    ) {
+        for s in stmts { Self::scan_ordered_stmt(s, out); }
+        if let Some(t) = trailing { Self::scan_ordered_expr(t, out); }
+    }
+
+    fn scan_ordered_stmt(s: &Statement, out: &mut std::collections::BTreeSet<String>) {
+        match s {
+            Statement::Expr(e) | Statement::Return(Some(e)) | Statement::Break(Some(e)) | Statement::Throw(Some(e)) => Self::scan_ordered_expr(e, out),
+            Statement::Let { value, .. } | Statement::Const { value, .. } | Statement::Mut { value, .. } => Self::scan_ordered_expr(value, out),
+            Statement::Assignment { target, value, .. } => { Self::scan_ordered_expr(target, out); Self::scan_ordered_expr(value, out); }
+            _ => {}
+        }
+    }
+
+    fn scan_ordered_expr(e: &Expr, out: &mut std::collections::BTreeSet<String>) {
+        if let Expr::BinaryOp { left, op, right } = e {
+            if matches!(op, BinOp::Less | BinOp::Greater | BinOp::LessEq | BinOp::GreaterEq) {
+                if let Expr::Ident(n) = left.as_ref() { out.insert(n.clone()); }
+                if let Expr::Ident(n) = right.as_ref() { out.insert(n.clone()); }
+            }
+            Self::scan_ordered_expr(left, out); Self::scan_ordered_expr(right, out);
+            return;
+        }
+        match e {
+            Expr::Call { callee, args } => { Self::scan_ordered_expr(callee, out); for a in args { Self::scan_ordered_expr(&a.value, out); } }
+            Expr::MethodCall { object, args, .. } => { Self::scan_ordered_expr(object, out); for a in args { Self::scan_ordered_expr(&a.value, out); } }
+            Expr::If { condition, then_block, else_block } => {
+                Self::scan_ordered_expr(condition, out);
+                Self::scan_ordered_idents(&then_block.statements, &then_block.expr.clone().map(|e| e), out);
+                if let Some(eb) = else_block { Self::scan_ordered_idents(&eb.statements, &eb.expr.clone().map(|e| e), out); }
+            }
+            Expr::Block(b) => Self::scan_ordered_idents(&b.statements, &b.expr.clone().map(|e| e), out),
+            Expr::For { body, .. } | Expr::While { body, .. } | Expr::Loop { body } => Self::scan_ordered_idents(&body.statements, &body.expr.clone().map(|e| e), out),
+            _ => {}
+        }
+    }
+
     fn collect_generics_go(t: &TypeExpr, out: &mut std::collections::BTreeSet<String>) {
         const KNOWN: &[&str] = &["Int", "Int8", "Int16", "Int32", "Int64", "Uint",
             "Uint8", "Uint16", "Uint32", "Uint64", "Byte", "Rune", "Float",
@@ -1958,6 +2001,7 @@ impl GoGen {
         if body.contains("regexp.") { imports.push("\"regexp\""); }
         if body.contains("log.") { imports.push("\"log\""); }
         if body.contains("testing.") { imports.push("\"testing\""); }
+        if body.contains("cmp.Ordered") || body.contains("cmp.Compare") { imports.push("\"cmp\""); }
         if !imports.is_empty() {
             out.push_str("import (\n");
             for imp in &imports {
@@ -2038,17 +2082,29 @@ impl GoGen {
                 let ret = return_type.as_ref()
                     .map(|t| format!(" {}", self.gen_type(t)))
                     .unwrap_or_default();
-                // Recover generic params from signature: single uppercase
-                // letters not otherwise defined as types — emit as
-                // `func name[T any, U any](...)`.
                 let mut gen_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
                 for p in params.iter().filter(|p| p.name != "sf") {
                     if let Some(t) = &p.type_ann { Self::collect_generics_go(t, &mut gen_set); }
                 }
                 if let Some(rt) = return_type { Self::collect_generics_go(rt, &mut gen_set); }
+                // Detect order comparisons on generic params so we can use
+                // `cmp.Ordered` bound instead of `any`.
+                let mut ordered_params: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+                Self::scan_ordered_idents(&body.statements, &body.expr, &mut ordered_params);
+                let mut ordered_generics: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+                for p in params.iter().filter(|p| p.name != "sf") {
+                    if let Some(TypeExpr::Named(tn)) = &p.type_ann {
+                        if gen_set.contains(tn) && ordered_params.contains(&p.name) {
+                            ordered_generics.insert(tn.clone());
+                        }
+                    }
+                }
                 let gen_str = if gen_set.is_empty() { String::new() }
                     else {
-                        let items: Vec<String> = gen_set.iter().map(|g| format!("{} any", g)).collect();
+                        let items: Vec<String> = gen_set.iter().map(|g| {
+                            let bound = if ordered_generics.contains(g) { "cmp.Ordered" } else { "any" };
+                            format!("{} {}", g, bound)
+                        }).collect();
                         format!("[{}]", items.join(", "))
                     };
                 self.scopes.push(std::collections::HashSet::new());
@@ -2073,11 +2129,18 @@ impl GoGen {
                 out
             }
             Statement::StructDecl { name, fields, .. } => {
-                let mut out = format!("{}type {} struct {{\n", self.ind(), name);
+                // Recover generic params from field types.
+                let mut gen_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+                for f in fields { Self::collect_generics_go(&f.type_ann, &mut gen_set); }
+                let gen_str = if gen_set.is_empty() { String::new() }
+                    else {
+                        let items: Vec<String> = gen_set.iter().map(|g| format!("{} any", g)).collect();
+                        format!("[{}]", items.join(", "))
+                    };
+                let mut out = format!("{}type {}{} struct {{\n", self.ind(), name, gen_str);
                 self.indent += 1;
                 for f in fields {
                     let ty = self.gen_type(&f.type_ann);
-                    // Preserve field names as-is (Go struct fields keep original casing)
                     out.push_str(&format!("{}{} {}\n", self.ind(), f.name, ty));
                 }
                 self.indent -= 1;

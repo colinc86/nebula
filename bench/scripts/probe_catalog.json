@@ -254,7 +254,7 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: # probe | ./main.go:4:6: invalid operation: a > b (type parameter T cannot use operator >) | ./main.go:29:10: undefined: T | ./main.go:32:24: undefined: T",
+      "phase4_native_compile": "err: # probe | ./main.go:36:10: cannot use generic type Stack[T any] without instantiation | ./main.go:36:24: undefined: T",
       "antipatterns": [],
       "nebula_len": 423,
       "severity": "major",
