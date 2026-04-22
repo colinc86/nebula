@@ -155,7 +155,7 @@ pub fn to_typescript(program: &Program) -> String {
 }
 
 pub fn to_rust_lang(program: &Program) -> String {
-    let mut gen = RustGen { indent: 0, scopes: vec![std::collections::HashSet::new()], enum_struct_variants: std::collections::HashMap::new(), all_enum_variants: std::collections::HashSet::new(), current_fn_returns_string: false };
+    let mut gen = RustGen { indent: 0, scopes: vec![std::collections::HashSet::new()], enum_struct_variants: std::collections::HashMap::new(), all_enum_variants: std::collections::HashSet::new(), current_fn_returns_string: false, current_fn_returns_vec: false };
     gen.gen_program(program)
 }
 
@@ -2984,9 +2984,6 @@ impl KotlinGen {
                 out
             }
             Statement::StructDecl { name, fields, .. } => {
-                // Kotlin `data class` requires at least one primary-ctor
-                // param. Emit a regular `class` with no body for empty
-                // structs (placeholder `_empty: Any` from upstream pad).
                 let real_fields: Vec<&crate::ast::Field> = fields.iter()
                     .filter(|f| !(f.name == "_empty" && matches!(&f.type_ann,
                         crate::ast::TypeExpr::Named(n) if n == "Any")))
@@ -2994,7 +2991,9 @@ impl KotlinGen {
                 if real_fields.is_empty() {
                     return format!("{}class {}", self.ind(), name);
                 }
-                let fs: Vec<String> = real_fields.iter().map(|f| format!("val {}: Any", f.name)).collect();
+                let fs: Vec<String> = real_fields.iter().map(|f| {
+                    format!("val {}: {}", f.name, self.neb_type(&f.type_ann))
+                }).collect();
                 format!("{}data class {}({})", self.ind(), name, fs.join(", "))
             }
             Statement::EnumDecl { name, variants, .. } => {
@@ -3039,7 +3038,8 @@ impl KotlinGen {
             Statement::Throw(Some(e)) => format!("{}throw {}", self.ind(), self.gen_expr(e)),
             Statement::Throw(None) => format!("{}throw RuntimeException(\"error\")", self.ind()),
             Statement::LetDestructure { names, value, .. } => {
-                format!("{}({}) = {}", self.ind(), names.join(", "), self.gen_expr(value))
+                for n in names { self.declare(n); }
+                format!("{}val ({}) = {}", self.ind(), names.join(", "), self.gen_expr(value))
             }
             // Iter-24 Bug D: explicit Use/Module handlers for Kotlin.
             Statement::Use { path, .. } => {
@@ -3856,6 +3856,9 @@ struct RustGen {
     /// Whether the current function being emitted returns `String` —
     /// drives `.to_string()` wrapping on bare string-literal return sites.
     current_fn_returns_string: bool,
+    /// Whether the current function returns `Vec<_>` — drives
+    /// `.collect::<Vec<_>>()` wrapping on trailing iter-chain expressions.
+    current_fn_returns_vec: bool,
 }
 
 impl RustGen {
@@ -4045,6 +4048,21 @@ impl RustGen {
         }
     }
 
+    /// Does this expression end in a MethodCall whose method is an
+    /// iterator-returning adapter (map/filter/zip/enumerate/…)? Used to
+    /// decide whether to auto-append `.collect()` in fn-return position.
+    fn is_iter_chain_tail(e: &Expr) -> bool {
+        match e {
+            Expr::MethodCall { method, .. } => matches!(method.as_str(),
+                "map" | "filter" | "zip" | "enumerate" | "take" | "skip"
+                | "flat_map" | "rev" | "chain" | "step_by" | "windows"
+                | "chunks" | "cloned" | "copied" | "flatten" | "inspect"
+                | "peekable" | "filter_map"
+            ),
+            _ => false,
+        }
+    }
+
     /// Lowercase stdlib type identifiers that lost their case at ingest.
     fn rust_type_rename(s: &str) -> Option<&'static str> {
         Some(match s {
@@ -4203,17 +4221,19 @@ impl RustGen {
                 if let Some(rt) = return_type { Self::collect_generics(rt, &mut generic_set); }
                 let generics_str = if generic_set.is_empty() { String::new() }
                     else { format!("<{}>", generic_set.into_iter().collect::<Vec<_>>().join(", ")) };
-                // Track whether this fn returns String so match-arm /
-                // return-value emission can wrap bare string literals.
                 let prev_ret = self.current_fn_returns_string;
+                let prev_vec = self.current_fn_returns_vec;
                 self.current_fn_returns_string = matches!(return_type,
                     Some(TypeExpr::Named(n)) if n == "String" || n == "Str");
+                self.current_fn_returns_vec = matches!(return_type,
+                    Some(TypeExpr::Generic(n, _)) if n == "List" || n == "Vec" || n == "Array");
                 self.scopes.push(std::collections::HashSet::new());
                 for p in params { self.declare(&p.name); }
                 let mut out = format!("{}fn {}{}({}){} {{\n", self.ind(), name, generics_str, ps.join(", "), ret);
                 self.indent += 1; out.push_str(&self.gen_block(body)); self.indent -= 1;
                 self.scopes.pop();
                 self.current_fn_returns_string = prev_ret;
+                self.current_fn_returns_vec = prev_vec;
                 out.push_str(&format!("{}}}", self.ind()));
                 out
             }
@@ -4393,7 +4413,15 @@ impl RustGen {
         self.scopes.push(std::collections::HashSet::new());
         let mut out = String::new();
         for s in &block.statements { out.push_str(&self.gen_stmt(s)); out.push('\n'); }
-        if let Some(e) = &block.expr { out.push_str(&format!("{}{}\n", self.ind(), self.gen_expr(e))); }
+        if let Some(e) = &block.expr {
+            // Auto-.collect() iter-chain trailing exprs in Vec-returning fns.
+            let needs_collect = self.current_fn_returns_vec && Self::is_iter_chain_tail(e);
+            let rendered = self.gen_expr(e);
+            let final_expr = if needs_collect {
+                format!("{}.collect::<Vec<_>>()", rendered)
+            } else { rendered };
+            out.push_str(&format!("{}{}\n", self.ind(), final_expr));
+        }
         self.scopes.pop();
         out
     }

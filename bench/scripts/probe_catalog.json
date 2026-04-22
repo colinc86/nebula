@@ -1,9 +1,9 @@
 {
   "summary": {
     "total": 91,
-    "clean": 50,
+    "clean": 51,
     "minor": 0,
-    "major": 41,
+    "major": 40,
     "critical": 0,
     "by_lang": {
       "c": {
@@ -29,9 +29,9 @@
       },
       "kotlin": {
         "total": 12,
-        "clean": 2,
+        "clean": 3,
         "minor": 0,
-        "major": 10,
+        "major": 9,
         "critical": 0
       },
       "python": {
@@ -510,9 +510,9 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: <tmp>/probe.kt:5:15: error: function invocation 'map(...)' expected. |     return xs.map |               ^^^ | <tmp>/probe.kt:9:15: error: function invocation 'filter(...)' expected. |     return xs.filter |               ^^^^^^ | <tmp>/pro...",
+      "phase4_native_compile": "err: <tmp>/probe.kt:15:5: error: return type mismatch: expected 'Any', actual 'Unit'. |     return /* TODO */ |     ^^^^^^",
       "antipatterns": [],
-      "nebula_len": 316,
+      "nebula_len": 324,
       "severity": "major",
       "antipattern_detail": []
     },
@@ -525,7 +525,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "err: <tmp>/probe.kt:1:8: error: unresolved reference 'kotlinx'. | import kotlinx.Coroutines |        ^^^^^^^ | <tmp>/probe.kt:2:8: error: unresolved reference 'kotlinx'. | import kotlinx.coroutines.Flow |        ^^^^^^^ | <tmp>/probe.kt:4:5: err...",
       "antipatterns": [],
-      "nebula_len": 431,
+      "nebula_len": 435,
       "severity": "major",
       "antipattern_detail": []
     },
@@ -647,10 +647,10 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: <tmp>/probe.kt:8:6: error: unresolved reference 'q'. |     (q, r) = divmod(10, 3) |      ^ | <tmp>/probe.kt:8:7: error: syntax error: Expecting ')'. |     (q, r) = divmod(10, 3) |       ^ | <tmp>/probe.kt:8:7: error: syntax error: Unexpecte...",
+      "phase4_native_compile": "ok",
       "antipatterns": [],
       "nebula_len": 388,
-      "severity": "major",
+      "severity": "clean",
       "antipattern_detail": []
     },
     {

@@ -771,6 +771,7 @@ pub fn from_kotlin_with_opts(source: &str, keep_comments: bool) -> String {
     let nebula = trait_body_props_to_fns(&nebula);
     let nebula = flatten_impl_trait_paths(&nebula);
     let nebula = rewrite_kotlin_lambda_closure(&nebula);
+    let nebula = rewrite_kotlin_implicit_it_closure(&nebula);
     let nebula = wrap_stmt_lambda_bodies(&nebula);
     let nebula = wrap_return_in_match_arms(&nebula);
     let nebula = rebalance_list_of_brackets(&nebula);
@@ -1104,6 +1105,99 @@ fn rewrite_kotlin_lambda_closure(source: &str) -> String {
                         continue;
                     }
                 }
+            }
+            out.push(c);
+            i += 1;
+        }
+        out
+    }).collect::<Vec<_>>().join("\n")
+}
+
+/// Rewrite Kotlin-style implicit-`it` trailing closures to explicit Nebula
+/// lambda-call form:
+///   `xs.map { it * 2 }`   →  `xs.map(|it| it * 2)`
+///   `xs.filter { it > 0 }.sum()` → `xs.filter(|it| it > 0).sum()`
+/// Only fires when the `{` sits immediately after a method/field access
+/// with no `->` inside the matching `{ ... }` span (so pre-existing
+/// param-form closures stay untouched), and the body doesn't itself
+/// contain top-level `;` (which would make it a multi-statement block
+/// requiring heavier treatment).
+fn rewrite_kotlin_implicit_it_closure(source: &str) -> String {
+    source.lines().map(|line| {
+        let chars: Vec<char> = line.chars().collect();
+        let mut out = String::with_capacity(line.len());
+        let mut i = 0;
+        let mut in_str: Option<char> = None;
+        while i < chars.len() {
+            let c = chars[i];
+            if let Some(q) = in_str {
+                out.push(c);
+                if c == q { in_str = None; }
+                i += 1;
+                continue;
+            }
+            if c == '"' || c == '\'' {
+                in_str = Some(c);
+                out.push(c);
+                i += 1;
+                continue;
+            }
+            if c == '{' && i > 0 {
+                // Look back for ` ` then method/field access ending in
+                // ident (no parens).
+                let mut b = i;
+                while b > 0 && chars[b-1] == ' ' { b -= 1; }
+                if b == 0 { out.push(c); i += 1; continue; }
+                // The last char before whitespace should close an ident.
+                let prev = chars[b-1];
+                let is_method_access = prev.is_ascii_alphanumeric() || prev == '_';
+                if !is_method_access { out.push(c); i += 1; continue; }
+                // Walk back through the ident, then require a SINGLE `.`
+                // before it — not a `..` range operator which also ends in
+                // `.ident` shape.
+                let mut k = b;
+                while k > 0 && (chars[k-1].is_ascii_alphanumeric() || chars[k-1] == '_') { k -= 1; }
+                if k == 0 || chars[k-1] != '.' { out.push(c); i += 1; continue; }
+                if k >= 2 && chars[k-2] == '.' {
+                    // `..ident` range-op tail, not a method access.
+                    out.push(c); i += 1; continue;
+                }
+                // Locate matching `}`. Track brace depth, escape strings.
+                let mut depth = 1i32;
+                let mut j = i + 1;
+                let mut inner_str: Option<char> = None;
+                let mut saw_arrow = false;
+                let mut saw_semi = false;
+                while j < chars.len() {
+                    let cj = chars[j];
+                    if let Some(q) = inner_str {
+                        if cj == q { inner_str = None; }
+                        j += 1; continue;
+                    }
+                    if cj == '"' || cj == '\'' { inner_str = Some(cj); j += 1; continue; }
+                    if cj == '{' { depth += 1; }
+                    if cj == '}' { depth -= 1; if depth == 0 { break; } }
+                    if depth == 1 {
+                        if cj == '-' && j + 1 < chars.len() && chars[j+1] == '>' { saw_arrow = true; }
+                        if cj == ';' { saw_semi = true; }
+                    }
+                    j += 1;
+                }
+                if depth != 0 || saw_arrow || saw_semi {
+                    out.push(c);
+                    i += 1;
+                    continue;
+                }
+                // Extract body between `{` and `}`.
+                let body: String = chars[i+1..j].iter().collect();
+                let body = body.trim();
+                // Skip the trailing `whitespace`s we preserved in `out`
+                // back before the `{` so we can swap `.foo { body }` →
+                // `.foo(|it| body)`.
+                while out.ends_with(' ') { out.pop(); }
+                out.push_str(&format!("(|it| {})", body));
+                i = j + 1;
+                continue;
             }
             out.push(c);
             i += 1;
