@@ -592,7 +592,7 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: <tmp>/probe.kt:8:12: error: unresolved reference 'local_date'. |     return local_date.now() |            ^^^^^^^^^^ | <tmp>/probe.kt:11:12: error: cannot infer type for type parameter 'E'. Specify it explicitly. |     return ArrayList() | ...",
+      "phase4_native_compile": "err: <tmp>/probe.kt:11:12: error: cannot infer type for type parameter 'E'. Specify it explicitly. |     return ArrayList() |            ^^^^^^^^^ | <tmp>/probe.kt:11:12: error: return type mismatch: expected 'List<String>', actual 'ArrayList<un...",
       "antipatterns": [
         "casing_variants"
       ],
@@ -612,7 +612,7 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: <tmp>/probe.kt:8:12: error: return type mismatch: expected 'Int', actual 'Int?'. |     return xs.lastOrNull() |            ^^^^^^^^^^^^^^^ | <tmp>/probe.kt:18:17: error: none of the following candidates is applicable: |  | fun IntProgressio...",
+      "phase4_native_compile": "err: <tmp>/probe.kt:18:17: error: none of the following candidates is applicable: |  | fun IntProgression.step(step: Int): IntProgression: |   Unresolved reference. None of the following candidates is applicable because of a receiver type mismat...",
       "antipatterns": [],
       "nebula_len": 345,
       "severity": "major",
@@ -651,7 +651,7 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: <tmp>/probe.kt:5:12: error: return type mismatch: expected 'Int', actual 'Int?'. |     return d[k] |            ^^^^ | <tmp>/probe.kt:11:15: error: cannot infer type for type parameter 'K'. Specify it explicitly. |     val out = mutableMapO...",
+      "phase4_native_compile": "err: <tmp>/probe.kt:11:15: error: unresolved reference 'MutableMapOf'. |     val out = MutableMapOf() |               ^^^^^^^^^^^^ | <tmp>/probe.kt:16:12: error: cannot infer type for type parameter 'T'. Specify it explicitly. |     return Array...",
       "antipatterns": [
         "casing_variants"
       ],
@@ -977,7 +977,7 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: error[E0308]: mismatched types |  --> <tmp>/probe.rs:7:11 |   | | 7 |     d.get(k) |   |       --- ^ expected `&_`, found `String` |   |       | |   |       arguments to this method are incorrect |   | |   = note: expected reference `&_` | ...",
+      "phase4_native_compile": "err: error[E0308]: mismatched types |  --> <tmp>/probe.rs:7:5 |   | | 6 | fn lookup(d: HashMap<String, i64>, k: String) -> i64 { |   |                                                  --- expected `i64` because of return type | 7 |     d.get(&k)...",
       "antipatterns": [
         "casing_variants"
       ],

@@ -145,7 +145,7 @@ pub fn to_swift(program: &Program) -> String {
 }
 
 pub fn to_kotlin(program: &Program) -> String {
-    let mut gen = KotlinGen { indent: 0, scopes: vec![std::collections::HashSet::new()] };
+    let mut gen = KotlinGen { indent: 0, scopes: vec![std::collections::HashSet::new()], current_fn_returns_nullable: true };
     gen.gen_program(program)
 }
 
@@ -2860,6 +2860,10 @@ impl SwiftGen {
 struct KotlinGen {
     indent: usize,
     scopes: Vec<std::collections::HashSet<String>>,
+    /// Whether the current fn's return type is nullable — if false, bare
+    /// return expressions with nullable-result shape (`d[k]`, `list.lastOrNull()`)
+    /// get `!!` appended.
+    current_fn_returns_nullable: bool,
 }
 
 impl KotlinGen {
@@ -2963,7 +2967,22 @@ impl KotlinGen {
                         3 => format!("Triple<{}, {}, {}>", a[0], a[1], a[2]),
                         _ => format!("Triple<{}>", a.join(", ")),
                     },
-                    _ => format!("{}<{}>", name, a.join(", ")),
+                    _ => {
+                        // Dotted name: PascalCase the last segment if it looks
+                        // like a type (snake_case or all-lowercase, non-short).
+                        let rendered_name = if name.contains('.') {
+                            let mut parts: Vec<String> = name.split('.').map(|s| s.to_string()).collect();
+                            if let Some(last) = parts.last_mut() {
+                                let short = matches!(last.as_str(), "io" | "fmt" | "fs" | "net"
+                                    | "util" | "time" | "math" | "text" | "nio" | "lang");
+                                if !short && last.chars().next().map_or(false, |c| c.is_ascii_lowercase()) {
+                                    *last = Self::pascal_k(last);
+                                }
+                            }
+                            parts.join(".")
+                        } else { name.clone() };
+                        format!("{}<{}>", rendered_name, a.join(", "))
+                    }
                 }
             }
             TypeExpr::Option(inner) => format!("{}?", self.neb_type(inner)),
@@ -3013,12 +3032,16 @@ impl KotlinGen {
                 let gen_str = if generic_set.is_empty() { String::new() }
                     else { format!(" <{}>", generic_set.iter().cloned().collect::<Vec<_>>().join(", ")) };
                 let body_empty = body.statements.is_empty() && body.expr.is_none();
-                // Kotlin: `fun <T> name(...)` — generics come BEFORE the name.
                 let mut out = format!("{}fun{} {}({}): {} {{\n", self.ind(), gen_str, name, ps.join(", "), ret);
                 self.indent += 1;
                 self.scopes.push(std::collections::HashSet::new());
                 for p in params { self.declare(&p.name); }
+                // Track nullable return type so `d[k]` / `lastOrNull()` auto-get
+                // `!!` suffix on bare trailing returns.
+                let prev_null = self.current_fn_returns_nullable;
+                self.current_fn_returns_nullable = ret.ends_with('?') || ret == "Any" || ret == "Unit";
                 let body_str = self.gen_fn_block(body);
+                self.current_fn_returns_nullable = prev_null;
                 self.scopes.pop();
                 out.push_str(&body_str);
                 if body_empty {
@@ -3206,21 +3229,38 @@ impl KotlinGen {
         let mut out = String::new();
         for s in &block.statements { out.push_str(&self.gen_stmt(s)); out.push('\n'); }
         if let Some(e) = &block.expr {
-            // Kotlin `if`, `when`, `try` are expressions; in a function body
-            // they need an explicit `return` to produce the fn's result.
-            // `for`/`while`/`loop` genuinely produce Unit and need none.
             let needs_return = is_fn_body && !matches!(e.as_ref(),
                 Expr::For { .. } | Expr::While { .. } | Expr::Loop { .. }
                 | Expr::Block(_)
             );
             if needs_return {
-                out.push_str(&format!("{}return {}\n", self.ind(), self.gen_expr(e)));
+                // Nullable-shape trailing return with a non-nullable fn
+                // signature → force-unwrap with `!!`.
+                let mut rendered = self.gen_expr(e);
+                if !self.current_fn_returns_nullable && Self::is_nullable_shape(e) {
+                    rendered = format!("{}!!", rendered);
+                }
+                out.push_str(&format!("{}return {}\n", self.ind(), rendered));
             } else {
                 out.push_str(&format!("{}{}\n", self.ind(), self.gen_expr(e)));
             }
         }
         self.scopes.pop();
         out
+    }
+
+    /// Expressions whose Kotlin result type is nullable (T?): map index,
+    /// `*OrNull`, `first`/`last` on collections, etc. Used to trigger `!!`
+    /// when assigned/returned as non-null.
+    fn is_nullable_shape(e: &Expr) -> bool {
+        match e {
+            Expr::Index { .. } => true,
+            Expr::MethodCall { method, .. } => matches!(method.as_str(),
+                "last_or_null" | "first_or_null" | "lastOrNull" | "firstOrNull"
+                | "get_or_null" | "getOrNull" | "find" | "single_or_null" | "singleOrNull"
+            ),
+            _ => false,
+        }
     }
 
     fn gen_expr(&mut self, expr: &Expr) -> String {
@@ -3246,7 +3286,13 @@ impl KotlinGen {
                 out
             }
             Expr::Nil => "null".into(),
-            Expr::Ident(n) => if n == "sf" { "this".into() } else { n.clone() },
+            Expr::Ident(n) => {
+                if n == "sf" { "this".into() }
+                else if n.contains('_') && n.chars().next().map_or(false, |c| c.is_ascii_lowercase())
+                    && Self::is_likely_java_type(n)
+                { Self::pascal_k(n) }
+                else { n.clone() }
+            }
             Expr::BinaryOp { left, op, right } => {
                 let o = match op {
                     BinOp::Add => "+", BinOp::Sub => "-", BinOp::Mul => "*", BinOp::Div => "/",
@@ -4846,14 +4892,23 @@ impl RustGen {
                 format!("{}({})", c, a.join(", "))
             }
             Expr::MethodCall { object, method, args } => {
-                let a: Vec<String> = args.iter().map(|a| self.gen_expr(&a.value)).collect();
+                // HashMap/BTreeMap `.get(k)` / `.remove(k)` / `.contains_key(k)`
+                // / `.insert(k, v)` all take `&K`. If the arg is a bare
+                // identifier we borrow it explicitly.
+                let borrowing_methods = matches!(method.as_str(),
+                    "get" | "get_mut" | "contains_key" | "remove" | "insert"
+                );
+                let a: Vec<String> = args.iter().enumerate().map(|(i, a)| {
+                    let rendered = self.gen_expr(&a.value);
+                    if borrowing_methods && i == 0 && matches!(&a.value, Expr::Ident(_)) {
+                        format!("&{}", rendered)
+                    } else { rendered }
+                }).collect();
                 if let Expr::Ident(o) = object.as_ref() {
                     if Self::is_rust_path_root(o) {
                         return format!("{}::{}({})", o, method, a.join(", "));
                     }
                     if o.chars().next().map_or(false, |c| c.is_ascii_uppercase()) {
-                        // Known enum variant → PascalCase constructor call.
-                        // Otherwise assume associated function (snake_case).
                         let m = if self.all_enum_variants.contains(&(o.clone(), method.clone())) {
                             Self::pascal(method)
                         } else { method.clone() };
