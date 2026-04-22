@@ -651,7 +651,7 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: <tmp>/probe.kt:11:15: error: unresolved reference 'MutableMapOf'. |     val out = MutableMapOf() |               ^^^^^^^^^^^^ | <tmp>/probe.kt:18:12: error: cannot infer type for type parameter 'T'. Specify it explicitly. |     return Array...",
+      "phase4_native_compile": "err: <tmp>/probe.kt:18:12: error: cannot infer type for type parameter 'T'. Specify it explicitly. |     return Array(n) |            ^^^^^ | <tmp>/probe.kt:18:12: error: return type mismatch: expected 'List<IntArray>', actual 'Array<uninferred ...",
       "antipatterns": [
         "casing_variants"
       ],

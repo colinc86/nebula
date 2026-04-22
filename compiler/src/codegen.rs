@@ -146,7 +146,7 @@ pub fn to_swift(program: &Program) -> String {
 }
 
 pub fn to_kotlin(program: &Program) -> String {
-    let mut gen = KotlinGen { indent: 0, scopes: vec![std::collections::HashSet::new()], current_fn_returns_nullable: true };
+    let mut gen = KotlinGen { indent: 0, scopes: vec![std::collections::HashSet::new()], current_fn_returns_nullable: true, current_fn_return_type: None };
     gen.gen_program(program)
 }
 
@@ -2902,10 +2902,10 @@ impl SwiftGen {
 struct KotlinGen {
     indent: usize,
     scopes: Vec<std::collections::HashSet<String>>,
-    /// Whether the current fn's return type is nullable — if false, bare
-    /// return expressions with nullable-result shape (`d[k]`, `list.lastOrNull()`)
-    /// get `!!` appended.
     current_fn_returns_nullable: bool,
+    /// Current fn's return type rendered — drives turbofish for collection
+    /// constructors (`mutableMapOf<K, V>()`) that Kotlin can't infer on its own.
+    current_fn_return_type: Option<TypeExpr>,
 }
 
 impl KotlinGen {
@@ -2931,10 +2931,18 @@ impl KotlinGen {
 
     /// Heuristic for names the ingester lowered from Java/Kotlin Pascal types.
     fn is_likely_java_type(s: &str) -> bool {
-        // Bail out if the caller already has a dot (qualified path).
         if s.contains('.') { return false; }
-        // Simple rule: snake_case with more than one segment is probably a
-        // Pascal type broken apart.
+        // Skip well-known Kotlin stdlib function names which look snake-case
+        // at the token level but are really camelCase builtins (`mutable_map_of`
+        // → `mutableMapOf`, not `MutableMapOf`).
+        if matches!(s,
+            "mutable_list_of" | "mutable_map_of" | "mutable_set_of"
+            | "list_of" | "map_of" | "set_of" | "array_of"
+            | "int_array_of" | "long_array_of" | "double_array_of"
+            | "float_array_of" | "char_array_of" | "byte_array_of"
+            | "short_array_of" | "boolean_array_of" | "int_array"
+            | "array_list_of"
+        ) { return false; }
         let segs: Vec<&str> = s.split('_').collect();
         segs.len() >= 2 && segs.iter().all(|s| !s.is_empty())
     }
@@ -3078,12 +3086,13 @@ impl KotlinGen {
                 self.indent += 1;
                 self.scopes.push(std::collections::HashSet::new());
                 for p in params { self.declare(&p.name); }
-                // Track nullable return type so `d[k]` / `lastOrNull()` auto-get
-                // `!!` suffix on bare trailing returns.
                 let prev_null = self.current_fn_returns_nullable;
+                let prev_rt = self.current_fn_return_type.clone();
                 self.current_fn_returns_nullable = ret.ends_with('?') || ret == "Any" || ret == "Unit";
+                self.current_fn_return_type = return_type.clone();
                 let body_str = self.gen_fn_block(body);
                 self.current_fn_returns_nullable = prev_null;
+                self.current_fn_return_type = prev_rt;
                 self.scopes.pop();
                 out.push_str(&body_str);
                 if body_empty {
@@ -3367,12 +3376,21 @@ impl KotlinGen {
                         "local_date" => "LocalDate".into(),
                         "local_time" => "LocalTime".into(),
                         "local_date_time" => "LocalDateTime".into(),
-                        // Pass through — constructor calls that look like
-                        // snake_case PascalCase types (e.g. `hash_map`).
                         s if s.contains('_') && s.chars().next().map_or(false, |c| c.is_ascii_lowercase())
                             && Self::is_likely_java_type(s) => Self::pascal_k(s),
                         _ => c,
                     };
+                    // Empty collection-of constructors can't infer their
+                    // element types — add a turbofish from the current fn's
+                    // return type.
+                    if a.is_empty() && (converted == "mutableMapOf" || converted == "mutableListOf" || converted == "mutableSetOf") {
+                        if let Some(rt) = &self.current_fn_return_type {
+                            if let TypeExpr::Generic(_, args) = rt {
+                                let args_s: Vec<String> = args.iter().map(|t| self.neb_type(t)).collect();
+                                return format!("{}<{}>()", converted, args_s.join(", "));
+                            }
+                        }
+                    }
                     format!("{}({})", converted, a.join(", "))
                 }
             }
