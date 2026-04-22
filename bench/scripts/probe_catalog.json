@@ -1,9 +1,9 @@
 {
   "summary": {
     "total": 91,
-    "clean": 59,
+    "clean": 60,
     "minor": 1,
-    "major": 31,
+    "major": 30,
     "critical": 0,
     "by_lang": {
       "c": {
@@ -43,9 +43,9 @@
       },
       "rust": {
         "total": 11,
-        "clean": 4,
+        "clean": 5,
         "minor": 1,
-        "major": 6,
+        "major": 5,
         "critical": 0
       },
       "swift": {
@@ -866,10 +866,10 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: error[E0277]: cannot multiply `()` by `i32` |  --> <tmp>/probe.rs:4:11 |   | | 4 |     Ok((n * 2)) |   |           ^ no implementation for `() * i32` |   | |   = help: the trait `Mul<i32>` is not implemented for `()` |  | error[E0277]: the ...",
+      "phase4_native_compile": "ok",
       "antipatterns": [],
       "nebula_len": 452,
-      "severity": "major",
+      "severity": "clean",
       "antipattern_detail": []
     },
     {

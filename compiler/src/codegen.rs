@@ -156,7 +156,7 @@ pub fn to_typescript(program: &Program) -> String {
 }
 
 pub fn to_rust_lang(program: &Program) -> String {
-    let mut gen = RustGen { indent: 0, scopes: vec![std::collections::HashSet::new()], enum_struct_variants: std::collections::HashMap::new(), all_enum_variants: std::collections::HashSet::new(), trait_names: std::collections::HashSet::new(), current_fn_returns_string: false, current_fn_returns_vec: false };
+    let mut gen = RustGen { indent: 0, scopes: vec![std::collections::HashSet::new()], enum_struct_variants: std::collections::HashMap::new(), all_enum_variants: std::collections::HashSet::new(), trait_names: std::collections::HashSet::new(), current_fn_returns_string: false, current_fn_returns_vec: false, current_fn_result_ok_type: None };
     gen.gen_program(program)
 }
 
@@ -4003,6 +4003,10 @@ struct RustGen {
     /// Whether the current function returns `Vec<_>` — drives
     /// `.collect::<Vec<_>>()` wrapping on trailing iter-chain expressions.
     current_fn_returns_vec: bool,
+    /// The `Ok`-type of the current fn's Result return, if any. Used to
+    /// emit a turbofish on `.parse()` so type inference picks a concrete
+    /// numeric type: `s.parse::<i64>()?`.
+    current_fn_result_ok_type: Option<String>,
 }
 
 impl RustGen {
@@ -4681,10 +4685,17 @@ impl RustGen {
                     };
                 let prev_ret = self.current_fn_returns_string;
                 let prev_vec = self.current_fn_returns_vec;
+                let prev_ok = self.current_fn_result_ok_type.clone();
                 self.current_fn_returns_string = matches!(return_type,
                     Some(TypeExpr::Named(n)) if n == "String" || n == "Str");
                 self.current_fn_returns_vec = matches!(return_type,
                     Some(TypeExpr::Generic(n, _)) if n == "List" || n == "Vec" || n == "Array");
+                self.current_fn_result_ok_type = match return_type {
+                    Some(TypeExpr::Generic(n, args)) if n == "Result" => {
+                        args.first().map(|a| self.neb_type(a))
+                    }
+                    _ => None,
+                };
                 self.scopes.push(std::collections::HashSet::new());
                 for p in params { self.declare(&p.name); }
                 let mut out = format!("{}fn {}{}({}){} {{\n", self.ind(), name, generics_str, ps.join(", "), ret);
@@ -4692,6 +4703,7 @@ impl RustGen {
                 self.scopes.pop();
                 self.current_fn_returns_string = prev_ret;
                 self.current_fn_returns_vec = prev_vec;
+                self.current_fn_result_ok_type = prev_ok;
                 out.push_str(&format!("{}}}", self.ind()));
                 out
             }
@@ -4972,7 +4984,14 @@ impl RustGen {
                 // Internal markers from the ingester.
                 if c == "__deref" {
                     let a: Vec<String> = args.iter().map(|arg| self.gen_expr(&arg.value)).collect();
-                    return format!("*{}", a.join(""));
+                    let inner = a.join("");
+                    // `*X` on an already-owned value (e.g. chain with
+                    // `.copied()`/`.cloned()`) is a no-op that fails to
+                    // compile — drop the deref in that case.
+                    if inner.contains(".copied()") || inner.contains(".cloned()") {
+                        return inner;
+                    }
+                    return format!("*{}", inner);
                 }
                 if c == "__addr" {
                     let a: Vec<String> = args.iter().map(|arg| self.gen_expr(&arg.value)).collect();
@@ -5040,12 +5059,30 @@ impl RustGen {
                     "uw" => "unwrap",
                     "clr" => "clear",
                     "str" => "to_string",
-                    // PathBuf uses `push` / `pop`, not `append` / `remove`.
                     "append" => "push",
                     other => other,
                 };
                 let obj_str = self.gen_expr(object);
                 let needs_parens = matches!(object.as_ref(), Expr::Range { .. });
+                // `.parse()` on a &str can't pick its target type without
+                // context — inject a turbofish from the enclosing fn's
+                // `Result<T, _>` Ok type when we know it.
+                if m == "parse" {
+                    if let Some(ok_ty) = &self.current_fn_result_ok_type {
+                        let prefix = if needs_parens { format!("({})", obj_str) } else { obj_str.clone() };
+                        return format!("{}.parse::<{}>({})", prefix, ok_ty, a.join(", "));
+                    }
+                }
+                // `xs.first().unwrap_or(0)` — Vec::first returns `Option<&T>`
+                // but `unwrap_or` expects `&T`, not `T`. Insert `.copied()`
+                // between the two so the integer literal works.
+                if m == "unwrap_or" || m == "unwrap_or_default" {
+                    if let Expr::MethodCall { method: inner, .. } = object.as_ref() {
+                        if matches!(inner.as_str(), "first" | "last" | "get" | "min" | "max") {
+                            return format!("{}.copied().{}({})", obj_str, m, a.join(", "));
+                        }
+                    }
+                }
                 // Iterator methods need `.iter()` or `.into_iter()` on a
                 // Vec/slice receiver. Without a type inferencer we add it
                 // speculatively for well-known iter-only methods.
