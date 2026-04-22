@@ -7234,7 +7234,38 @@ fn convert_positional_format(line: &str) -> Option<String> {
     let rest = &after_open[ci + 1..].trim_start();
 
     if !rest.starts_with(',') { return None; }
-    let args_str = rest[1..].trim().trim_end_matches(')');
+    // `rest[1..]` is the arg list plus the outer call's closing `)`(and
+    // potentially further trailing `)` for wrappers). Find the single `)`
+    // that matches the outer call's `(` by tracking paren depth — don't
+    // strip all trailing `)` blindly, which would eat the closer of the
+    // final argument itself (`self.area()` → `self.area(`).
+    let after_comma = rest[1..].trim_start();
+    let bytes: Vec<char> = after_comma.chars().collect();
+    let mut pd = 0i32;
+    let mut call_close = None;
+    let mut in_s: Option<char> = None;
+    let mut k = 0;
+    while k < bytes.len() {
+        let c = bytes[k];
+        if let Some(q) = in_s {
+            if c == q && (k == 0 || bytes[k-1] != '\\') { in_s = None; }
+            k += 1; continue;
+        }
+        if c == '"' || c == '\'' { in_s = Some(c); k += 1; continue; }
+        match c {
+            '(' | '[' | '{' => pd += 1,
+            ')' | ']' | '}' => {
+                if pd == 0 { call_close = Some(k); break; }
+                pd -= 1;
+            }
+            _ => {}
+        }
+        k += 1;
+    }
+    let args_str = match call_close {
+        Some(pos) => &after_comma[..pos],
+        None => after_comma,
+    };
     let args = split_args(args_str);
 
     // Replace {} with {arg}

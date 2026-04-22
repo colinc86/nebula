@@ -1,9 +1,9 @@
 {
   "summary": {
     "total": 91,
-    "clean": 51,
+    "clean": 53,
     "minor": 0,
-    "major": 40,
+    "major": 38,
     "critical": 0,
     "by_lang": {
       "c": {
@@ -43,9 +43,9 @@
       },
       "rust": {
         "total": 11,
-        "clean": 2,
+        "clean": 4,
         "minor": 0,
-        "major": 9,
+        "major": 7,
         "critical": 0
       },
       "swift": {
@@ -849,10 +849,10 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: error[E0618]: expected function, found `F` |   --> <tmp>/probe.rs:18:13 |    | | 17 | fn twice<F, T>(f: F) -> (T, T) { |    |                - `f` has type `F` | 18 |     let v = f(); |    |             ^-- |    |             | |    |      ...",
+      "phase4_native_compile": "ok",
       "antipatterns": [],
       "nebula_len": 277,
-      "severity": "major",
+      "severity": "clean",
       "antipattern_detail": []
     },
     {
@@ -888,10 +888,10 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: error: mismatched closing delimiter: `}` |  --> <tmp>/probe.rs:5:16 |   | | 4 |     fn describe(&self) -> String { |   |                                  - closing delimiter possibly meant for this | 5 |         format!(\"shape of area {}\", ...",
+      "phase4_native_compile": "ok",
       "antipatterns": [],
-      "nebula_len": 491,
-      "severity": "major",
+      "nebula_len": 492,
+      "severity": "clean",
       "antipattern_detail": []
     },
     {
@@ -960,7 +960,7 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: error[E0425]: cannot find value `x` in this scope |   --> <tmp>/probe.rs:21:28 |    | | 21 |     xs.iter().find(|andx| (x > 0)) |    |                            ^ |    | | help: a local variable with a similar name exists |    | | 21 |    ...",
+      "phase4_native_compile": "err: error[E0425]: cannot find value `x` in this scope |   --> <tmp>/probe.rs:20:28 |    | | 20 |     xs.iter().find(|andx| (x > 0)) |    |                            ^ |    | | help: a local variable with a similar name exists |    | | 20 |    ...",
       "antipatterns": [],
       "nebula_len": 498,
       "severity": "major",
@@ -986,7 +986,7 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: error[E0423]: expected value, found macro `vec` |   --> <tmp>/probe.rs:16:10 |    | | 16 |     vec![vec[0]] |    |          ^^^ not a value |    | | help: use `!` to invoke the macro |    | | 16 |     vec![vec![0]] |    |             + |  |...",
+      "phase4_native_compile": "err: error[E0308]: mismatched types |  --> <tmp>/probe.rs:7:11 |   | | 7 |     d.get(k) |   |       --- ^ expected `&_`, found `String` |   |       | |   |       arguments to this method are incorrect |   | |   = note: expected reference `&_` | ...",
       "antipatterns": [
         "casing_variants"
       ],

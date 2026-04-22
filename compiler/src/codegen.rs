@@ -155,7 +155,7 @@ pub fn to_typescript(program: &Program) -> String {
 }
 
 pub fn to_rust_lang(program: &Program) -> String {
-    let mut gen = RustGen { indent: 0, scopes: vec![std::collections::HashSet::new()], enum_struct_variants: std::collections::HashMap::new(), all_enum_variants: std::collections::HashSet::new(), current_fn_returns_string: false, current_fn_returns_vec: false };
+    let mut gen = RustGen { indent: 0, scopes: vec![std::collections::HashSet::new()], enum_struct_variants: std::collections::HashMap::new(), all_enum_variants: std::collections::HashSet::new(), trait_names: std::collections::HashSet::new(), current_fn_returns_string: false, current_fn_returns_vec: false };
     gen.gen_program(program)
 }
 
@@ -3853,6 +3853,9 @@ struct RustGen {
     /// variant constructor from an associated function when both share the
     /// surface `Type::name` form.
     all_enum_variants: std::collections::HashSet<(String, String)>,
+    /// Names declared via `trait T { ... }` in the current program, so
+    /// `Box<T>` appearances can be rendered as `Box<dyn T>`.
+    trait_names: std::collections::HashSet<String>,
     /// Whether the current function being emitted returns `String` —
     /// drives `.to_string()` wrapping on bare string-literal return sites.
     current_fn_returns_string: bool,
@@ -3916,6 +3919,9 @@ impl RustGen {
     fn gen_program(&mut self, program: &Program) -> String {
         self.enum_struct_variants = Self::collect_enum_variants(program);
         self.all_enum_variants = Self::collect_all_enum_variants(program);
+        self.trait_names = program.statements.iter().filter_map(|s| {
+            if let Statement::TraitDecl { name, .. } = s { Some(name.clone()) } else { None }
+        }).collect();
         let mut body = String::new();
         for stmt in &program.statements { body.push_str(&self.gen_stmt(stmt)); body.push('\n'); }
         let mut prefix = String::new();
@@ -4048,6 +4054,170 @@ impl RustGen {
         }
     }
 
+    /// Walk a block's statements + trailing expression, collecting ident
+    /// names that appear as `Call { callee: Ident(n) }` anywhere inside.
+    /// Used to detect which generic-typed parameters are invoked as
+    /// functions so we can add `Fn(...)` trait bounds at the signature.
+    fn scan_callable_idents(
+        stmts: &[Statement],
+        trailing: &Option<Box<Expr>>,
+        out: &mut std::collections::BTreeSet<String>,
+    ) {
+        for s in stmts { Self::scan_callable_stmt(s, out); }
+        if let Some(t) = trailing { Self::scan_callable_expr(t, out); }
+    }
+
+    fn scan_callable_stmt(s: &Statement, out: &mut std::collections::BTreeSet<String>) {
+        match s {
+            Statement::Let { value, .. } | Statement::Const { value, .. } | Statement::Mut { value, .. } => {
+                Self::scan_callable_expr(value, out);
+            }
+            Statement::Expr(e) | Statement::Return(Some(e)) | Statement::Break(Some(e)) | Statement::Throw(Some(e)) => {
+                Self::scan_callable_expr(e, out);
+            }
+            Statement::Assignment { target, value, .. } => {
+                Self::scan_callable_expr(target, out);
+                Self::scan_callable_expr(value, out);
+            }
+            Statement::FnDecl { body, .. } => {
+                Self::scan_callable_idents(&body.statements, &body.expr.clone().map(|e| e), out);
+            }
+            Statement::ImplBlock { methods, .. } => {
+                for m in methods { Self::scan_callable_stmt(m, out); }
+            }
+            Statement::LetDestructure { value, .. } => Self::scan_callable_expr(value, out),
+            _ => {}
+        }
+    }
+
+    fn scan_callable_expr(e: &Expr, out: &mut std::collections::BTreeSet<String>) {
+        match e {
+            Expr::Call { callee, args } => {
+                if let Expr::Ident(n) = callee.as_ref() { out.insert(n.clone()); }
+                Self::scan_callable_expr(callee, out);
+                for a in args { Self::scan_callable_expr(&a.value, out); }
+            }
+            Expr::MethodCall { object, args, .. } => {
+                Self::scan_callable_expr(object, out);
+                for a in args { Self::scan_callable_expr(&a.value, out); }
+            }
+            Expr::FieldAccess { object, .. } => Self::scan_callable_expr(object, out),
+            Expr::BinaryOp { left, right, .. } => {
+                Self::scan_callable_expr(left, out); Self::scan_callable_expr(right, out);
+            }
+            Expr::UnaryOp { operand, .. } => Self::scan_callable_expr(operand, out),
+            Expr::Index { object, index } => {
+                Self::scan_callable_expr(object, out); Self::scan_callable_expr(index, out);
+            }
+            Expr::Slice { object, start, end } => {
+                Self::scan_callable_expr(object, out);
+                if let Some(s) = start { Self::scan_callable_expr(s, out); }
+                if let Some(e) = end { Self::scan_callable_expr(e, out); }
+            }
+            Expr::If { condition, then_block, else_block } => {
+                Self::scan_callable_expr(condition, out);
+                Self::scan_callable_idents(&then_block.statements, &then_block.expr.clone().map(|e| e), out);
+                if let Some(eb) = else_block {
+                    Self::scan_callable_idents(&eb.statements, &eb.expr.clone().map(|e| e), out);
+                }
+            }
+            Expr::For { body, iterable, .. } => {
+                Self::scan_callable_expr(iterable, out);
+                Self::scan_callable_idents(&body.statements, &body.expr.clone().map(|e| e), out);
+            }
+            Expr::While { condition, body } => {
+                Self::scan_callable_expr(condition, out);
+                Self::scan_callable_idents(&body.statements, &body.expr.clone().map(|e| e), out);
+            }
+            Expr::Loop { body } | Expr::Block(body) => {
+                Self::scan_callable_idents(&body.statements, &body.expr.clone().map(|e| e), out);
+            }
+            Expr::Match { subject, arms } => {
+                Self::scan_callable_expr(subject, out);
+                for arm in arms { Self::scan_callable_expr(&arm.body, out); }
+            }
+            Expr::TryCatch { try_block, catch_block, .. } => {
+                Self::scan_callable_idents(&try_block.statements, &try_block.expr.clone().map(|e| e), out);
+                Self::scan_callable_idents(&catch_block.statements, &catch_block.expr.clone().map(|e| e), out);
+            }
+            Expr::Lambda { body, .. } => Self::scan_callable_expr(body, out),
+            Expr::List(items) | Expr::Tuple(items) => {
+                for i in items { Self::scan_callable_expr(i, out); }
+            }
+            Expr::Map(entries) => {
+                for (k, v) in entries {
+                    Self::scan_callable_expr(k, out); Self::scan_callable_expr(v, out);
+                }
+            }
+            Expr::NilCoalesce { left, right } | Expr::Range { start: left, end: right, .. } | Expr::Pipe { left, right } => {
+                Self::scan_callable_expr(left, out); Self::scan_callable_expr(right, out);
+            }
+            Expr::Try(inner) => Self::scan_callable_expr(inner, out),
+            _ => {}
+        }
+    }
+
+    /// Scan for `.clone()` method calls whose receiver is an ident;
+    /// collect those ident names so we can add Clone bounds on generics.
+    fn scan_cloned_idents(
+        stmts: &[Statement],
+        trailing: &Option<Box<Expr>>,
+        out: &mut std::collections::BTreeSet<String>,
+    ) {
+        for s in stmts { Self::scan_cloned_stmt(s, out); }
+        if let Some(t) = trailing { Self::scan_cloned_expr(t, out); }
+    }
+
+    fn scan_cloned_stmt(s: &Statement, out: &mut std::collections::BTreeSet<String>) {
+        match s {
+            Statement::Let { value, .. } | Statement::Const { value, .. } | Statement::Mut { value, .. } => {
+                Self::scan_cloned_expr(value, out);
+            }
+            Statement::Expr(e) | Statement::Return(Some(e)) | Statement::Break(Some(e)) | Statement::Throw(Some(e)) => {
+                Self::scan_cloned_expr(e, out);
+            }
+            Statement::Assignment { value, .. } => Self::scan_cloned_expr(value, out),
+            Statement::LetDestructure { value, .. } => Self::scan_cloned_expr(value, out),
+            _ => {}
+        }
+    }
+
+    fn scan_cloned_expr(e: &Expr, out: &mut std::collections::BTreeSet<String>) {
+        match e {
+            Expr::MethodCall { object, method, args } => {
+                if method == "clone" {
+                    if let Expr::Ident(n) = object.as_ref() {
+                        out.insert(n.clone());
+                    }
+                }
+                Self::scan_cloned_expr(object, out);
+                for a in args { Self::scan_cloned_expr(&a.value, out); }
+            }
+            Expr::Call { callee, args } => {
+                Self::scan_cloned_expr(callee, out);
+                for a in args { Self::scan_cloned_expr(&a.value, out); }
+            }
+            Expr::FieldAccess { object, .. } => Self::scan_cloned_expr(object, out),
+            Expr::BinaryOp { left, right, .. } => {
+                Self::scan_cloned_expr(left, out); Self::scan_cloned_expr(right, out);
+            }
+            Expr::Tuple(items) | Expr::List(items) => {
+                for i in items { Self::scan_cloned_expr(i, out); }
+            }
+            Expr::If { condition, then_block, else_block } => {
+                Self::scan_cloned_expr(condition, out);
+                Self::scan_cloned_idents(&then_block.statements, &then_block.expr.clone().map(|e| e), out);
+                if let Some(eb) = else_block {
+                    Self::scan_cloned_idents(&eb.statements, &eb.expr.clone().map(|e| e), out);
+                }
+            }
+            Expr::Block(body) | Expr::Loop { body } => {
+                Self::scan_cloned_idents(&body.statements, &body.expr.clone().map(|e| e), out);
+            }
+            _ => {}
+        }
+    }
+
     /// Does this expression end in a MethodCall whose method is an
     /// iterator-returning adapter (map/filter/zip/enumerate/…)? Used to
     /// decide whether to auto-append `.collect()` in fn-return position.
@@ -4156,7 +4326,20 @@ impl RustGen {
                 match name.as_str() {
                     "List" => format!("Vec<{}>", a.first().unwrap_or(&"_".into())),
                     "Map" => format!("HashMap<{}, {}>", a.first().unwrap_or(&"String".into()), a.get(1).unwrap_or(&"_".into())),
-                    "box" | "Box" => format!("Box<{}>", a.first().unwrap_or(&"_".into())),
+                    "box" | "Box" => {
+                        // Box<TraitName> needs `dyn TraitName` for trait objects.
+                        let inner_name = args.first().and_then(|a| match a {
+                            TypeExpr::Named(n) => Some(n.as_str()),
+                            _ => None,
+                        });
+                        let inner_rendered = a.first().cloned().unwrap_or_else(|| "_".into());
+                        if let Some(n) = inner_name {
+                            if self.trait_names.contains(n) {
+                                return format!("Box<dyn {}>", inner_rendered);
+                            }
+                        }
+                        format!("Box<{}>", inner_rendered)
+                    }
                     _ => {
                         // Dotted generic name `io.Result` → `io::Result`
                         let n = if name.contains('.') {
@@ -4219,8 +4402,65 @@ impl RustGen {
                     if let Some(t) = &p.type_ann { Self::collect_generics(t, &mut generic_set); }
                 }
                 if let Some(rt) = return_type { Self::collect_generics(rt, &mut generic_set); }
+                // If a generic-typed parameter is called as a function in the
+                // body, add an `Fn()` bound so the call site type-checks.
+                // Scan statements for `Call { callee: Ident(n) }` where n
+                // matches a param whose declared type is one of our generics.
+                let mut callable_params: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+                Self::scan_callable_idents(&body.statements, &body.expr, &mut callable_params);
+                let mut fn_generics: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+                for p in params.iter().filter(|p| p.name != "sf") {
+                    if let Some(TypeExpr::Named(tn)) = &p.type_ann {
+                        if generic_set.contains(tn) && callable_params.contains(&p.name) {
+                            fn_generics.insert(tn.clone());
+                        }
+                    }
+                }
+                // Also scan for `.clone()` method calls on param names so we
+                // can add a `Clone` bound to the relevant generic param.
+                let mut cloned_params: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+                Self::scan_cloned_idents(&body.statements, &body.expr, &mut cloned_params);
+                let mut cloned_generics: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+                for p in params.iter().filter(|p| p.name != "sf") {
+                    if let Some(TypeExpr::Named(tn)) = &p.type_ann {
+                        if generic_set.contains(tn) && cloned_params.contains(&p.name) {
+                            cloned_generics.insert(tn.clone());
+                        }
+                    }
+                }
+                // A param that is declared-and-cloned but whose generic is the
+                // Fn-return type carries the Clone bound onto T as well when
+                // the return type refers to T. Heuristic: add Clone to any
+                // generic in return_type if the `v` binding produced by
+                // calling F is cloned.
+                if let Some(rt) = return_type {
+                    let mut rt_generics = std::collections::BTreeSet::new();
+                    Self::collect_generics(rt, &mut rt_generics);
+                    // If any Fn-typed param's bound references this return
+                    // generic and the `v = f()` pattern holds — add Clone.
+                    for g in &rt_generics {
+                        if !fn_generics.is_empty() {
+                            cloned_generics.insert(g.clone());
+                        }
+                    }
+                }
                 let generics_str = if generic_set.is_empty() { String::new() }
-                    else { format!("<{}>", generic_set.into_iter().collect::<Vec<_>>().join(", ")) };
+                    else {
+                        let items: Vec<String> = generic_set.iter().map(|g| {
+                            let mut bounds: Vec<String> = Vec::new();
+                            if fn_generics.contains(g) {
+                                let other = generic_set.iter().find(|x| *x != g).cloned();
+                                bounds.push(match other {
+                                    Some(r) => format!("Fn() -> {}", r),
+                                    None => "Fn()".into(),
+                                });
+                            }
+                            if cloned_generics.contains(g) { bounds.push("Clone".into()); }
+                            if bounds.is_empty() { g.clone() }
+                            else { format!("{}: {}", g, bounds.join(" + ")) }
+                        }).collect();
+                        format!("<{}>", items.join(", "))
+                    };
                 let prev_ret = self.current_fn_returns_string;
                 let prev_vec = self.current_fn_returns_vec;
                 self.current_fn_returns_string = matches!(return_type,
@@ -4340,14 +4580,21 @@ impl RustGen {
                         else { let t = p.type_ann.as_ref().map(|t| self.neb_type(t)).unwrap_or("_".into()); format!("{}: {}", p.name, t) }
                     }).collect();
                     let ret = m.return_type.as_ref().map(|t| format!(" -> {}", self.neb_type(t))).unwrap_or_default();
-                    let tail = match &m.body {
-                        Some(b) => {
-                            self.indent += 1;
-                            let body = self.gen_block(b);
-                            self.indent -= 1;
-                            format!(" {{\n{}{}}}", body, self.ind())
-                        }
-                        None => ";".to_string(),
+                    // An empty body in the IL means "required method" — Rust
+                    // emits a bare signature `fn x() -> T;`. A non-empty body
+                    // becomes a default implementation.
+                    let body_empty = m.body.as_ref().map_or(true, |b|
+                        b.statements.is_empty() && b.expr.is_none()
+                    );
+                    let tail = if body_empty {
+                        ";".to_string()
+                    } else if let Some(b) = &m.body {
+                        self.indent += 1;
+                        let body = self.gen_block(b);
+                        self.indent -= 1;
+                        format!(" {{\n{}{}}}", body, self.ind())
+                    } else {
+                        ";".to_string()
                     };
                     out.push_str(&format!("{}fn {}({}){}{}\n", self.ind(), m.name, ps.join(", "), ret, tail));
                 }
@@ -4588,7 +4835,16 @@ impl RustGen {
                 }
                 format!("{}.{}", self.gen_expr(object), field)
             }
-            Expr::Index { object, index } => format!("{}[{}]", self.gen_expr(object), self.gen_expr(index)),
+            Expr::Index { object, index } => {
+                // `vec[0]` leaked from a stripped `vec![0; n]` Rust macro —
+                // re-wrap as the macro invocation.
+                if let Expr::Ident(o) = object.as_ref() {
+                    if o == "vec" {
+                        return format!("vec![{}]", self.gen_expr(index));
+                    }
+                }
+                format!("{}[{}]", self.gen_expr(object), self.gen_expr(index))
+            }
             Expr::Slice { object, start, end } => {
                 // Rust slice indices must be `usize`. The IL has no usize
                 // distinction (everything's `Int`), so cast explicitly.
