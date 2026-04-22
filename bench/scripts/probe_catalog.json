@@ -951,9 +951,9 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: error[E0425]: cannot find value `x` in this scope |   --> <tmp>/probe.rs:20:28 |    | | 20 |     xs.iter().find(|andx| (x > 0)) |    |                            ^ |    | | help: a local variable with a similar name exists |    | | 20 |    ...",
+      "phase4_native_compile": "err: error[E0782]: expected a type, found a trait |   --> <tmp>/probe.rs:30:22 |    | | 30 | fn make_counter() -> Any { |    |                      ^^^ |    | | help: use `impl Any` to return an opaque type, as long as you return a single underl...",
       "antipatterns": [],
-      "nebula_len": 501,
+      "nebula_len": 498,
       "severity": "major",
       "antipattern_detail": []
     },

@@ -4134,6 +4134,13 @@ impl RustGen {
         if !fmt_needs.is_empty() {
             prefix.push_str(&format!("use std::fmt::{{{}}};\n", fmt_needs.join(", ")));
         }
+        // std::any::Any import when the ident appears outside of a
+        // qualified path.
+        if (body.contains("-> Any") || body.contains(": Any ") || body.contains(": Any,") || body.contains(": Any)"))
+            && !body.contains("std::any::Any")
+        {
+            prefix.push_str("use std::any::Any;\n");
+        }
         let time_needs: Vec<&str> = ["Duration", "Instant"]
             .iter()
             .filter(|t| {
@@ -4370,6 +4377,72 @@ impl RustGen {
             }
             Self::scan_io_expr(object, out);
             for a in args { Self::scan_io_expr(&a.value, out); }
+        }
+    }
+
+    /// Scan string-literal interpolations for bare-ident references — those
+    /// params likely need a `Display` bound when they're a generic type.
+    fn scan_displayed_idents(
+        stmts: &[Statement],
+        trailing: &Option<Box<Expr>>,
+        out: &mut std::collections::BTreeSet<String>,
+    ) {
+        for s in stmts { Self::scan_displayed_stmt(s, out); }
+        if let Some(t) = trailing { Self::scan_displayed_expr(t, out); }
+    }
+
+    fn scan_displayed_stmt(s: &Statement, out: &mut std::collections::BTreeSet<String>) {
+        match s {
+            Statement::Let { value, .. } | Statement::Const { value, .. } | Statement::Mut { value, .. } => Self::scan_displayed_expr(value, out),
+            Statement::Expr(e) | Statement::Return(Some(e)) | Statement::Break(Some(e)) | Statement::Throw(Some(e)) => Self::scan_displayed_expr(e, out),
+            _ => {}
+        }
+    }
+
+    fn scan_displayed_expr(e: &Expr, out: &mut std::collections::BTreeSet<String>) {
+        match e {
+            Expr::StringLit(s) => {
+                for p in &s.parts {
+                    if let StringPart::Interpolation(tokens) = p {
+                        if tokens.len() == 1 {
+                            if let Token::Ident(n) = &tokens[0] {
+                                out.insert(n.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            Expr::Call { callee, args } => {
+                // `format!("...", x)` / `println!("...", x)` — treat all
+                // non-first args as displayed operands.
+                if let Expr::Ident(n) = callee.as_ref() {
+                    if matches!(n.as_str(), "fmt" | "format" | "prt" | "print" | "println" | "panic") {
+                        for arg in args.iter().skip(1) {
+                            if let Expr::Ident(id) = &arg.value {
+                                out.insert(id.clone());
+                            }
+                        }
+                    }
+                }
+                Self::scan_displayed_expr(callee, out);
+                for a in args { Self::scan_displayed_expr(&a.value, out); }
+            }
+            Expr::MethodCall { object, args, .. } => {
+                Self::scan_displayed_expr(object, out);
+                for a in args { Self::scan_displayed_expr(&a.value, out); }
+            }
+            Expr::BinaryOp { left, right, .. } => {
+                Self::scan_displayed_expr(left, out); Self::scan_displayed_expr(right, out);
+            }
+            Expr::If { condition, then_block, else_block } => {
+                Self::scan_displayed_expr(condition, out);
+                Self::scan_displayed_idents(&then_block.statements, &then_block.expr.clone().map(|e| e), out);
+                if let Some(eb) = else_block {
+                    Self::scan_displayed_idents(&eb.statements, &eb.expr.clone().map(|e| e), out);
+                }
+            }
+            Expr::Block(b) => Self::scan_displayed_idents(&b.statements, &b.expr.clone().map(|e| e), out),
+            _ => {}
         }
     }
 
@@ -4667,6 +4740,18 @@ impl RustGen {
                         }
                     }
                 }
+                // Generic params interpolated into format strings need
+                // `Display` bound for the call site to type-check.
+                let mut displayed_params: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+                Self::scan_displayed_idents(&body.statements, &body.expr, &mut displayed_params);
+                let mut display_generics: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+                for p in params.iter().filter(|p| p.name != "sf") {
+                    if let Some(TypeExpr::Named(tn)) = &p.type_ann {
+                        if generic_set.contains(tn) && displayed_params.contains(&p.name) {
+                            display_generics.insert(tn.clone());
+                        }
+                    }
+                }
                 // A param that is declared-and-cloned but whose generic is the
                 // Fn-return type carries the Clone bound onto T as well when
                 // the return type refers to T. Heuristic: add Clone to any
@@ -4695,6 +4780,7 @@ impl RustGen {
                                 });
                             }
                             if cloned_generics.contains(g) { bounds.push("Clone".into()); }
+                            if display_generics.contains(g) { bounds.push("std::fmt::Display".into()); }
                             if let Some(b) = io_bounds.get(g) { bounds.push((*b).into()); }
                             if bounds.is_empty() { g.clone() }
                             else { format!("{}: {}", g, bounds.join(" + ")) }

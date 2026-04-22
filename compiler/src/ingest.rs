@@ -790,19 +790,20 @@ pub fn from_rust_with_opts(source: &str, keep_comments: bool) -> String {
     let out = out.replace(".await", "")
         .replace("async move ", "")
         .replace("async ", "")
-        // `dyn Trait` (trait objects) and `impl Trait` (positional traits)
-        // — Nebula's type grammar has neither. Drop the prefixes; the
-        // underlying Trait name parses.
         .replace("dyn ", "")
         .replace("Box<", "Box<")
         .replace("Rc<", "Rc<")
-        // Rust reference types in signatures. Strip the `&` so the inner
-        // type parses. Nebula has no borrow grammar; round-trip reifies
-        // the type as owned.
         .replace("&str", "Str")
         .replace("&mut ", "")
         .replace("&[", "[")
-        .replace(": &", ": ");
+        .replace(": &", ": ")
+        // `|&&x|` / `|&x|` — Rust reference patterns in lambda params.
+        // Nebula lambdas are just idents, so drop the `&` prefixes inside
+        // the `|…|` header.
+        .replace("|&&", "|")
+        .replace("|&", "|")
+        .replace(", &&", ", ")
+        .replace(", &", ", ");
     let out = strip_generic_param_clauses(&out);
     let out = strip_where_clauses(&out);
     // Rust array-repetition `[expr; n]` — Nebula has no semi-colon inside
@@ -2324,8 +2325,10 @@ fn postprocess_go(source: &str) -> String {
     let s = rewrite_incdec(&source);
     let s = s
         // Logical operators
-        .replace("&&", "and")
-        .replace("||", "or")
+        // Space-gated so `|&&x|` (Rust double-deref pattern) doesn't get
+        // mangled to `|andx|`. Operators always have whitespace around them.
+        .replace(" && ", " and ")
+        .replace(" || ", " or ")
         // Go raw syntax
         .replace(":=", "=")
         // else → el
@@ -3307,8 +3310,10 @@ fn postprocess(source: &str) -> String {
         .replace("(False", "(ff")
         .replace(",False", ",ff")
         // Logical operators (C-family ! → Nebula not)
-        .replace("&&", "and")
-        .replace("||", "or")
+        // Space-gated so `|&&x|` (Rust double-deref pattern) doesn't get
+        // mangled to `|andx|`. Operators always have whitespace around them.
+        .replace(" && ", " and ")
+        .replace(" || ", " or ")
         // Null variants
         .replace("nullptr", "nil")
         .replace("NULL", "nil")
