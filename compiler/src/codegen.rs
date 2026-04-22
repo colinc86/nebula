@@ -967,8 +967,7 @@ impl JsGen {
         let mut consumed: Vec<bool> = vec![false; program.statements.len()];
         for (i, stmt) in program.statements.iter().enumerate() {
             if consumed[i] { continue; }
-            if let Statement::StructDecl { name, fields, .. } = stmt {
-                // Find a matching ImplBlock in the rest of the program.
+            if let Statement::StructDecl { name, fields, extends, .. } = stmt {
                 let mut impl_idx: Option<usize> = None;
                 for (j, s2) in program.statements.iter().enumerate().skip(i + 1) {
                     if let Statement::ImplBlock { target, .. } = s2 {
@@ -977,16 +976,21 @@ impl JsGen {
                 }
                 if let Some(j) = impl_idx {
                     let methods = if let Statement::ImplBlock { methods, .. } = &program.statements[j] { methods.clone() } else { vec![] };
-                    out.push_str(&self.gen_class_for_struct(name, fields, &methods));
+                    out.push_str(&self.gen_class_for_struct(name, fields, &methods, extends.as_deref()));
                     out.push('\n');
                     consumed[i] = true;
                     consumed[j] = true;
                     continue;
                 }
+                // StructDecl alone (no matching impl) — still emit as class so
+                // extends shape is preserved for downstream readers.
+                out.push_str(&self.gen_class_for_struct(name, fields, &[], extends.as_deref()));
+                out.push('\n');
+                consumed[i] = true;
+                continue;
             }
-            // ImplBlock without preceding StructDecl: emit class with no fields.
             if let Statement::ImplBlock { target, methods, .. } = stmt {
-                out.push_str(&self.gen_class_for_struct(target, &[], methods));
+                out.push_str(&self.gen_class_for_struct(target, &[], methods, None));
                 out.push('\n');
                 consumed[i] = true;
                 continue;
@@ -997,8 +1001,9 @@ impl JsGen {
         out
     }
 
-    fn gen_class_for_struct(&mut self, name: &str, fields: &[crate::ast::Field], methods: &[Statement]) -> String {
-        let mut out = format!("{}class {} {{\n", self.ind(), name);
+    fn gen_class_for_struct(&mut self, name: &str, fields: &[crate::ast::Field], methods: &[Statement], extends: Option<&str>) -> String {
+        let extends_clause = extends.map(|p| format!(" extends {}", p)).unwrap_or_default();
+        let mut out = format!("{}class {}{} {{\n", self.ind(), name, extends_clause);
         self.indent += 1;
         // Emit constructor — either from struct fields or from a method named `new`/`constructor`.
         let new_method = methods.iter().find(|m| matches!(m, Statement::FnDecl { name, .. } if name == "new" || name == "constructor"));
@@ -4265,6 +4270,42 @@ impl RustGen {
         }
     }
 
+    /// Scan for known io-trait method calls on idents (`w.write_all(...)`
+    /// → `W: Write`, `r.read(...)` → `R: Read`). Records the first
+    /// matching trait per receiver ident.
+    fn scan_io_method_idents(
+        stmts: &[Statement],
+        trailing: &Option<Box<Expr>>,
+        out: &mut std::collections::HashMap<String, &'static str>,
+    ) {
+        for s in stmts { Self::scan_io_stmt(s, out); }
+        if let Some(t) = trailing { Self::scan_io_expr(t, out); }
+    }
+
+    fn scan_io_stmt(s: &Statement, out: &mut std::collections::HashMap<String, &'static str>) {
+        match s {
+            Statement::Let { value, .. } | Statement::Const { value, .. } | Statement::Mut { value, .. } => Self::scan_io_expr(value, out),
+            Statement::Expr(e) | Statement::Return(Some(e)) | Statement::Break(Some(e)) | Statement::Throw(Some(e)) => Self::scan_io_expr(e, out),
+            Statement::Assignment { value, .. } => Self::scan_io_expr(value, out),
+            _ => {}
+        }
+    }
+
+    fn scan_io_expr(e: &Expr, out: &mut std::collections::HashMap<String, &'static str>) {
+        if let Expr::MethodCall { object, method, args } = e {
+            if let Expr::Ident(n) = object.as_ref() {
+                let bound = match method.as_str() {
+                    "write_all" | "write" | "write_fmt" | "flush" => Some("std::io::Write"),
+                    "read" | "read_to_string" | "read_to_end" | "read_exact" | "bytes" => Some("std::io::Read"),
+                    _ => None,
+                };
+                if let Some(b) = bound { out.entry(n.clone()).or_insert(b); }
+            }
+            Self::scan_io_expr(object, out);
+            for a in args { Self::scan_io_expr(&a.value, out); }
+        }
+    }
+
     /// Scan for `.clone()` method calls whose receiver is an ident;
     /// collect those ident names so we can add Clone bounds on generics.
     fn scan_cloned_idents(
@@ -4397,17 +4438,23 @@ impl RustGen {
     }
 
     fn neb_type(&self, t: &TypeExpr) -> String {
+        self.neb_type_in(t, false)
+    }
+
+    fn neb_type_param(&self, t: &TypeExpr) -> String {
+        self.neb_type_in(t, true)
+    }
+
+    fn neb_type_in(&self, t: &TypeExpr, as_param: bool) -> String {
         match t {
             TypeExpr::Named(n) => match n.as_str() {
                 "Int" => "i64".into(), "Float" => "f64".into(),
-                // `String` in Nebula IL maps to Rust `String` (owned);
-                // `Str` is the more common form and maps to `&str`, which is
-                // compatible with string literals that appear frequently in
-                // match-arm returns. Uses that genuinely need owned strings
-                // should emit `.to_string()` or `String::from(...)`.
                 "String" | "Str" => "String".into(),
                 "Bool" => "bool".into(),
                 "Char" => "char".into(), "Nil" => "()".into(),
+                // Unsized types that must be passed by reference.
+                "Path" if as_param => "&Path".into(),
+                "str" if as_param => "&str".into(),
                 // Dotted qualified paths (`io.Reader`, `std.fmt.Display`) use
                 // `::` in Rust, not `.`. PascalCase the last segment if it
                 // looks like a type, preserving short stdlib module names.
@@ -4499,10 +4546,17 @@ impl RustGen {
                 format!("{}const {}{} = {};", self.ind(), name, t, v)
             }
             Statement::FnDecl { name, params, return_type, body, .. } => {
+                // Pre-scan body for io mutation sites so we know which
+                // generic-typed params to mark `mut`.
+                let mut io_method_calls_pre: std::collections::HashMap<String, &'static str> = std::collections::HashMap::new();
+                Self::scan_io_method_idents(&body.statements, &body.expr, &mut io_method_calls_pre);
                 let ps: Vec<String> = params.iter().filter(|p| p.name != "sf")
                     .map(|p| {
-                        let t = p.type_ann.as_ref().map(|t| self.neb_type(t)).unwrap_or("_".into());
-                        format!("{}: {}", p.name, t)
+                        let t = p.type_ann.as_ref().map(|t| self.neb_type_param(t)).unwrap_or("_".into());
+                        let needs_mut = matches!(io_method_calls_pre.get(&p.name),
+                            Some(b) if *b == "std::io::Write");
+                        let prefix = if needs_mut { "mut " } else { "" };
+                        format!("{}{}: {}", prefix, p.name, t)
                     }).collect();
                 let ret = return_type.as_ref().map(|t| format!(" -> {}", self.neb_type(t))).unwrap_or_default();
                 let mut generic_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
@@ -4510,10 +4564,6 @@ impl RustGen {
                     if let Some(t) = &p.type_ann { Self::collect_generics(t, &mut generic_set); }
                 }
                 if let Some(rt) = return_type { Self::collect_generics(rt, &mut generic_set); }
-                // If a generic-typed parameter is called as a function in the
-                // body, add an `Fn()` bound so the call site type-checks.
-                // Scan statements for `Call { callee: Ident(n) }` where n
-                // matches a param whose declared type is one of our generics.
                 let mut callable_params: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
                 Self::scan_callable_idents(&body.statements, &body.expr, &mut callable_params);
                 let mut fn_generics: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
@@ -4521,6 +4571,20 @@ impl RustGen {
                     if let Some(TypeExpr::Named(tn)) = &p.type_ann {
                         if generic_set.contains(tn) && callable_params.contains(&p.name) {
                             fn_generics.insert(tn.clone());
+                        }
+                    }
+                }
+                // Scan for io-related method calls on generic-typed params so
+                // we can add `Write` / `Read` bounds.
+                let mut io_method_calls: std::collections::HashMap<String, &'static str> = std::collections::HashMap::new();
+                Self::scan_io_method_idents(&body.statements, &body.expr, &mut io_method_calls);
+                let mut io_bounds: std::collections::BTreeMap<String, &'static str> = std::collections::BTreeMap::new();
+                for p in params.iter().filter(|p| p.name != "sf") {
+                    if let Some(TypeExpr::Named(tn)) = &p.type_ann {
+                        if generic_set.contains(tn) {
+                            if let Some(bound) = io_method_calls.get(&p.name) {
+                                io_bounds.insert(tn.clone(), *bound);
+                            }
                         }
                     }
                 }
@@ -4564,6 +4628,7 @@ impl RustGen {
                                 });
                             }
                             if cloned_generics.contains(g) { bounds.push("Clone".into()); }
+                            if let Some(b) = io_bounds.get(g) { bounds.push((*b).into()); }
                             if bounds.is_empty() { g.clone() }
                             else { format!("{}: {}", g, bounds.join(" + ")) }
                         }).collect();
@@ -4892,16 +4957,20 @@ impl RustGen {
                 format!("{}({})", c, a.join(", "))
             }
             Expr::MethodCall { object, method, args } => {
-                // HashMap/BTreeMap `.get(k)` / `.remove(k)` / `.contains_key(k)`
-                // / `.insert(k, v)` all take `&K`. If the arg is a bare
-                // identifier we borrow it explicitly.
                 let borrowing_methods = matches!(method.as_str(),
                     "get" | "get_mut" | "contains_key" | "remove" | "insert"
+                );
+                // `write_all`/`read` expect `&[u8]` — promote string-literal
+                // args to byte-string (`b"..."`).
+                let byte_string_methods = matches!(method.as_str(),
+                    "write_all" | "write" | "read" | "read_exact"
                 );
                 let a: Vec<String> = args.iter().enumerate().map(|(i, a)| {
                     let rendered = self.gen_expr(&a.value);
                     if borrowing_methods && i == 0 && matches!(&a.value, Expr::Ident(_)) {
                         format!("&{}", rendered)
+                    } else if byte_string_methods && i == 0 && rendered.starts_with('"') {
+                        format!("b{}", rendered)
                     } else { rendered }
                 }).collect();
                 if let Expr::Ident(o) = object.as_ref() {
@@ -4926,6 +4995,8 @@ impl RustGen {
                     "uw" => "unwrap",
                     "clr" => "clear",
                     "str" => "to_string",
+                    // PathBuf uses `push` / `pop`, not `append` / `remove`.
+                    "append" => "push",
                     other => other,
                 };
                 let obj_str = self.gen_expr(object);

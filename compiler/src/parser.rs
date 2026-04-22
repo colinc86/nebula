@@ -574,6 +574,19 @@ impl Parser {
         self.advance(); // struct/class
         let name = self.expect_ident()?;
         let generics = self.parse_optional_generics()?;
+        // Optional inheritance: `class Name(Parent):`  or  `class Name: Parent`.
+        // We accept either. A `(Parent)` paren-list is Python-style.
+        let mut extends: Option<String> = None;
+        if matches!(self.peek(), Token::LeftParen) {
+            self.advance();
+            if let Token::Ident(p) = self.peek() {
+                extends = Some(p.clone());
+                self.advance();
+            }
+            // Tolerate extra args (multiple parents not supported).
+            while !matches!(self.peek(), Token::RightParen | Token::Eof) { self.advance(); }
+            if matches!(self.peek(), Token::RightParen) { self.advance(); }
+        }
         self.skip_newlines();
 
         // Handle empty struct: `struct Foo {}` or `struct Foo`
@@ -645,6 +658,7 @@ impl Parser {
                 generics,
                 fields,
                 is_pub,
+                extends,
             });
         }
 
@@ -654,6 +668,7 @@ impl Parser {
             generics,
             fields: Vec::new(),
             is_pub,
+            extends,
         })
     }
 

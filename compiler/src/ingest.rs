@@ -8704,7 +8704,13 @@ mod js {
             "class_declaration" => {
                 let name = node.child_by_field_name("name")
                     .map(|n| text(&n, src)).unwrap_or("?");
-                // Split class body: fields → st {}, methods → im {}
+                // Extract extends target from class_heritage if present.
+                let parent = node.named_children(&mut node.walk())
+                    .find(|c| c.kind() == "class_heritage")
+                    .and_then(|h| h.named_children(&mut h.walk())
+                        .find(|c| c.kind() == "extends_clause" || c.kind() == "identifier")
+                        .map(|c| text(&c, src).trim().trim_start_matches("extends ").trim().to_string()));
+                let parent_suffix = parent.as_ref().map(|p| format!("({})", p)).unwrap_or_default();
                 let mut fields = String::new();
                 let mut methods = String::new();
                 let inner_ind = indent(depth + 1);
@@ -8773,7 +8779,7 @@ mod js {
                 } else {
                     format!(" {{\n{}{}}}", methods, ind)
                 };
-                format!("{}st {}{}\n{}im {}{}", ind, name, st_body, ind, name, im_body)
+                format!("{}st {}{}{}\n{}im {}{}", ind, name, parent_suffix, st_body, ind, name, im_body)
             }
 
             "method_definition" => {

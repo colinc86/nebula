@@ -1,9 +1,9 @@
 {
   "summary": {
     "total": 91,
-    "clean": 55,
-    "minor": 0,
-    "major": 36,
+    "clean": 57,
+    "minor": 1,
+    "major": 33,
     "critical": 0,
     "by_lang": {
       "c": {
@@ -22,9 +22,9 @@
       },
       "javascript": {
         "total": 10,
-        "clean": 7,
+        "clean": 9,
         "minor": 0,
-        "major": 3,
+        "major": 1,
         "critical": 0
       },
       "kotlin": {
@@ -44,8 +44,8 @@
       "rust": {
         "total": 11,
         "clean": 4,
-        "minor": 0,
-        "major": 7,
+        "minor": 1,
+        "major": 6,
         "critical": 0
       },
       "swift": {
@@ -384,10 +384,10 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: <tmp>/probe.js:11 |     super(name); |     ^^^^^ |  | SyntaxError: 'super' keyword unexpected here |     at wrapSafe (node:internal/modules/cjs/loader:1742:18) |     at checkSyntax (node:internal/main/check_syntax:76:3) ...",
+      "phase4_native_compile": "ok",
       "antipatterns": [],
-      "nebula_len": 384,
-      "severity": "major",
+      "nebula_len": 405,
+      "severity": "clean",
       "antipattern_detail": []
     },
     {
@@ -436,10 +436,10 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: <tmp>/probe.js:3 |     super(msg); |     ^^^^^ |  | SyntaxError: 'super' keyword unexpected here |     at wrapSafe (node:internal/modules/cjs/loader:1742:18) |     at checkSyntax (node:internal/main/check_syntax:76:3) | ...",
+      "phase4_native_compile": "ok",
       "antipatterns": [],
-      "nebula_len": 398,
-      "severity": "major",
+      "nebula_len": 423,
+      "severity": "clean",
       "antipattern_detail": []
     },
     {
@@ -905,12 +905,12 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: error[E0277]: the size for values of type `[u8]` cannot be known at compilation time |  --> <tmp>/probe.rs:5:22 |   | | 5 | fn read_to_string(p: Path) -> io::Result<String> { |   |                      ^^^^ doesn't have a size known at comp...",
+      "phase4_native_compile": "ok",
       "antipatterns": [
         "casing_variants"
       ],
       "nebula_len": 357,
-      "severity": "major",
+      "severity": "minor",
       "antipattern_detail": [
         {
           "rule": "casing_variants",
@@ -1189,7 +1189,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "skip: tsc not installed",
       "antipatterns": [],
-      "nebula_len": 367,
+      "nebula_len": 392,
       "severity": "clean",
       "antipattern_detail": []
     },

@@ -121,6 +121,7 @@ impl NebFmt {
                 generics,
                 fields,
                 is_pub,
+                extends: _,
             } => {
                 let pub_prefix = if *is_pub { "pub " } else { "" };
                 let gen = if generics.is_empty() {

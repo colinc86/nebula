@@ -36,6 +36,7 @@ pub enum Statement {
         generics: Vec<String>,
         fields: Vec<Field>,
         is_pub: bool,
+        extends: Option<String>,
     },
     EnumDecl {
         name: String,
