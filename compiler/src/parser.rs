@@ -30,11 +30,12 @@ struct Parser {
     /// (inside match-arm bodies, where `.variant` on the next line is a
     /// new pattern, not a chained method call on this arm's body).
     no_newline_chain: bool,
+    no_trailing_closure: bool,
 }
 
 impl Parser {
     fn new(tokens: Vec<SpannedToken>) -> Self {
-        Parser { tokens, pos: 0, no_struct_literal: false, no_newline_chain: false }
+        Parser { tokens, pos: 0, no_struct_literal: false, no_newline_chain: false, no_trailing_closure: false }
     }
 
     fn parse_program(&mut self) -> Result<Program, ParseError> {
@@ -1495,6 +1496,119 @@ impl Parser {
         Ok(args)
     }
 
+    /// Parse a `{ ... }` as a trailing closure in Kotlin/Swift style.
+    /// Shape:  `{ body }`  → `|| body`  (implicit `it` allowed)
+    ///         `{ x -> body }` → `|x| body` (arrow-param form).
+    fn try_parse_trailing_closure(&mut self) -> Result<Option<Expr>, ParseError> {
+        if !matches!(self.peek(), Token::LeftBrace) {
+            return Ok(None);
+        }
+        let save_pos = self.pos;
+        self.advance(); // {
+        // Detect `x ->` or `(x, y) ->` param form by lookahead.
+        // Collect candidate params, but roll back on non-arrow.
+        let arrow_pos = {
+            let mut depth: usize = 1;
+            let mut idx = self.pos;
+            let mut found = None;
+            while idx < self.tokens.len() {
+                match &self.tokens[idx].token {
+                    Token::LeftBrace | Token::LeftParen | Token::LeftBracket => depth += 1,
+                    Token::RightBrace | Token::RightParen | Token::RightBracket => {
+                        if depth == 1 && matches!(&self.tokens[idx].token, Token::RightBrace) {
+                            break;
+                        }
+                        depth = depth.saturating_sub(1);
+                    }
+                    Token::FatArrow if depth == 1 => { found = Some(idx); break; }
+                    Token::Newline => break,
+                    _ => {}
+                }
+                idx += 1;
+            }
+            found
+        };
+        let mut params: Vec<crate::ast::Param> = Vec::new();
+        if let Some(arrow) = arrow_pos {
+            // Tokens between self.pos and `arrow` are the param list.
+            while self.pos < arrow {
+                if let Token::Ident(n) = &self.tokens[self.pos].token {
+                    let name = n.clone();
+                    params.push(crate::ast::Param {
+                        name,
+                        type_ann: None,
+                        default: None,
+                        is_variadic: false,
+                    });
+                }
+                self.pos += 1;
+            }
+            self.expect(&Token::FatArrow)?;
+        }
+        self.skip_newlines();
+        let body = if matches!(self.peek(), Token::RightBrace) {
+            // Empty closure body → unit expression.
+            Expr::Nil
+        } else {
+            // Parse the body as a block so multi-statement closures work.
+            let mut stmts: Vec<crate::ast::Statement> = Vec::new();
+            let mut trailing: Option<Box<Expr>> = None;
+            while !matches!(self.peek(), Token::RightBrace | Token::Eof) {
+                self.skip_newlines();
+                if matches!(self.peek(), Token::RightBrace | Token::Eof) { break; }
+                // Try to parse a statement; if it's just an expression and
+                // the next token closes the block, treat it as trailing.
+                let start = self.pos;
+                let parsed = self.parse_statement();
+                match parsed {
+                    Ok(s) => stmts.push(s),
+                    Err(e) => {
+                        self.pos = start;
+                        // Fallback: parse as expression
+                        let e2 = self.parse_expr();
+                        match e2 {
+                            Ok(ex) => {
+                                if matches!(self.peek(), Token::RightBrace | Token::Newline | Token::Eof) {
+                                    trailing = Some(Box::new(ex));
+                                } else {
+                                    stmts.push(crate::ast::Statement::Expr(ex));
+                                }
+                            }
+                            Err(_) => { self.pos = save_pos; return Err(e); }
+                        }
+                    }
+                }
+                self.skip_newlines();
+            }
+            if stmts.is_empty() && trailing.is_none() {
+                Expr::Nil
+            } else if stmts.is_empty() {
+                *trailing.unwrap()
+            } else {
+                // Use the last Expr statement as the trailing expr if no
+                // trailing was captured.
+                let mut block = crate::ast::Block { statements: stmts, expr: trailing };
+                if block.expr.is_none() {
+                    if let Some(last) = block.statements.last().cloned() {
+                        if let crate::ast::Statement::Expr(e) = last {
+                            block.statements.pop();
+                            block.expr = Some(Box::new(e));
+                        }
+                    }
+                }
+                Expr::Block(block)
+            }
+        };
+        if !matches!(self.peek(), Token::RightBrace) {
+            // Not a well-formed closure; roll back so the caller can retry
+            // as a plain block.
+            self.pos = save_pos;
+            return Ok(None);
+        }
+        self.advance(); // }
+        Ok(Some(Expr::Lambda { params, body: Box::new(body) }))
+    }
+
     fn parse_primary(&mut self) -> Result<Expr, ParseError> {
         match self.peek().clone() {
             Token::Int(n) => {
@@ -1662,7 +1776,10 @@ impl Parser {
             // Match expression
             Token::Match => {
                 self.advance();
+                let prev_ntc = self.no_trailing_closure;
+                self.no_trailing_closure = true;
                 let subject = self.parse_expr()?;
+                self.no_trailing_closure = prev_ntc;
                 self.skip_newlines();
                 self.expect(&Token::LeftBrace)?;
                 self.skip_newlines();

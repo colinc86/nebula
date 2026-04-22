@@ -2583,6 +2583,52 @@ impl KotlinGen {
         }
     }
 
+    fn pascal_k(s: &str) -> String {
+        let camel = snake_to_camel(s);
+        let mut cs = camel.chars();
+        match cs.next() {
+            Some(c) => c.to_uppercase().chain(cs).collect(),
+            None => String::new(),
+        }
+    }
+
+    /// Heuristic for names the ingester lowered from Java/Kotlin Pascal types.
+    fn is_likely_java_type(s: &str) -> bool {
+        // Bail out if the caller already has a dot (qualified path).
+        if s.contains('.') { return false; }
+        // Simple rule: snake_case with more than one segment is probably a
+        // Pascal type broken apart.
+        let segs: Vec<&str> = s.split('_').collect();
+        segs.len() >= 2 && segs.iter().all(|s| !s.is_empty())
+    }
+
+    /// Walk a type expr and collect names that look like generic params
+    /// (single uppercase letter, or uppercase-only idents).
+    fn collect_generics_k(t: &TypeExpr, out: &mut std::collections::BTreeSet<String>) {
+        const KNOWN: &[&str] = &["String", "Str", "Bool", "Boolean", "Char",
+            "Int", "Long", "Float", "Double", "Number", "Nil", "List", "Array",
+            "Map", "Dictionary", "Set", "Any", "Unit", "None", "Pair", "Triple"];
+        match t {
+            TypeExpr::Named(n) => {
+                if n.len() == 1 && n.chars().next().unwrap().is_ascii_uppercase() {
+                    out.insert(n.clone());
+                } else if !KNOWN.contains(&n.as_str()) && !n.contains('.')
+                    && n.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+                    && !n.is_empty()
+                {
+                    out.insert(n.clone());
+                }
+            }
+            TypeExpr::Generic(_, args) => { for a in args { Self::collect_generics_k(a, out); } }
+            TypeExpr::Option(inner) => Self::collect_generics_k(inner, out),
+            TypeExpr::Function(params, ret) => {
+                for p in params { Self::collect_generics_k(p, out); }
+                Self::collect_generics_k(ret, out);
+            }
+            TypeExpr::Tuple(items) => { for i in items { Self::collect_generics_k(i, out); } }
+        }
+    }
+
     fn gen_program(&mut self, program: &Program) -> String {
         let mut out = String::new();
         for stmt in &program.statements { out.push_str(&self.gen_stmt(stmt)); out.push('\n'); }
@@ -2605,6 +2651,10 @@ impl KotlinGen {
                 "Set" => "Set<Any>".into(),
                 "Any" => "Any".into(),
                 "None" | "Unit" => "Unit".into(),
+                // A lowercase name with an underscore is almost certainly a
+                // Kotlin snake→PascalCase rename casualty from ingest.
+                other if other.chars().next().map_or(false, |c| c.is_ascii_lowercase())
+                    && other.contains('_') => Self::pascal_k(other),
                 other => other.to_string(),
             },
             TypeExpr::Generic(name, args) => {
@@ -2663,8 +2713,17 @@ impl KotlinGen {
                     })
                     .collect();
                 let ret = return_type.as_ref().map(|t| self.neb_type(t)).unwrap_or_else(|| "Any".into());
+                // Recover stripped generic type params from the signature.
+                let mut generic_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+                for p in params.iter().filter(|p| p.name != "sf") {
+                    if let Some(t) = &p.type_ann { Self::collect_generics_k(t, &mut generic_set); }
+                }
+                if let Some(rt) = return_type { Self::collect_generics_k(rt, &mut generic_set); }
+                let gen_str = if generic_set.is_empty() { String::new() }
+                    else { format!(" <{}>", generic_set.iter().cloned().collect::<Vec<_>>().join(", ")) };
                 let body_empty = body.statements.is_empty() && body.expr.is_none();
-                let mut out = format!("{}fun {}({}): {} {{\n", self.ind(), name, ps.join(", "), ret);
+                // Kotlin: `fun <T> name(...)` — generics come BEFORE the name.
+                let mut out = format!("{}fun{} {}({}): {} {{\n", self.ind(), gen_str, name, ps.join(", "), ret);
                 self.indent += 1;
                 self.scopes.push(std::collections::HashSet::new());
                 for p in params { self.declare(&p.name); }
@@ -2738,13 +2797,33 @@ impl KotlinGen {
             }
             // Iter-24 Bug D: explicit Use/Module handlers for Kotlin.
             Statement::Use { path, .. } => {
-                format!("{}import {}", self.ind(), path.join("."))
+                // PascalCase the last segment for Java/Kotlin library imports
+                // (e.g. `java.util.array_list` → `java.util.ArrayList`), but
+                // preserve wildcard/short package names.
+                let mut parts: Vec<String> = path.iter().cloned().collect();
+                if let Some(last) = parts.last_mut() {
+                    if last != "*" && last.chars().next().map_or(false, |c| c.is_ascii_lowercase()) {
+                        *last = Self::pascal_k(last);
+                    }
+                }
+                format!("{}import {}", self.ind(), parts.join("."))
             }
             Statement::Module { path } => {
                 format!("{}package {}", self.ind(), path.join("."))
             }
             Statement::TraitDecl { name, methods, generics, .. } => {
-                let gen = if generics.is_empty() { String::new() } else { format!("<{}>", generics.join(", ")) };
+                // Collect generics from the trait decl AND any references in
+                // its method signatures that aren't explicitly declared, so
+                // `interface Producer { fun produce(): T }` → `interface Producer<T>`.
+                let mut gen_set: std::collections::BTreeSet<String> = generics.iter().cloned().collect();
+                for m in methods {
+                    for p in m.params.iter().filter(|p| p.name != "sf") {
+                        if let Some(t) = &p.type_ann { Self::collect_generics_k(t, &mut gen_set); }
+                    }
+                    if let Some(rt) = &m.return_type { Self::collect_generics_k(rt, &mut gen_set); }
+                }
+                let gen = if gen_set.is_empty() { String::new() }
+                    else { format!("<{}>", gen_set.iter().cloned().collect::<Vec<_>>().join(", ")) };
                 let mut out = format!("{}interface {}{} {{\n", self.ind(), name, gen);
                 self.indent += 1;
                 for m in methods {
@@ -2780,8 +2859,6 @@ impl KotlinGen {
                 out
             }
             Statement::ImplBlock { target, methods, .. } => {
-                // Kotlin doesn't have free-standing impl blocks. Emit each
-                // method as an extension function on `target`.
                 let mut out = String::new();
                 for m in methods {
                     if let Statement::FnDecl { name: mname, params, body, return_type, .. } = m {
@@ -2791,16 +2868,18 @@ impl KotlinGen {
                         }).collect();
                         let ret = return_type.as_ref().map(|t| self.neb_type(t)).unwrap_or_else(|| "Any".into());
                         let has_self = params.iter().any(|p| p.name == "sf");
-                        // Self-bearing methods become extension functions on
-                        // the type. "Static" methods (no self) become regular
-                        // top-level functions named `<Target>_<method>` to
-                        // avoid Kotlin needing a `companion object` to host
-                        // them — the original call sites use `Target.method()`
-                        // which we can't easily preserve without it.
+                        // Recover generics from method signature.
+                        let mut gen_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+                        for p in params.iter().filter(|p| p.name != "sf") {
+                            if let Some(t) = &p.type_ann { Self::collect_generics_k(t, &mut gen_set); }
+                        }
+                        if let Some(rt) = return_type { Self::collect_generics_k(rt, &mut gen_set); }
+                        let gen_str = if gen_set.is_empty() { String::new() }
+                            else { format!(" <{}>", gen_set.iter().cloned().collect::<Vec<_>>().join(", ")) };
                         let prefix = if has_self {
-                            format!("fun {}.{}", target, mname)
+                            format!("fun{} {}.{}", gen_str, target, mname)
                         } else {
-                            format!("fun {}_{}", target, mname)
+                            format!("fun{} {}_{}", gen_str, target, mname)
                         };
                         let body_empty = body.statements.is_empty() && body.expr.is_none();
                         out.push_str(&format!("{}{}({}): {} {{\n", self.ind(), prefix, ps.join(", "), ret));
@@ -2836,9 +2915,12 @@ impl KotlinGen {
         let mut out = String::new();
         for s in &block.statements { out.push_str(&self.gen_stmt(s)); out.push('\n'); }
         if let Some(e) = &block.expr {
+            // Kotlin `if`, `when`, `try` are expressions; in a function body
+            // they need an explicit `return` to produce the fn's result.
+            // `for`/`while`/`loop` genuinely produce Unit and need none.
             let needs_return = is_fn_body && !matches!(e.as_ref(),
-                Expr::If { .. } | Expr::Match { .. } | Expr::For { .. }
-                | Expr::While { .. } | Expr::Loop { .. } | Expr::Block(_)
+                Expr::For { .. } | Expr::While { .. } | Expr::Loop { .. }
+                | Expr::Block(_)
             );
             if needs_return {
                 out.push_str(&format!("{}return {}\n", self.ind(), self.gen_expr(e)));
@@ -2902,6 +2984,14 @@ impl KotlinGen {
                         "set_of" => "setOf".into(),
                         "array_of" => "arrayOf".into(),
                         "int_array_of" => "intArrayOf".into(),
+                        "array_list" => "ArrayList".into(),
+                        "local_date" => "LocalDate".into(),
+                        "local_time" => "LocalTime".into(),
+                        "local_date_time" => "LocalDateTime".into(),
+                        // Pass through — constructor calls that look like
+                        // snake_case PascalCase types (e.g. `hash_map`).
+                        s if s.contains('_') && s.chars().next().map_or(false, |c| c.is_ascii_lowercase())
+                            && Self::is_likely_java_type(s) => Self::pascal_k(s),
                         _ => c,
                     };
                     format!("{}({})", converted, a.join(", "))
@@ -3060,8 +3150,21 @@ impl KotlinGen {
                             let op = if *inclusive { ".." } else { " until " };
                             out.push_str(&format!("{}in {}{}{} -> {}\n", self.ind(), self.gen_expr(start), op, self.gen_expr(end), self.gen_expr(&arm.body)));
                         }
-                        _ => out.push_str(&format!("{}// pattern TODO\n", self.ind())),
+                        Pattern::Variant(name, _subs) => {
+                            // `Enum.variant` → Kotlin uses `is Enum.Variant` for sealed
+                            // or plain `Enum.VARIANT` for enum-class matches. Heuristic:
+                            // if the name path looks like `Enum.Name` with a capitalized
+                            // last segment, emit that literal; otherwise add `is` prefix.
+                            let path = name.replace('.', ".");
+                            out.push_str(&format!("{}{} -> {}\n", self.ind(), path, self.gen_expr(&arm.body)));
+                        }
                     }
+                }
+                // Kotlin's `when` as expression must be exhaustive; add a
+                // safety else branch if we didn't emit one.
+                let has_else = arms.iter().any(|a| matches!(a.pattern, Pattern::Wildcard | Pattern::Binding(_)));
+                if !has_else {
+                    out.push_str(&format!("{}else -> throw IllegalStateException()\n", self.ind()));
                 }
                 self.indent -= 1;
                 out.push_str(&format!("{}}}", self.ind()));

@@ -1,9 +1,9 @@
 {
   "summary": {
     "total": 91,
-    "clean": 45,
+    "clean": 46,
     "minor": 0,
-    "major": 46,
+    "major": 45,
     "critical": 0,
     "by_lang": {
       "c": {
@@ -29,9 +29,9 @@
       },
       "kotlin": {
         "total": 12,
-        "clean": 1,
+        "clean": 2,
         "minor": 0,
-        "major": 11,
+        "major": 10,
         "critical": 0
       },
       "python": {
@@ -523,7 +523,7 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: <tmp>/probe.kt:1:8: error: unresolved reference 'kotlinx'. | import kotlinx.coroutines |        ^^^^^^^ | <tmp>/probe.kt:2:8: error: unresolved reference 'kotlinx'. | import kotlinx.coroutines.flow |        ^^^^^^^ | <tmp>/probe.kt:4:5: err...",
+      "phase4_native_compile": "err: <tmp>/probe.kt:1:8: error: unresolved reference 'kotlinx'. | import kotlinx.Coroutines |        ^^^^^^^ | <tmp>/probe.kt:2:8: error: unresolved reference 'kotlinx'. | import kotlinx.coroutines.Flow |        ^^^^^^^ | <tmp>/probe.kt:4:5: err...",
       "antipatterns": [],
       "nebula_len": 431,
       "severity": "major",
@@ -536,7 +536,7 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: <tmp>/probe.kt:8:1: error: missing return statement. | } | ^ | <tmp>/probe.kt:10:13: error: 'this' is not defined in this context. |     return (this.uppercase() + \"!\") |             ^^^^ | <tmp>/probe.kt:12:39: error: unresolved reference ...",
+      "phase4_native_compile": "err: <tmp>/probe.kt:5:15: error: unresolved reference 'Circle'. |         Shape.Circle -> ((3.14159 * s.r) * s.r) |               ^^^^^^ | <tmp>/probe.kt:5:39: error: unresolved reference 'r'. |         Shape.Circle -> ((3.14159 * s.r) * s.r) | ...",
       "antipatterns": [],
       "nebula_len": 657,
       "severity": "major",
@@ -549,10 +549,10 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: <tmp>/probe.kt:13:5: error: 'when' expression must be exhaustive. Add the 'BLUE', 'GREEN', 'red' branches or an 'else' branch. |     when (c) { |     ^^^^ | <tmp>/probe.kt:18:1: error: missing return statement. | } | ^",
+      "phase4_native_compile": "ok",
       "antipatterns": [],
       "nebula_len": 178,
-      "severity": "major",
+      "severity": "clean",
       "antipattern_detail": []
     },
     {
@@ -562,7 +562,7 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: <tmp>/probe.kt:1:16: error: unresolved reference 'T'. | fun max_of2(a: T, b: T): T { |                ^ | <tmp>/probe.kt:1:22: error: unresolved reference 'T'. | fun max_of2(a: T, b: T): T { |                      ^ | <tmp>/probe.kt:1:26: e...",
+      "phase4_native_compile": "err: <tmp>/probe.kt:2:19: error: unresolved reference. None of the following candidates is applicable because of a receiver type mismatch: | fun String.compareTo(other: String, ignoreCase: Boolean = ...): Int |     return if ((a > b)) a else b |...",
       "antipatterns": [],
       "nebula_len": 407,
       "severity": "major",
@@ -601,7 +601,7 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: <tmp>/probe.kt:1:18: error: unresolved reference 'array_list'. | import java.util.array_list |                  ^^^^^^^^^^ | <tmp>/probe.kt:2:16: error: unresolved reference 'file'. | import java.io.file |                ^^^^ | <tmp>/probe....",
+      "phase4_native_compile": "err: <tmp>/probe.kt:8:12: error: unresolved reference 'local_date'. |     return local_date.now() |            ^^^^^^^^^^ | <tmp>/probe.kt:11:12: error: cannot infer type for type parameter 'E'. Specify it explicitly. |     return ArrayList() | ...",
       "antipatterns": [
         "casing_variants"
       ],
