@@ -215,7 +215,7 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: # probe | ./main.go:8:2: undefined: run | ./main.go:8:36: t.log undefined (cannot refer to unexported method log) | ./main.go:12:9: cannot use func(x int) interface{} {\u2026} (value of type func(x int) interface{}) as func(int) int value in ret...",
+      "phase4_native_compile": "err: # probe | ./main.go:8:2: undefined: run | ./main.go:8:34: t.Log(\"hi\") (no value) used as value | ./main.go:12:9: cannot use func(x int) interface{} {\u2026} (value of type func(x int) interface{}) as func(int) int value in return statement | ./m...",
       "antipatterns": [],
       "nebula_len": 163,
       "severity": "major",

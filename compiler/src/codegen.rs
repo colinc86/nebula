@@ -1721,6 +1721,18 @@ impl GoGen {
         }
     }
 
+    /// Common method names on *testing.T / *testing.B / *testing.M that must
+    /// be PascalCase in Go (`t.log` → `t.Log`). These are distinctive enough
+    /// that we always uppercase them at call sites regardless of receiver.
+    fn is_go_testing_method(name: &str) -> bool {
+        matches!(name,
+            "run" | "log" | "logf" | "error" | "errorf" | "fatal" | "fatalf"
+            | "skip" | "skipf" | "skip_now" | "skipped" | "failed" | "fail"
+            | "fail_now" | "name" | "helper" | "parallel" | "cleanup"
+            | "deadline" | "setenv" | "tempdir" | "tempfile" | "context"
+        )
+    }
+
     /// Recognise common Go stdlib packages so we can PascalCase their members.
     fn is_go_stdlib_pkg(name: &str) -> bool {
         matches!(name, "fmt" | "strings" | "strconv" | "os" | "io" | "errors"
@@ -2286,10 +2298,6 @@ impl GoGen {
                     "send" => format!("{} <- {}", obj, a.join(", ")),
                     "recv" => format!("<-{}", obj),
                     "close" => format!("close({})", obj),
-                    // `out.append(x)` → `out = append(out, x)` in Go —
-                    // append is a builtin, not a method, and returns a new
-                    // slice. Emit the assign so the caller's slice is
-                    // actually extended.
                     "append" => {
                         let mut all_args = vec![obj.clone()];
                         all_args.extend(a);
@@ -2299,6 +2307,10 @@ impl GoGen {
                     "cap" if a.is_empty() => format!("cap({})", obj),
                     _ => {
                         let m = if Self::is_go_stdlib_pkg(&obj) {
+                            snake_to_pascal(method)
+                        } else if Self::is_go_testing_method(method) {
+                            // Standard method on *testing.T / *testing.B etc.
+                            // — PascalCase so calls like `t.log` → `t.Log`.
                             snake_to_pascal(method)
                         } else { method.clone() };
                         format!("{}.{}({})", obj, m, a.join(", "))
