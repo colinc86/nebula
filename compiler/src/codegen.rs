@@ -147,7 +147,7 @@ pub fn to_swift(program: &Program) -> String {
 }
 
 pub fn to_kotlin(program: &Program) -> String {
-    let mut gen = KotlinGen { indent: 0, scopes: vec![std::collections::HashSet::new()], current_fn_returns_nullable: true, current_fn_return_type: None };
+    let mut gen = KotlinGen { indent: 0, scopes: vec![std::collections::HashSet::new()], current_fn_returns_nullable: true, current_fn_return_type: None, structs_with_fields: std::collections::HashSet::new() };
     gen.gen_program(program)
 }
 
@@ -3026,9 +3026,11 @@ struct KotlinGen {
     indent: usize,
     scopes: Vec<std::collections::HashSet<String>>,
     current_fn_returns_nullable: bool,
-    /// Current fn's return type rendered — drives turbofish for collection
-    /// constructors (`mutableMapOf<K, V>()`) that Kotlin can't infer on its own.
     current_fn_return_type: Option<TypeExpr>,
+    /// Struct names that have at least one declared field. Their impl
+    /// methods become extension functions on that struct even when no
+    /// explicit `self` param is present, so `return "$name"` can bind.
+    structs_with_fields: std::collections::HashSet<String>,
 }
 
 impl KotlinGen {
@@ -3098,6 +3100,15 @@ impl KotlinGen {
     }
 
     fn gen_program(&mut self, program: &Program) -> String {
+        for s in &program.statements {
+            if let Statement::StructDecl { name, fields, .. } = s {
+                let has_real_fields = fields.iter().any(|f|
+                    !(f.name == "_empty" && matches!(&f.type_ann,
+                        crate::ast::TypeExpr::Named(n) if n == "Any"))
+                );
+                if has_real_fields { self.structs_with_fields.insert(name.clone()); }
+            }
+        }
         let mut out = String::new();
         for stmt in &program.statements { out.push_str(&self.gen_stmt(stmt)); out.push('\n'); }
         out
@@ -3364,7 +3375,12 @@ impl KotlinGen {
                         if let Some(rt) = return_type { Self::collect_generics_k(rt, &mut gen_set); }
                         let gen_str = if gen_set.is_empty() { String::new() }
                             else { format!(" <{}>", gen_set.iter().cloned().collect::<Vec<_>>().join(", ")) };
-                        let prefix = if has_self {
+                        // Treat a method as an extension function if it has
+                        // explicit `sf` OR if its target struct has fields
+                        // (methods likely reference them via implicit `this`).
+                        let treat_as_extension = has_self
+                            || self.structs_with_fields.contains(target);
+                        let prefix = if treat_as_extension {
                             format!("fun{} {}.{}", gen_str, target, mname)
                         } else {
                             format!("fun{} {}_{}", gen_str, target, mname)

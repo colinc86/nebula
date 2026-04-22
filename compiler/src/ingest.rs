@@ -2095,16 +2095,21 @@ fn fix_kotlin_expr_body_leaks(source: &str) -> String {
 }
 
 fn strip_kotlin_primary_constructor(source: &str) -> String {
-    source.lines().map(|line| {
+    let mut out: Vec<String> = Vec::new();
+    for line in source.lines() {
         let trimmed = line.trim_start();
         if !(trimmed.starts_with("struct ") || trimmed.starts_with("st ")
             || trimmed.starts_with("class ")
             || trimmed.starts_with("impl ") || trimmed.starts_with("im ")) {
-            return line.to_string();
+            out.push(line.to_string());
+            continue;
         }
         let ws = &line[..line.len() - trimmed.len()];
         let mut rewritten = trimmed.to_string();
-        // 1. Strip primary-constructor `(…)`.
+        // Captured `val/var name: Type` fields from the primary ctor so we
+        // can re-emit them as struct body lines on a `struct`/`class` line.
+        let mut extracted_fields: Vec<(String, String)> = Vec::new();
+        let is_struct_line = trimmed.starts_with("struct ") || trimmed.starts_with("st ") || trimmed.starts_with("class ");
         if let Some(lp) = rewritten.find('(') {
             let chars: Vec<char> = rewritten.chars().collect();
             let mut depth = 0i32;
@@ -2117,13 +2122,43 @@ fn strip_kotlin_primary_constructor(source: &str) -> String {
                 }
             }
             if let Some(rp) = rp {
+                if is_struct_line {
+                    let inner: String = chars[lp + 1..rp].iter().collect();
+                    for raw_p in inner.split(',') {
+                        let p = raw_p.trim();
+                        if p.is_empty() { continue; }
+                        // Strip modifiers like `override`, `private`, etc.
+                        let stripped = p
+                            .trim_start_matches("override ")
+                            .trim_start_matches("private ")
+                            .trim_start_matches("public ")
+                            .trim_start_matches("protected ")
+                            .trim_start_matches("internal ");
+                        // Kotlin val/var OR Nebula-normalized lt/mt (keyword
+                        // canonicaliser runs before this pass).
+                        let is_field = stripped.starts_with("val ") || stripped.starts_with("var ")
+                            || stripped.starts_with("lt ") || stripped.starts_with("mt ");
+                        if !is_field { continue; }
+                        let rest = stripped
+                            .trim_start_matches("val ")
+                            .trim_start_matches("var ")
+                            .trim_start_matches("lt ")
+                            .trim_start_matches("mt ");
+                        // `name: Type` or `name: Type = default`
+                        if let Some(colon) = rest.find(':') {
+                            let name = rest[..colon].trim().to_string();
+                            let mut ty = rest[colon + 1..].trim().to_string();
+                            if let Some(eq) = ty.find('=') { ty = ty[..eq].trim().to_string(); }
+                            if !name.is_empty() && !ty.is_empty() {
+                                extracted_fields.push((name, ty));
+                            }
+                        }
+                    }
+                }
                 let head: String = chars[..lp].iter().collect();
                 let tail: String = chars[rp + 1..].iter().collect();
                 rewritten = format!("{}{}", head.trim_end(), tail);
             } else {
-                // Orphan `(` with no matching `)` on the line — drop
-                // everything from `(` to EOL and preserve the block-open
-                // suffix if the source trailed with `:` / `{`.
                 let head: String = chars[..lp].iter().collect();
                 let had_colon = rewritten.trim_end().ends_with(':');
                 let had_brace = rewritten.trim_end().ends_with('{');
@@ -2131,10 +2166,7 @@ fn strip_kotlin_primary_constructor(source: &str) -> String {
                 rewritten = format!("{}{}", head.trim_end(), suffix);
             }
         }
-        // 2. Strip Kotlin inheritance ` : Parent` (keeps trailing `:` / `{`).
-        //    Only if a `:` appears that isn't the block opener.
         if let Some(idx) = rewritten.find(" : ") {
-            // Accept if what follows starts with an identifier — that's the parent.
             let after = &rewritten[idx + 3..];
             let parent_end = after.char_indices()
                 .find(|(_, c)| !(c.is_ascii_alphanumeric() || *c == '_' || *c == ',' || *c == ' ' || *c == '<' || *c == '>' || *c == '[' || *c == ']'))
@@ -2144,8 +2176,26 @@ fn strip_kotlin_primary_constructor(source: &str) -> String {
             let head = &rewritten[..idx];
             rewritten = format!("{}{}", head, rest);
         }
-        format!("{}{}", ws, rewritten)
-    }).collect::<Vec<_>>().join("\n")
+        // If we extracted fields, emit struct body lines after the header
+        // line. Strip any trailing `{}` so the body becomes a fields-block.
+        if !extracted_fields.is_empty() {
+            let mut header = rewritten.trim_end().to_string();
+            // Ensure header ends with `:` so struct body can follow.
+            if header.ends_with(" {}") { header.truncate(header.len() - 3); }
+            if header.ends_with('{') { header.pop(); }
+            if !header.trim_end().ends_with(':') {
+                header = format!("{}:", header.trim_end());
+            }
+            out.push(format!("{}{}", ws, header));
+            let inner_ws = format!("{}  ", ws);
+            for (n, t) in &extracted_fields {
+                out.push(format!("{}{}: {}", inner_ws, n, t));
+            }
+        } else {
+            out.push(format!("{}{}", ws, rewritten));
+        }
+    }
+    out.join("\n")
 }
 
 fn rewrite_c_function_pointer_params(source: &str) -> String {

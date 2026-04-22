@@ -566,9 +566,9 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: <tmp>/probe.kt:7:15: error: unresolved reference 'name'. |     return \"${name} barks\" |               ^^^^ | <tmp>/probe.kt:20:12: error: return type mismatch: expected 'Double', actual 'Unit'. |     return Unit |            ^^^^ | <tmp>/pr...",
+      "phase4_native_compile": "err: <tmp>/probe.kt:20:12: error: return type mismatch: expected 'Double', actual 'Unit'. |     return Unit |            ^^^^ | <tmp>/probe.kt:23:31: error: unresolved reference 'area'. |     return \"shape with area ${area()}\" |                 ...",
       "antipatterns": [],
-      "nebula_len": 505,
+      "nebula_len": 503,
       "severity": "major",
       "antipattern_detail": []
     },
