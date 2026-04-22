@@ -1,9 +1,9 @@
 {
   "summary": {
     "total": 91,
-    "clean": 62,
+    "clean": 63,
     "minor": 1,
-    "major": 28,
+    "major": 27,
     "critical": 0,
     "by_lang": {
       "c": {
@@ -15,9 +15,9 @@
       },
       "go": {
         "total": 13,
-        "clean": 7,
+        "clean": 8,
         "minor": 0,
-        "major": 6,
+        "major": 5,
         "critical": 0
       },
       "javascript": {
@@ -254,10 +254,10 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: # probe | ./main.go:36:10: cannot use generic type Stack[T any] without instantiation | ./main.go:36:24: undefined: T",
+      "phase4_native_compile": "ok",
       "antipatterns": [],
       "nebula_len": 423,
-      "severity": "major",
+      "severity": "clean",
       "antipattern_detail": []
     },
     {

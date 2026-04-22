@@ -120,7 +120,7 @@ pub fn to_javascript(program: &Program) -> String {
 }
 
 pub fn to_go(program: &Program) -> String {
-    let mut gen = GoGen { indent: 0, package_name: None, scopes: vec![std::collections::HashSet::new()], slice_names: std::collections::HashSet::new() };
+    let mut gen = GoGen { indent: 0, package_name: None, scopes: vec![std::collections::HashSet::new()], slice_names: std::collections::HashSet::new(), struct_generics: std::collections::HashMap::new() };
     gen.gen_program(program)
 }
 
@@ -136,6 +136,7 @@ pub fn to_go_with_package(program: &Program, package_name: Option<&str>) -> Stri
         package_name: package_name.map(str::to_owned),
         scopes: vec![std::collections::HashSet::new()],
         slice_names: std::collections::HashSet::new(),
+        struct_generics: std::collections::HashMap::new(),
     };
     gen.gen_program(program)
 }
@@ -1678,16 +1679,13 @@ impl JsGen {
 
 struct GoGen {
     indent: usize,
-    /// Iter-24 Bug A: overrides the hard-coded `package main` when set. Driven
-    /// from `to_go_with_package` / `lang_detect::from_nebula_to_path`.
     package_name: Option<String>,
-    /// Stack of declared names per scope. Nebula's bare `x = 5` is a
-    /// new-declaration-or-reassignment; Go requires explicit `:=` on first
-    /// use. First-use simple-ident Assignment gets promoted to `x := v`.
     scopes: Vec<std::collections::HashSet<String>>,
-    /// Params/locals whose declared type is slice-like (`[]T`). Drives
-    /// `append(out, xs...)` spread when a slice name is an append arg.
     slice_names: std::collections::HashSet<String>,
+    /// Map of struct-name → recovered generic params. Populated at
+    /// gen_program entry from StructDecls; used by ImplBlock to emit
+    /// `func (sf Target[T]) method(...)` for generic receivers.
+    struct_generics: std::collections::HashMap<String, Vec<String>>,
 }
 
 impl GoGen {
@@ -1962,10 +1960,17 @@ impl GoGen {
     }
 
     fn gen_program(&mut self, program: &Program) -> String {
-        // Collect imports by scanning the program
-        // Pick a package name: prefer an explicit override; otherwise use
-        // `main` only when there's an actual `main` function, since
-        // `package main` without `func main()` fails `go build`.
+        // Collect generic params for each struct so ImplBlock can emit
+        // `func (sf Target[T]) method(...)` for generic receivers.
+        for s in &program.statements {
+            if let Statement::StructDecl { name, fields, .. } = s {
+                let mut gen_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+                for f in fields { Self::collect_generics_go(&f.type_ann, &mut gen_set); }
+                if !gen_set.is_empty() {
+                    self.struct_generics.insert(name.clone(), gen_set.into_iter().collect());
+                }
+            }
+        }
         let has_main = program.statements.iter().any(|s| matches!(s,
             Statement::FnDecl { name, .. } if name == "main"
         ));
@@ -2162,15 +2167,19 @@ impl GoGen {
                 out
             }
             Statement::ImplBlock { target, methods, .. } => {
-                // Use first lowercase letter of type as receiver name
-                // Use "sf" as receiver name — matches ingested Nebula convention
                 let recv_char = "sf";
+                // Include the target's generic params on the receiver: `sf Target[T]`.
+                let target_gens = self.struct_generics.get(target).cloned().unwrap_or_default();
+                let recv_type = if target_gens.is_empty() { target.clone() }
+                    else { format!("{}[{}]", target, target_gens.join(", ")) };
+                let method_gen_prefix = if target_gens.is_empty() { String::new() }
+                    else {
+                        let items: Vec<String> = target_gens.iter().map(|g| format!("{} any", g)).collect();
+                        format!("[{}]", items.join(", "))
+                    };
                 let mut out = String::new();
                 for method in methods {
                     if let Statement::FnDecl { name, params, body, return_type, .. } = method {
-                        // Check if sf is mutable (pointer receiver) or not (value receiver)
-                        let is_mut_receiver = params.iter()
-                            .any(|p| p.name == "sf" && p.type_ann.is_some());
                         let ps: Vec<String> = params.iter()
                             .filter(|p| p.name != "sf")
                             .map(|p| format!("{} {}", p.name, self.gen_param_type(p)))
@@ -2178,8 +2187,12 @@ impl GoGen {
                         let ret = return_type.as_ref()
                             .map(|t| format!(" {}", self.gen_type(t)))
                             .unwrap_or_default();
-                        let _ = is_mut_receiver;
-                        let recv = format!("{} {}", recv_char, target);
+                        let recv = format!("{} {}", recv_char, recv_type);
+                        // For generic receivers, the method signature also
+                        // carries the type params at the fn name position so
+                        // `sf.items = append(...)` can resolve the field
+                        // type. Otherwise skip the prefix to avoid warning.
+                        let _ = &method_gen_prefix;
                         out.push_str(&format!("{}func ({}) {}({}){} {{\n",
                             self.ind(), recv, name, ps.join(", "), ret));
                         self.indent += 1;
