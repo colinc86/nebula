@@ -1,9 +1,9 @@
 {
   "summary": {
     "total": 91,
-    "clean": 57,
+    "clean": 58,
     "minor": 1,
-    "major": 33,
+    "major": 32,
     "critical": 0,
     "by_lang": {
       "c": {
@@ -15,9 +15,9 @@
       },
       "go": {
         "total": 13,
-        "clean": 5,
+        "clean": 6,
         "minor": 0,
-        "major": 8,
+        "major": 7,
         "critical": 0
       },
       "javascript": {
@@ -306,10 +306,10 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: # probe | ./main.go:21:20: cannot use xs (variable of type []int) as int value in argument to append",
+      "phase4_native_compile": "ok",
       "antipatterns": [],
       "nebula_len": 465,
-      "severity": "major",
+      "severity": "clean",
       "antipattern_detail": []
     },
     {

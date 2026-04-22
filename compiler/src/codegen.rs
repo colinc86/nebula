@@ -120,7 +120,7 @@ pub fn to_javascript(program: &Program) -> String {
 }
 
 pub fn to_go(program: &Program) -> String {
-    let mut gen = GoGen { indent: 0, package_name: None, scopes: vec![std::collections::HashSet::new()] };
+    let mut gen = GoGen { indent: 0, package_name: None, scopes: vec![std::collections::HashSet::new()], slice_names: std::collections::HashSet::new() };
     gen.gen_program(program)
 }
 
@@ -135,6 +135,7 @@ pub fn to_go_with_package(program: &Program, package_name: Option<&str>) -> Stri
         indent: 0,
         package_name: package_name.map(str::to_owned),
         scopes: vec![std::collections::HashSet::new()],
+        slice_names: std::collections::HashSet::new(),
     };
     gen.gen_program(program)
 }
@@ -1684,6 +1685,9 @@ struct GoGen {
     /// new-declaration-or-reassignment; Go requires explicit `:=` on first
     /// use. First-use simple-ident Assignment gets promoted to `x := v`.
     scopes: Vec<std::collections::HashSet<String>>,
+    /// Params/locals whose declared type is slice-like (`[]T`). Drives
+    /// `append(out, xs...)` spread when a slice name is an append arg.
+    slice_names: std::collections::HashSet<String>,
 }
 
 impl GoGen {
@@ -2008,11 +2012,22 @@ impl GoGen {
                     };
                 self.scopes.push(std::collections::HashSet::new());
                 for p in params { self.declare(&p.name); }
+                // Track slice-typed params/locals so `append(out, xs)` can
+                // spread slice args (`xs...`) when they flow back into append.
+                let saved_slices = self.slice_names.clone();
+                for p in params.iter().filter(|p| p.name != "sf") {
+                    if let Some(t) = &p.type_ann {
+                        if matches!(t, TypeExpr::Generic(n, _) if n == "List" || n == "Array" || n == "Vec") {
+                            self.slice_names.insert(p.name.clone());
+                        }
+                    }
+                }
                 let mut out = format!("{}func {}{}({}){} {{\n", self.ind(), name, gen_str, ps.join(", "), ret);
                 self.indent += 1;
                 out.push_str(&self.gen_block(body));
                 self.indent -= 1;
                 self.scopes.pop();
+                self.slice_names = saved_slices;
                 out.push_str(&format!("{}}}\n", self.ind()));
                 out
             }
@@ -2299,8 +2314,18 @@ impl GoGen {
                     "recv" => format!("<-{}", obj),
                     "close" => format!("close({})", obj),
                     "append" => {
-                        let mut all_args = vec![obj.clone()];
-                        all_args.extend(a);
+                        // Spread slice-typed args: `append(out, xs...)`.
+                        let all_args: Vec<String> = std::iter::once(obj.clone())
+                            .chain(args.iter().map(|ca| {
+                                let rendered = self.gen_expr(&ca.value);
+                                if let Expr::Ident(n) = &ca.value {
+                                    if self.slice_names.contains(n) {
+                                        return format!("{}...", rendered);
+                                    }
+                                }
+                                rendered
+                            }))
+                            .collect();
                         format!("{} = append({})", obj, all_args.join(", "))
                     }
                     "len" if a.is_empty() => format!("len({})", obj),
