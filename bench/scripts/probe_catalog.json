@@ -1,9 +1,9 @@
 {
   "summary": {
     "total": 91,
-    "clean": 61,
+    "clean": 62,
     "minor": 1,
-    "major": 29,
+    "major": 28,
     "critical": 0,
     "by_lang": {
       "c": {
@@ -15,9 +15,9 @@
       },
       "go": {
         "total": 13,
-        "clean": 6,
+        "clean": 7,
         "minor": 0,
-        "major": 7,
+        "major": 6,
         "critical": 0
       },
       "javascript": {
@@ -358,10 +358,10 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: # probe | ./main.go:25:5: invalid argument: index i (variable of type []int) must be integer",
+      "phase4_native_compile": "ok",
       "antipatterns": [],
       "nebula_len": 448,
-      "severity": "major",
+      "severity": "clean",
       "antipattern_detail": []
     },
     {

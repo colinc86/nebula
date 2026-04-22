@@ -1737,6 +1737,47 @@ impl GoGen {
         )
     }
 
+    /// Walk a block and return true if any expression indexes `iter_name`
+    /// with `binding` (`iter_name[binding]`). Used to decide whether a
+    /// single-binding `for i in xs` is an index iteration.
+    fn body_indexes_with(body: &Block, iter_name: &str, binding: &str) -> bool {
+        for s in &body.statements {
+            if Self::stmt_indexes_with(s, iter_name, binding) { return true; }
+        }
+        if let Some(e) = &body.expr {
+            if Self::expr_indexes_with(e, iter_name, binding) { return true; }
+        }
+        false
+    }
+
+    fn stmt_indexes_with(s: &Statement, iter_name: &str, binding: &str) -> bool {
+        match s {
+            Statement::Expr(e) | Statement::Return(Some(e)) | Statement::Throw(Some(e)) | Statement::Break(Some(e)) => Self::expr_indexes_with(e, iter_name, binding),
+            Statement::Assignment { target, value, .. } => Self::expr_indexes_with(target, iter_name, binding) || Self::expr_indexes_with(value, iter_name, binding),
+            Statement::Let { value, .. } | Statement::Const { value, .. } | Statement::Mut { value, .. } => Self::expr_indexes_with(value, iter_name, binding),
+            _ => false,
+        }
+    }
+
+    fn expr_indexes_with(e: &Expr, iter_name: &str, binding: &str) -> bool {
+        match e {
+            Expr::Index { object, index } => {
+                let is_target = matches!(object.as_ref(), Expr::Ident(n) if n == iter_name)
+                    && matches!(index.as_ref(), Expr::Ident(n) if n == binding);
+                is_target
+                    || Self::expr_indexes_with(object, iter_name, binding)
+                    || Self::expr_indexes_with(index, iter_name, binding)
+            }
+            Expr::BinaryOp { left, right, .. } => Self::expr_indexes_with(left, iter_name, binding) || Self::expr_indexes_with(right, iter_name, binding),
+            Expr::Call { callee, args } => Self::expr_indexes_with(callee, iter_name, binding) || args.iter().any(|a| Self::expr_indexes_with(&a.value, iter_name, binding)),
+            Expr::MethodCall { object, args, .. } => Self::expr_indexes_with(object, iter_name, binding) || args.iter().any(|a| Self::expr_indexes_with(&a.value, iter_name, binding)),
+            Expr::FieldAccess { object, .. } => Self::expr_indexes_with(object, iter_name, binding),
+            Expr::If { condition, then_block, else_block } => Self::expr_indexes_with(condition, iter_name, binding) || Self::body_indexes_with(then_block, iter_name, binding) || else_block.as_ref().map_or(false, |b| Self::body_indexes_with(b, iter_name, binding)),
+            Expr::Block(b) => Self::body_indexes_with(b, iter_name, binding),
+            _ => false,
+        }
+    }
+
     /// Recognise common Go stdlib packages so we can PascalCase their members.
     fn is_go_stdlib_pkg(name: &str) -> bool {
         matches!(name, "fmt" | "strings" | "strconv" | "os" | "io" | "errors"
@@ -2398,12 +2439,18 @@ impl GoGen {
                 out
             }
             Expr::For { binding, index_binding, iterable, body, .. } => {
-                // Nebula `for x in xs` means x is the value; in Go the
-                // idiomatic form is `for _, x := range xs`.
-                // `for i, x in xs` → `for i, x := range xs`.
                 let range_var = match index_binding {
                     Some(idx) => format!("{}, {}", idx, binding),
-                    None => format!("_, {}", binding),
+                    None => {
+                        // Detect `for i in xs` where body uses `xs[i]` — the
+                        // single binding is an index, not a value. Emit
+                        // `for i := range xs` instead of `for _, i :=`.
+                        let is_index_use = if let Expr::Ident(iter_name) = iterable.as_ref() {
+                            Self::body_indexes_with(body, iter_name, binding)
+                        } else { false };
+                        if is_index_use { binding.clone() }
+                        else { format!("_, {}", binding) }
+                    }
                 };
                 let mut out = format!("for {} := range {} {{\n", range_var, self.gen_expr(iterable));
                 self.indent += 1; out.push_str(&self.gen_block(body)); self.indent -= 1;
@@ -3515,7 +3562,15 @@ impl KotlinGen {
             }
             Expr::NilCoalesce { left, right } => format!("({} ?: {})", self.gen_expr(left), self.gen_expr(right)),
             Expr::Range { start, end, inclusive } => {
-                if *inclusive { format!("({}..{})", self.gen_expr(start), self.gen_expr(end)) }
+                // Descending inclusive range `10..=0` → `10 downTo 0` in Kotlin.
+                if *inclusive {
+                    if let (Expr::IntLit(s), Expr::IntLit(e)) = (start.as_ref(), end.as_ref()) {
+                        if s > e {
+                            return format!("({} downTo {})", s, e);
+                        }
+                    }
+                    format!("({}..{})", self.gen_expr(start), self.gen_expr(end))
+                }
                 else { format!("({} until {})", self.gen_expr(start), self.gen_expr(end)) }
             }
             Expr::Pipe { left, right } => {
