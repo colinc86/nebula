@@ -1690,6 +1690,32 @@ impl GoGen {
         if let Some(top) = self.scopes.last_mut() { top.insert(name.to_string()); }
     }
 
+    fn collect_generics_go(t: &TypeExpr, out: &mut std::collections::BTreeSet<String>) {
+        const KNOWN: &[&str] = &["Int", "Int8", "Int16", "Int32", "Int64", "Uint",
+            "Uint8", "Uint16", "Uint32", "Uint64", "Byte", "Rune", "Float",
+            "Float32", "Float64", "Complex64", "Complex128", "Bool", "String",
+            "Str", "Char", "Any", "Error", "Nil"];
+        match t {
+            TypeExpr::Named(n) => {
+                if n.len() == 1 && n.chars().next().unwrap().is_ascii_uppercase() {
+                    out.insert(n.clone());
+                } else if !KNOWN.contains(&n.as_str()) && !n.contains('.')
+                    && n.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+                    && !n.is_empty()
+                {
+                    out.insert(n.clone());
+                }
+            }
+            TypeExpr::Generic(_, args) => { for a in args { Self::collect_generics_go(a, out); } }
+            TypeExpr::Option(inner) => Self::collect_generics_go(inner, out),
+            TypeExpr::Function(params, ret) => {
+                for p in params { Self::collect_generics_go(p, out); }
+                Self::collect_generics_go(ret, out);
+            }
+            TypeExpr::Tuple(items) => { for i in items { Self::collect_generics_go(i, out); } }
+        }
+    }
+
     /// Recognise common Go stdlib packages so we can PascalCase their members.
     fn is_go_stdlib_pkg(name: &str) -> bool {
         matches!(name, "fmt" | "strings" | "strconv" | "os" | "io" | "errors"
@@ -1736,6 +1762,24 @@ impl GoGen {
                 "SyncWaitGroup" => "sync.WaitGroup".into(),
                 "StringsBuilder" => "strings.Builder".into(),
                 "JsonMarshal" => "json.Marshal".into(),
+                "IoReader" => "io.Reader".into(),
+                "IoWriter" => "io.Writer".into(),
+                "IoReadWriter" => "io.ReadWriter".into(),
+                "IoReadCloser" => "io.ReadCloser".into(),
+                "IoWriteCloser" => "io.WriteCloser".into(),
+                "OsFile" => "*os.File".into(),
+                "BytesBuffer" => "bytes.Buffer".into(),
+                "ContextContext" => "context.Context".into(),
+                "HttpRequest" => "*http.Request".into(),
+                "HttpResponse" => "*http.Response".into(),
+                "HttpHandler" => "http.Handler".into(),
+                "HttpResponseWriter" => "http.ResponseWriter".into(),
+                "ErrorsError" => "errors.Error".into(),
+                "NetConn" => "net.Conn".into(),
+                "NetListener" => "net.Listener".into(),
+                "TestingT" => "*testing.T".into(),
+                "TestingB" => "*testing.B".into(),
+                "TestingM" => "*testing.M".into(),
                 other => other.to_string(),
             },
             TypeExpr::Generic(name, args) => {
@@ -1780,9 +1824,21 @@ impl GoGen {
         if body.contains("math.") { imports.push("\"math\""); }
         if body.contains("sort.") { imports.push("\"sort\""); }
         if body.contains("strings.") { imports.push("\"strings\""); }
+        if body.contains("strconv.") { imports.push("\"strconv\""); }
         if body.contains("sync.") { imports.push("\"sync\""); }
         if body.contains("time.") { imports.push("\"time\""); }
         if body.contains("json.") { imports.push("\"encoding/json\""); }
+        if body.contains("io.") { imports.push("\"io\""); }
+        if body.contains("os.") { imports.push("\"os\""); }
+        if body.contains("errors.") { imports.push("\"errors\""); }
+        if body.contains("bytes.") { imports.push("\"bytes\""); }
+        if body.contains("context.") { imports.push("\"context\""); }
+        if body.contains("http.") { imports.push("\"net/http\""); }
+        if body.contains("net.") && !body.contains("net/http") { imports.push("\"net\""); }
+        if body.contains("bufio.") { imports.push("\"bufio\""); }
+        if body.contains("regexp.") { imports.push("\"regexp\""); }
+        if body.contains("log.") { imports.push("\"log\""); }
+        if body.contains("testing.") { imports.push("\"testing\""); }
         if !imports.is_empty() {
             out.push_str("import (\n");
             for imp in &imports {
@@ -1847,9 +1903,22 @@ impl GoGen {
                 let ret = return_type.as_ref()
                     .map(|t| format!(" {}", self.gen_type(t)))
                     .unwrap_or_default();
+                // Recover generic params from signature: single uppercase
+                // letters not otherwise defined as types — emit as
+                // `func name[T any, U any](...)`.
+                let mut gen_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+                for p in params.iter().filter(|p| p.name != "sf") {
+                    if let Some(t) = &p.type_ann { Self::collect_generics_go(t, &mut gen_set); }
+                }
+                if let Some(rt) = return_type { Self::collect_generics_go(rt, &mut gen_set); }
+                let gen_str = if gen_set.is_empty() { String::new() }
+                    else {
+                        let items: Vec<String> = gen_set.iter().map(|g| format!("{} any", g)).collect();
+                        format!("[{}]", items.join(", "))
+                    };
                 self.scopes.push(std::collections::HashSet::new());
                 for p in params { self.declare(&p.name); }
-                let mut out = format!("{}func {}({}){} {{\n", self.ind(), name, ps.join(", "), ret);
+                let mut out = format!("{}func {}{}({}){} {{\n", self.ind(), name, gen_str, ps.join(", "), ret);
                 self.indent += 1;
                 out.push_str(&self.gen_block(body));
                 self.indent -= 1;
@@ -2173,9 +2242,12 @@ impl GoGen {
                 out
             }
             Expr::For { binding, index_binding, iterable, body, .. } => {
+                // Nebula `for x in xs` means x is the value; in Go the
+                // idiomatic form is `for _, x := range xs`.
+                // `for i, x in xs` → `for i, x := range xs`.
                 let range_var = match index_binding {
                     Some(idx) => format!("{}, {}", idx, binding),
-                    None => binding.clone(),
+                    None => format!("_, {}", binding),
                 };
                 let mut out = format!("for {} := range {} {{\n", range_var, self.gen_expr(iterable));
                 self.indent += 1; out.push_str(&self.gen_block(body)); self.indent -= 1;
@@ -2223,8 +2295,19 @@ impl GoGen {
                 self.indent += 1;
                 for arm in arms {
                     match &arm.pattern {
-                        Pattern::Wildcard | Pattern::Binding(_) => {
+                        Pattern::Wildcard => {
                             out.push_str(&format!("{}default:\n", self.ind()));
+                        }
+                        Pattern::Binding(n) if n == "_" => {
+                            out.push_str(&format!("{}default:\n", self.ind()));
+                        }
+                        Pattern::Binding(n) => {
+                            // In Nebula's match grammar, a bare identifier is
+                            // ambiguous — it could be a pattern variable OR a
+                            // constant/enum name. In Go switch cases we prefer
+                            // the constant interpretation unless the name is
+                            // `_`, which is handled above.
+                            out.push_str(&format!("{}case {}:\n", self.ind(), n));
                         }
                         Pattern::Literal(lit) => {
                             out.push_str(&format!("{}case {}:\n", self.ind(), self.gen_expr(lit)));
@@ -2284,6 +2367,17 @@ struct SwiftGen {
 }
 
 impl SwiftGen {
+    fn swift_pattern(&mut self, p: &Pattern) -> String {
+        use Pattern::*;
+        match p {
+            Wildcard => "_".into(),
+            Binding(n) => n.clone(),
+            Literal(e) => self.gen_expr(e),
+            Range(_, _, _) => "_".into(),
+            Variant(_, _) => "_".into(),
+        }
+    }
+
     fn ind(&self) -> String { "    ".repeat(self.indent) }
 
     fn gen_program(&mut self, program: &Program) -> String {
@@ -2529,6 +2623,7 @@ impl SwiftGen {
                 self.indent += 1;
                 out.push_str(&format!("{}switch {} {{\n", self.ind(), subj));
                 self.indent += 1;
+                let mut saw_default = false;
                 for arm in arms {
                     match &arm.pattern {
                         Pattern::Wildcard | Pattern::Binding(_) => {
@@ -2536,6 +2631,7 @@ impl SwiftGen {
                                 out.push_str(&format!("{}case _ where {}:\n", self.ind(), self.gen_expr(guard)));
                             } else {
                                 out.push_str(&format!("{}default:\n", self.ind()));
+                                saw_default = true;
                             }
                         }
                         Pattern::Literal(lit) => {
@@ -2545,10 +2641,45 @@ impl SwiftGen {
                             let op = if *inclusive { "..." } else { "..<" };
                             out.push_str(&format!("{}case {}{}{}:\n", self.ind(), self.gen_expr(start), op, self.gen_expr(end)));
                         }
-                        _ => out.push_str(&format!("{}// pattern TODO\n", self.ind())),
+                        Pattern::Variant(name, subs) => {
+                            let sub_strs: Vec<String> = subs.iter().map(|p| self.swift_pattern(p)).collect();
+                            let guard = arm.guard.as_ref().map(|g| format!(" where {}", self.gen_expr(g))).unwrap_or_default();
+                            if name == "(tuple)" {
+                                // Tuple pattern `(a, b)`: render as Swift tuple
+                                // pattern, binding unbound names with `let` and
+                                // leaving literals/wildcards as-is.
+                                let parts: Vec<String> = subs.iter().map(|p| match p {
+                                    Pattern::Binding(n) => format!("let {}", n),
+                                    Pattern::Wildcard => "_".into(),
+                                    Pattern::Literal(e) => self.gen_expr(e),
+                                    _ => self.swift_pattern(p),
+                                }).collect();
+                                out.push_str(&format!("{}case ({}){}:\n", self.ind(), parts.join(", "), guard));
+                            } else {
+                                // Enum pattern: `.variant` or `.variant(x, y)`
+                                let last = name.rsplit('.').next().unwrap_or(name);
+                                if sub_strs.is_empty() {
+                                    out.push_str(&format!("{}case .{}{}:\n", self.ind(), last, guard));
+                                } else {
+                                    let bindings: Vec<String> = subs.iter().map(|p| match p {
+                                        Pattern::Binding(n) => format!("let {}", n),
+                                        Pattern::Wildcard => "_".into(),
+                                        _ => self.swift_pattern(p),
+                                    }).collect();
+                                    out.push_str(&format!("{}case .{}({}){}:\n", self.ind(), last, bindings.join(", "), guard));
+                                }
+                            }
+                        }
                     }
                     self.indent += 1;
                     out.push_str(&format!("{}return {}\n", self.ind(), self.gen_expr(&arm.body)));
+                    self.indent -= 1;
+                }
+                // Swift switch must be exhaustive; add a default if none.
+                if !saw_default {
+                    out.push_str(&format!("{}default:\n", self.ind()));
+                    self.indent += 1;
+                    out.push_str(&format!("{}fatalError()\n", self.ind()));
                     self.indent -= 1;
                 }
                 self.indent -= 1;
@@ -4999,7 +5130,8 @@ mod tests {
     #[test]
     fn test_go_for() {
         let go = translate_go("fo x in items { print(x) }");
-        assert!(go.contains("for x := range items"));
+        // Single-binding for-in iterates values, so Go form is `_, x := range`.
+        assert!(go.contains("for _, x := range items"));
     }
 
     #[test]

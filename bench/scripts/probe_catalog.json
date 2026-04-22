@@ -1,9 +1,9 @@
 {
   "summary": {
     "total": 91,
-    "clean": 46,
+    "clean": 48,
     "minor": 0,
-    "major": 45,
+    "major": 43,
     "critical": 0,
     "by_lang": {
       "c": {
@@ -15,9 +15,9 @@
       },
       "go": {
         "total": 13,
-        "clean": 1,
+        "clean": 2,
         "minor": 0,
-        "major": 12,
+        "major": 11,
         "critical": 0
       },
       "javascript": {
@@ -50,9 +50,9 @@
       },
       "swift": {
         "total": 11,
-        "clean": 10,
+        "clean": 11,
         "minor": 0,
-        "major": 1,
+        "major": 0,
         "critical": 0
       },
       "typescript": {
@@ -215,7 +215,7 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: # probe | ./main.go:3:23: undefined: TestingT | ./main.go:4:2: undefined: run | ./main.go:8:9: cannot use func(x int) interface{} {\u2026} (value of type func(x int) interface{}) as func(int) int value in return statement | ./main.go:12:33: unde...",
+      "phase4_native_compile": "err: # probe | ./main.go:8:2: undefined: run | ./main.go:8:36: t.log undefined (cannot refer to unexported method log) | ./main.go:12:9: cannot use func(x int) interface{} {\u2026} (value of type func(x int) interface{}) as func(int) int value in ret...",
       "antipatterns": [],
       "nebula_len": 163,
       "severity": "major",
@@ -228,7 +228,7 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: # probe | ./main.go:16:3: multiple defaults (first at ./main.go:14:3) | ./main.go:18:3: multiple defaults (first at ./main.go:14:3) | ./main.go:20:3: multiple defaults (first at ./main.go:14:3) | ./main.go:30:20: nil is not constant | ./mai...",
+      "phase4_native_compile": "err: # probe | ./main.go:30:20: nil is not constant | ./main.go:31:19: nil is not constant",
       "antipatterns": [],
       "nebula_len": 322,
       "severity": "major",
@@ -241,7 +241,7 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: # probe | ./main.go:7:1: syntax error: non-declaration statement outside function body",
+      "phase4_native_compile": "err: # probe | ./main.go:8:1: syntax error: non-declaration statement outside function body",
       "antipatterns": [],
       "nebula_len": 378,
       "severity": "major",
@@ -254,7 +254,7 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: # probe | ./main.go:3:12: undefined: T | ./main.go:10:15: undefined: T | ./main.go:10:28: undefined: U | ./main.go:11:16: undefined: U | ./main.go:18:18: undefined: T | ./main.go:19:16: undefined: T | ./main.go:29:10: undefined: T | ./main....",
+      "phase4_native_compile": "err: # probe | ./main.go:4:6: invalid operation: a > b (type parameter T cannot use operator >) | ./main.go:29:10: undefined: T | ./main.go:32:24: undefined: T",
       "antipatterns": [],
       "nebula_len": 423,
       "severity": "major",
@@ -280,10 +280,10 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: # probe | ./main.go:24:11: cannot use v (variable of type string) as int value in assignment",
+      "phase4_native_compile": "ok",
       "antipatterns": [],
       "nebula_len": 495,
-      "severity": "major",
+      "severity": "clean",
       "antipattern_detail": []
     },
     {
@@ -341,7 +341,7 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: # probe | ./main.go:3:25: undefined: IoReader | ./main.go:12:2: declared and not used: head | ./main.go:12:10: use of untyped nil in assignment | ./main.go:13:2: declared and not used: tail | ./main.go:13:10: use of untyped nil in assignmen...",
+      "phase4_native_compile": "err: # probe | ./main.go:16:2: declared and not used: head | ./main.go:16:10: use of untyped nil in assignment | ./main.go:17:2: declared and not used: tail | ./main.go:17:10: use of untyped nil in assignment | ./main.go:20:2: not enough return ...",
       "antipatterns": [],
       "nebula_len": 260,
       "severity": "major",
@@ -354,7 +354,7 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: # probe | ./main.go:10:33: undefined: v | ./main.go:11:3: multiple defaults (first at ./main.go:9:3) | ./main.go:12:33: undefined: v | ./main.go:13:3: multiple defaults (first at ./main.go:9:3) | ./main.go:14:42: undefined: v | ./main.go:17...",
+      "phase4_native_compile": "err: # probe | ./main.go:17:8: syntax error: unexpected keyword default, expected expression | ./main.go:18:4: syntax error: unexpected keyword return, expected :",
       "antipatterns": [],
       "nebula_len": 443,
       "severity": "major",
@@ -367,7 +367,7 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: # probe | ./main.go:9:3: declared and not used: out | ./main.go:17:7: cannot use w (variable of type int) as string value in map index",
+      "phase4_native_compile": "err: # probe | ./main.go:9:3: declared and not used: out | ./main.go:25:5: invalid argument: index i (variable of type []int) must be integer",
       "antipatterns": [],
       "nebula_len": 445,
       "severity": "major",
@@ -1079,10 +1079,10 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: <tmp>/probe.swift:10:17: error: all statements inside a switch must be covered by a 'case' or 'default' |  8 |         switch s { |  9 |             // pattern TODO | 10 |                 return /* TODO */ |    |                 `- error: a...",
+      "phase4_native_compile": "ok",
       "antipatterns": [],
       "nebula_len": 547,
-      "severity": "major",
+      "severity": "clean",
       "antipattern_detail": []
     },
     {
