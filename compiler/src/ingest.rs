@@ -5,6 +5,7 @@
 /// Unknown constructs fall back to raw source text with a comment marker.
 
 use tree_sitter::{Node, Parser};
+use crate::lang_detect::replace_word_outside_strings;
 
 // ── Public API ──
 
@@ -4790,24 +4791,26 @@ fn canonicalize(source: &str) -> String {
          .replace("enu(", "enumerate(");
 
     // ── 3. Normalize type names to canonical forms ──
-    s = s.replace(": string", ": Str")
-         .replace(": String", ": Str")
-         .replace(": bool", ": Bool")
-         .replace(": boolean", ": Bool")
-         .replace(": Boolean", ": Bool")
-         .replace(": int", ": Int")
-         .replace(": number", ": Int")
-         .replace(": float", ": Float")
-         .replace(": double", ": Float")
-         .replace("-> string", "-> Str")
-         .replace("-> String", "-> Str")
-         .replace("-> bool", "-> Bool")
-         .replace("-> boolean", "-> Bool")
-         .replace("-> Boolean", "-> Bool")
-         .replace("-> int", "-> Int")
-         .replace("-> number", "-> Int")
-         .replace("-> float", "-> Float")
-         .replace("-> double", "-> Float");
+    // Word-boundary-aware type normalization so `float64` / `int64`
+    // don't get mangled to `Float64` / `Int64`.
+    s = replace_word_outside_strings(&s, ": string", ": Str");
+    s = replace_word_outside_strings(&s, ": String", ": Str");
+    s = replace_word_outside_strings(&s, ": bool", ": Bool");
+    s = replace_word_outside_strings(&s, ": boolean", ": Bool");
+    s = replace_word_outside_strings(&s, ": Boolean", ": Bool");
+    s = replace_word_outside_strings(&s, ": int", ": Int");
+    s = replace_word_outside_strings(&s, ": number", ": Int");
+    s = replace_word_outside_strings(&s, ": float", ": Float");
+    s = replace_word_outside_strings(&s, ": double", ": Float");
+    s = replace_word_outside_strings(&s, "-> string", "-> Str");
+    s = replace_word_outside_strings(&s, "-> String", "-> Str");
+    s = replace_word_outside_strings(&s, "-> bool", "-> Bool");
+    s = replace_word_outside_strings(&s, "-> boolean", "-> Bool");
+    s = replace_word_outside_strings(&s, "-> Boolean", "-> Bool");
+    s = replace_word_outside_strings(&s, "-> int", "-> Int");
+    s = replace_word_outside_strings(&s, "-> number", "-> Int");
+    s = replace_word_outside_strings(&s, "-> float", "-> Float");
+    s = replace_word_outside_strings(&s, "-> double", "-> Float");
 
     // ── 4. Normalize constructor patterns ──
     // Task.new(...) → Task(...) — Python-style constructors
@@ -10632,30 +10635,38 @@ mod go {
 
         let emit_field = |child: &Node, fields: &mut String, inner_ind: &str| {
             if child.kind() == "field_declaration" {
-                let name_node = child.child_by_field_name("name");
-                let ty = child.child_by_field_name("type")
-                    .map(|n| go_type_to_nebula(&text(&n, src)))
+                // `X, Y int` is a single field_declaration with multiple
+                // field_identifier children before the type.
+                let ty_node = child.child_by_field_name("type");
+                let ty = ty_node.as_ref()
+                    .map(|n| go_type_to_nebula(&text(n, src)))
                     .unwrap_or_else(|| "?".to_string());
-                match name_node {
-                    Some(n) => {
-                        let name = text(&n, src);
+                let mut names: Vec<String> = Vec::new();
+                let mut cur = child.walk();
+                for n in child.named_children(&mut cur) {
+                    if n.kind() == "field_identifier" {
+                        // Stop once we've hit the type node.
+                        if let Some(ty_n) = &ty_node {
+                            if n.id() == ty_n.id() { break; }
+                        }
+                        names.push(text(&n, src).to_string());
+                    }
+                }
+                if !names.is_empty() {
+                    for name in &names {
                         fields.push_str(&format!("{}{}: {}\n", inner_ind, name, ty));
                     }
-                    None => {
-                        // Embedded field (Go composition). Derive a lowercase
-                        // field name from the type so Nebula's struct accepts
-                        // it.
-                        let derived = ty.trim_start_matches("Ptr<").trim_end_matches('>');
-                        let derived = derived.split('.').last().unwrap_or(derived);
-                        let snake = derived.chars().enumerate().map(|(i, c)| {
-                            if i > 0 && c.is_uppercase() {
-                                format!("_{}", c.to_lowercase())
-                            } else {
-                                c.to_lowercase().to_string()
-                            }
-                        }).collect::<String>();
-                        fields.push_str(&format!("{}{}: {}\n", inner_ind, snake, ty));
-                    }
+                } else {
+                    let derived = ty.trim_start_matches("Ptr<").trim_end_matches('>');
+                    let derived = derived.split('.').last().unwrap_or(derived);
+                    let snake = derived.chars().enumerate().map(|(i, c)| {
+                        if i > 0 && c.is_uppercase() {
+                            format!("_{}", c.to_lowercase())
+                        } else {
+                            c.to_lowercase().to_string()
+                        }
+                    }).collect::<String>();
+                    fields.push_str(&format!("{}{}: {}\n", inner_ind, snake, ty));
                 }
             }
         };
@@ -10734,8 +10745,10 @@ mod go {
             "uint16" => "Uint16".to_string(),
             "uint32" => "Uint32".to_string(),
             "uint64" => "Uint64".to_string(),
-            "float32" => "Float32".to_string(),
-            "float64" => "Float64".to_string(),
+            // Nebula canonical float type is `Float`. Codegen reverses this
+            // to `float64` for Go, so round-trip preserves behaviour and
+            // the IL stays free of `FloatN` width leaks.
+            "float32" | "float64" => "Float".to_string(),
             "string" => "Str".to_string(),
             "bool" => "Bool".to_string(),
             "error" => "Error".to_string(),

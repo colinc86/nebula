@@ -1,9 +1,9 @@
 {
   "summary": {
     "total": 91,
-    "clean": 53,
+    "clean": 54,
     "minor": 0,
-    "major": 38,
+    "major": 37,
     "critical": 0,
     "by_lang": {
       "c": {
@@ -15,9 +15,9 @@
       },
       "go": {
         "total": 13,
-        "clean": 4,
+        "clean": 5,
         "minor": 0,
-        "major": 9,
+        "major": 8,
         "critical": 0
       },
       "javascript": {
@@ -243,7 +243,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "err: # probe | ./main.go:8:1: syntax error: non-declaration statement outside function body",
       "antipatterns": [],
-      "nebula_len": 378,
+      "nebula_len": 384,
       "severity": "major",
       "antipattern_detail": []
     },
@@ -269,7 +269,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "ok",
       "antipatterns": [],
-      "nebula_len": 155,
+      "nebula_len": 158,
       "severity": "clean",
       "antipattern_detail": []
     },
@@ -282,7 +282,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "ok",
       "antipatterns": [],
-      "nebula_len": 495,
+      "nebula_len": 498,
       "severity": "clean",
       "antipattern_detail": []
     },
@@ -308,7 +308,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "err: # probe | ./main.go:21:20: cannot use xs (variable of type []int) as int value in argument to append",
       "antipatterns": [],
-      "nebula_len": 462,
+      "nebula_len": 465,
       "severity": "major",
       "antipattern_detail": []
     },
@@ -319,20 +319,11 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: # probe | ./main.go:16:9: use of package fmt not in selector | ./main.go:28:9: use of package fmt not in selector | ./main.go:28:45: sf.Y undefined (type Point has no field or method Y)",
-      "antipatterns": [
-        "raw_type_leak"
-      ],
-      "nebula_len": 356,
-      "severity": "major",
-      "antipattern_detail": [
-        {
-          "rule": "raw_type_leak",
-          "message": "uppercase type 'Float64' in Nebula output",
-          "line": 3,
-          "excerpt": "def fmt_float(x: Float64) -> Str:"
-        }
-      ]
+      "phase4_native_compile": "ok",
+      "antipatterns": [],
+      "nebula_len": 368,
+      "severity": "clean",
+      "antipattern_detail": []
     },
     {
       "file": "compiler/tests/probe/go/tuple_returns.go",
@@ -343,7 +334,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "err: # probe | ./main.go:16:2: declared and not used: head | ./main.go:16:10: use of untyped nil in assignment | ./main.go:17:2: declared and not used: tail | ./main.go:17:10: use of untyped nil in assignment | ./main.go:20:2: not enough return ...",
       "antipatterns": [],
-      "nebula_len": 260,
+      "nebula_len": 269,
       "severity": "major",
       "antipattern_detail": []
     },
@@ -369,7 +360,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "err: # probe | ./main.go:9:3: declared and not used: out | ./main.go:25:5: invalid argument: index i (variable of type []int) must be integer",
       "antipatterns": [],
-      "nebula_len": 445,
+      "nebula_len": 448,
       "severity": "major",
       "antipattern_detail": []
     },
@@ -538,7 +529,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "err: <tmp>/probe.kt:5:15: error: unresolved reference 'Circle'. |         Shape.Circle -> ((3.14159 * s.r) * s.r) |               ^^^^^^ | <tmp>/probe.kt:5:39: error: unresolved reference 'r'. |         Shape.Circle -> ((3.14159 * s.r) * s.r) | ...",
       "antipatterns": [],
-      "nebula_len": 657,
+      "nebula_len": 666,
       "severity": "major",
       "antipattern_detail": []
     },
@@ -577,7 +568,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "err: <tmp>/probe.kt:7:15: error: unresolved reference 'name'. |     return \"${name} barks\" |               ^^^^ | <tmp>/probe.kt:20:12: error: return type mismatch: expected 'Double', actual 'Unit'. |     return Unit |            ^^^^ | <tmp>/pr...",
       "antipatterns": [],
-      "nebula_len": 496,
+      "nebula_len": 505,
       "severity": "major",
       "antipattern_detail": []
     },
@@ -605,7 +596,7 @@
       "antipatterns": [
         "casing_variants"
       ],
-      "nebula_len": 389,
+      "nebula_len": 392,
       "severity": "major",
       "antipattern_detail": [
         {
@@ -623,7 +614,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "err: <tmp>/probe.kt:8:12: error: return type mismatch: expected 'Int', actual 'Int?'. |     return xs.lastOrNull() |            ^^^^^^^^^^^^^^^ | <tmp>/probe.kt:18:17: error: none of the following candidates is applicable: |  | fun IntProgressio...",
       "antipatterns": [],
-      "nebula_len": 342,
+      "nebula_len": 345,
       "severity": "major",
       "antipattern_detail": []
     },
@@ -636,7 +627,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "ok",
       "antipatterns": [],
-      "nebula_len": 358,
+      "nebula_len": 364,
       "severity": "clean",
       "antipattern_detail": []
     },
@@ -649,7 +640,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "ok",
       "antipatterns": [],
-      "nebula_len": 388,
+      "nebula_len": 391,
       "severity": "clean",
       "antipattern_detail": []
     },
@@ -664,7 +655,7 @@
       "antipatterns": [
         "casing_variants"
       ],
-      "nebula_len": 459,
+      "nebula_len": 462,
       "severity": "major",
       "antipattern_detail": [
         {
@@ -962,7 +953,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "err: error[E0425]: cannot find value `x` in this scope |   --> <tmp>/probe.rs:20:28 |    | | 20 |     xs.iter().find(|andx| (x > 0)) |    |                            ^ |    | | help: a local variable with a similar name exists |    | | 20 |    ...",
       "antipatterns": [],
-      "nebula_len": 498,
+      "nebula_len": 501,
       "severity": "major",
       "antipattern_detail": []
     },
@@ -975,7 +966,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "ok",
       "antipatterns": [],
-      "nebula_len": 297,
+      "nebula_len": 300,
       "severity": "clean",
       "antipattern_detail": []
     },
@@ -1016,7 +1007,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "ok",
       "antipatterns": [],
-      "nebula_len": 544,
+      "nebula_len": 547,
       "severity": "clean",
       "antipattern_detail": []
     },
@@ -1042,7 +1033,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "ok",
       "antipatterns": [],
-      "nebula_len": 376,
+      "nebula_len": 388,
       "severity": "clean",
       "antipattern_detail": []
     },
@@ -1094,7 +1085,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "ok",
       "antipatterns": [],
-      "nebula_len": 371,
+      "nebula_len": 377,
       "severity": "clean",
       "antipattern_detail": []
     },
@@ -1107,7 +1098,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "ok",
       "antipatterns": [],
-      "nebula_len": 370,
+      "nebula_len": 373,
       "severity": "clean",
       "antipattern_detail": []
     },
@@ -1120,7 +1111,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "ok",
       "antipatterns": [],
-      "nebula_len": 288,
+      "nebula_len": 294,
       "severity": "clean",
       "antipattern_detail": []
     },
@@ -1133,7 +1124,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "ok",
       "antipatterns": [],
-      "nebula_len": 272,
+      "nebula_len": 275,
       "severity": "clean",
       "antipattern_detail": []
     },
@@ -1146,7 +1137,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "ok",
       "antipatterns": [],
-      "nebula_len": 460,
+      "nebula_len": 463,
       "severity": "clean",
       "antipattern_detail": []
     },
@@ -1159,7 +1150,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "skip: tsc not installed",
       "antipatterns": [],
-      "nebula_len": 416,
+      "nebula_len": 425,
       "severity": "clean",
       "antipattern_detail": []
     },
@@ -1172,7 +1163,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "skip: tsc not installed",
       "antipatterns": [],
-      "nebula_len": 271,
+      "nebula_len": 286,
       "severity": "clean",
       "antipattern_detail": []
     },
@@ -1185,7 +1176,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "skip: tsc not installed",
       "antipatterns": [],
-      "nebula_len": 323,
+      "nebula_len": 326,
       "severity": "clean",
       "antipattern_detail": []
     },
@@ -1198,7 +1189,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "skip: tsc not installed",
       "antipatterns": [],
-      "nebula_len": 358,
+      "nebula_len": 367,
       "severity": "clean",
       "antipattern_detail": []
     },
@@ -1211,7 +1202,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "skip: tsc not installed",
       "antipatterns": [],
-      "nebula_len": 227,
+      "nebula_len": 236,
       "severity": "clean",
       "antipattern_detail": []
     },
@@ -1224,7 +1215,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "skip: tsc not installed",
       "antipatterns": [],
-      "nebula_len": 491,
+      "nebula_len": 503,
       "severity": "clean",
       "antipattern_detail": []
     },
@@ -1237,7 +1228,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "skip: tsc not installed",
       "antipatterns": [],
-      "nebula_len": 282,
+      "nebula_len": 291,
       "severity": "clean",
       "antipattern_detail": []
     },
@@ -1250,7 +1241,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "skip: tsc not installed",
       "antipatterns": [],
-      "nebula_len": 175,
+      "nebula_len": 184,
       "severity": "clean",
       "antipattern_detail": []
     },
@@ -1263,7 +1254,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "skip: tsc not installed",
       "antipatterns": [],
-      "nebula_len": 296,
+      "nebula_len": 311,
       "severity": "clean",
       "antipattern_detail": []
     },
@@ -1276,7 +1267,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "skip: tsc not installed",
       "antipatterns": [],
-      "nebula_len": 289,
+      "nebula_len": 301,
       "severity": "clean",
       "antipattern_detail": []
     },
@@ -1289,7 +1280,7 @@
       "phase3_to_nebula": "ok",
       "phase4_native_compile": "skip: tsc not installed",
       "antipatterns": [],
-      "nebula_len": 383,
+      "nebula_len": 386,
       "severity": "clean",
       "antipattern_detail": []
     }

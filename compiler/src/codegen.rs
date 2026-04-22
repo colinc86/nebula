@@ -1858,7 +1858,14 @@ impl GoGen {
 
     fn gen_program(&mut self, program: &Program) -> String {
         // Collect imports by scanning the program
-        let pkg = self.package_name.as_deref().unwrap_or("main");
+        // Pick a package name: prefer an explicit override; otherwise use
+        // `main` only when there's an actual `main` function, since
+        // `package main` without `func main()` fails `go build`.
+        let has_main = program.statements.iter().any(|s| matches!(s,
+            Statement::FnDecl { name, .. } if name == "main"
+        ));
+        let pkg = self.package_name.as_deref()
+            .unwrap_or(if has_main { "main" } else { "probe" });
         let mut out = format!("package {}\n\n", pkg);
         let mut body = String::new();
         for stmt in &program.statements {
@@ -2195,6 +2202,17 @@ impl GoGen {
                 match c.as_str() {
                     "prt" | "print" | "println" => format!("fmt.Println({})", a.join(", ")),
                     "tsr" | "to_string" => format!("fmt.Sprint({})", a.join(", ")),
+                    // `fmt("format", args)` is Nebula-sugared printf — in Go
+                    // it's `fmt.Sprintf(...)`. If the wrapped call itself is
+                    // already `fmt.Sprintf(...)` (double-wrap from ingest),
+                    // unwrap.
+                    "fmt" | "format" => {
+                        if a.len() == 1 && a[0].starts_with("fmt.Sprintf(") {
+                            a[0].clone()
+                        } else {
+                            format!("fmt.Sprintf({})", a.join(", "))
+                        }
+                    }
                     "toi" | "to_int" => format!("int({})", a.join(", ")),
                     "tof" | "to_float" => format!("float64({})", a.join(", ")),
                     "ln" => format!("len({})", a.join(", ")),
@@ -5535,7 +5553,11 @@ mod tests {
 
     #[test]
     fn test_go_package_header() {
+        // Programs without a `main` function are libraries; default to
+        // `package probe` (same as `go build`-friendly non-main).
         let go = translate_go("lt x = 1");
+        assert!(go.starts_with("package probe"));
+        let go = translate_go("fn main() { prt(1) }");
         assert!(go.starts_with("package main"));
     }
 

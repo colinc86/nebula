@@ -99,6 +99,162 @@ pub fn from_nebula(nebula: &str, lang: Language) -> Result<String, String> {
     Ok(gen_target(&program, lang))
 }
 
+/// Path-aware Nebula → native translation.
+///
+/// Iter-24 Bug A fix: for Go output, derives the target package name from
+/// `target_path`'s directory (by scanning sibling `*.go` files for their
+/// `package X` declaration). All other languages fall through to the normal
+/// `from_nebula` pipeline.
+///
+/// This compensates for the Go ingester discarding `package_clause` as a
+/// Nebula comment, which means round-tripping `package gdsp` → Nebula →
+/// Go previously always yielded `package main`.
+pub fn from_nebula_to_path(
+    nebula: &str,
+    lang: Language,
+    target_path: &str,
+) -> Result<String, String> {
+    if lang != Language::Go {
+        return from_nebula(nebula, lang);
+    }
+
+    // Expand + parse (same as from_nebula).
+    if lang == Language::Nebula || lang == Language::Unknown {
+        return Ok(nebula.to_string());
+    }
+    let expanded = if nebula.starts_with("@map{") || nebula.starts_with("@std{") {
+        compactor::expand(nebula)
+    } else {
+        nebula.to_string()
+    };
+    let braced = indent_to_braces(&expanded);
+    let tokens = lexer::tokenize(&braced)
+        .map_err(|e| format!("Lex error at {}:{}: {}", e.line, e.col, e.message))?;
+    let program = parser::parse(tokens)
+        .map_err(|e| format!("Parse error at {}:{}: {}", e.line, e.col, e.message))?;
+
+    let pkg = derive_go_package(target_path);
+    Ok(codegen::to_go_with_package(&program, pkg.as_deref()))
+}
+
+/// Derive a Go `package` name from the directory of `target_path`.
+///
+/// Strategy:
+/// 1. Scan sibling `*.go` files (excluding `*_test.go` and `target_path`
+///    itself) for their `package X` declaration.
+/// 2. If all agree on a name, return it.
+/// 3. If they disagree, emit a stderr warning and use the first.
+/// 4. If no siblings exist, fall back to a sanitized form of the directory
+///    name (lowercase ASCII-alnum; reserved words get a trailing underscore).
+/// 5. If `target_path` is empty or lacks a parent, return `None` so the
+///    caller defaults to `"main"`.
+fn derive_go_package(target_path: &str) -> Option<String> {
+    use std::fs;
+    use std::path::Path;
+
+    if target_path.is_empty() || target_path == "-" {
+        return None;
+    }
+    let path = Path::new(target_path);
+    let parent = path.parent()?;
+
+    // Scan siblings for `package X` in their first non-comment, non-blank line.
+    let mut seen: Vec<String> = Vec::new();
+    if let Ok(entries) = fs::read_dir(parent) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p == path {
+                continue;
+            }
+            let fname = match p.file_name().and_then(|s| s.to_str()) {
+                Some(n) => n,
+                None => continue,
+            };
+            if !fname.ends_with(".go") || fname.ends_with("_test.go") {
+                continue;
+            }
+            if let Ok(contents) = fs::read_to_string(&p) {
+                for line in contents.lines() {
+                    let t = line.trim();
+                    if t.is_empty() || t.starts_with("//") || t.starts_with("/*") {
+                        continue;
+                    }
+                    if let Some(rest) = t.strip_prefix("package ") {
+                        let name = rest.trim().trim_end_matches(';').to_string();
+                        if !name.is_empty() && !seen.contains(&name) {
+                            seen.push(name);
+                        }
+                        break;
+                    }
+                    break; // first meaningful line wasn't a package clause; skip file
+                }
+            }
+        }
+    }
+
+    match seen.len() {
+        0 => {
+            // Dirname fallback.
+            let dir_name = parent
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+            Some(sanitize_go_package_name(&dir_name))
+        }
+        1 => Some(seen.remove(0)),
+        _ => {
+            eprintln!(
+                "nebula: warning — mixed Go package names in {}: {:?}; using first ('{}')",
+                parent.display(),
+                seen,
+                seen[0]
+            );
+            Some(seen.remove(0))
+        }
+    }
+}
+
+/// Sanitize a directory name into a Go-compatible package identifier.
+/// Strips non-alphanumeric characters, lowercases, guards against reserved
+/// keywords and empty results.
+fn sanitize_go_package_name(raw: &str) -> String {
+    let cleaned: String = raw
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect::<String>()
+        .to_ascii_lowercase();
+
+    if cleaned.is_empty() {
+        return "main".to_string();
+    }
+
+    // Leading digit is illegal for Go identifiers.
+    let cleaned = if cleaned
+        .chars()
+        .next()
+        .map(|c| c.is_ascii_digit())
+        .unwrap_or(false)
+    {
+        format!("pkg{}", cleaned)
+    } else {
+        cleaned
+    };
+
+    // Guard against Go reserved words.
+    const GO_KEYWORDS: &[&str] = &[
+        "break", "case", "chan", "const", "continue", "default", "defer",
+        "else", "fallthrough", "for", "func", "go", "goto", "if", "import",
+        "interface", "map", "package", "range", "return", "select", "struct",
+        "switch", "type", "var",
+    ];
+    if GO_KEYWORDS.contains(&cleaned.as_str()) {
+        format!("{}_", cleaned)
+    } else {
+        cleaned
+    }
+}
+
 /// Convert Nebula to target language with graceful fallback.
 ///
 /// Tries the full lex→parse→codegen pipeline first. If parsing fails
@@ -134,7 +290,26 @@ fn text_level_translate(nebula: &str, lang: Language) -> String {
             ("rt", "return"), ("fo", "for"), ("wl", "for"),
             ("sf", "this"),
             ("True", "true"), ("False", "false"), ("None", "nil"),
-            ("Str", "string"), ("Int", "int"), ("Bool", "bool"), ("Float", "float64"),
+            // Primitive types. Word-boundary semantics of
+            // replace_word_outside_strings let "Int64" stay distinct from "Int"
+            // (see test `word_boundary_protects_partial_matches`), so ordering
+            // doesn't matter. Keep this table in sync with GoGen::gen_type's
+            // TypeExpr::Named arms in codegen.rs.
+            ("Str", "string"), ("String", "string"),
+            ("Int", "int"),
+            ("Int8", "int8"), ("Int16", "int16"), ("Int32", "int32"), ("Int64", "int64"),
+            ("Uint", "uint"),
+            ("Uint8", "uint8"), ("Uint16", "uint16"), ("Uint32", "uint32"), ("Uint64", "uint64"),
+            ("Byte", "byte"), ("Rune", "rune"),
+            ("Bool", "bool"),
+            ("Float", "float64"), ("Float32", "float32"), ("Float64", "float64"),
+            ("Complex64", "complex64"), ("Complex128", "complex128"),
+            ("Any", "interface{}"), ("Error", "error"),
+            // Qualified-type merges mirror gen_type's reverse table.
+            ("TimeTime", "time.Time"), ("TimeDuration", "time.Duration"),
+            ("SyncMutex", "sync.Mutex"), ("SyncRWMutex", "sync.RWMutex"),
+            ("SyncWaitGroup", "sync.WaitGroup"),
+            ("StringsBuilder", "strings.Builder"),
         ],
         Language::JavaScript | Language::TypeScript => &[
             ("def", "function"), ("fn", "function"),
@@ -200,7 +375,7 @@ fn is_word_char(c: char) -> bool {
 /// word char (or the match is at the start of input), and the character after
 /// the match is not a word char (or end of input). String literals are
 /// detected by `"`/`'` quote pairs with `\` escaping.
-fn replace_word_outside_strings(text: &str, from: &str, to: &str) -> String {
+pub(crate) fn replace_word_outside_strings(text: &str, from: &str, to: &str) -> String {
     if from.is_empty() {
         return text.to_string();
     }
@@ -285,6 +460,38 @@ mod text_translate_tests {
         let input = "function fnord";
         let output = replace_word_outside_strings(input, "fn", "def");
         assert_eq!(output, "function fnord");
+    }
+
+    // Iter-24 Bug B regression guards: width-specific Nebula type tokens must
+    // lower to their native Go counterparts when the AST pipeline falls back to
+    // text-level translation.
+    #[test]
+    fn float64_lowers_in_go_text_fallback() {
+        let input = "fn avg(x: Float64) -> Float64:\n    rt x";
+        let output = text_level_translate(input, Language::Go);
+        assert!(output.contains("float64"), "Float64 must lower to float64: {}", output);
+        assert!(!output.contains("Float64"), "Float64 must not leak: {}", output);
+    }
+
+    #[test]
+    fn int64_lowers_in_go_text_fallback() {
+        let input = "lt x: Int64 = 0";
+        let output = text_level_translate(input, Language::Go);
+        assert!(output.contains("int64"), "Int64 must lower to int64: {}", output);
+        assert!(!output.contains("Int64"), "Int64 must not leak: {}", output);
+    }
+
+    #[test]
+    fn int_still_lowers_when_int64_is_present() {
+        // Both Int and Int64 should survive side-by-side thanks to word boundaries.
+        let input = "fn f(a: Int, b: Int64) -> Int:\n    rt a";
+        let output = text_level_translate(input, Language::Go);
+        assert!(output.contains("int64"), "Int64: {}", output);
+        // After Int → int, we should have the literal `int`; `int64` contains
+        // `int` as a prefix so this is a containment check, not a word-boundary
+        // assertion.
+        assert!(output.matches("int").count() >= 2, "Int should also lower: {}", output);
+        assert!(!output.contains("Int64"), "leak: {}", output);
     }
 }
 
