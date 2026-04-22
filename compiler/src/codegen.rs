@@ -3443,6 +3443,14 @@ impl KotlinGen {
                 if ps.is_empty() { format!("{{ {} }}", self.gen_expr(body)) }
                 else { format!("{{ {} -> {} }}", ps.join(", "), self.gen_expr(body)) }
             }
+            Expr::Block(block) => {
+                let mut out = String::from("{\n");
+                self.indent += 1;
+                out.push_str(&self.gen_block_inner(block, false));
+                self.indent -= 1;
+                out.push_str(&format!("{}}}", self.ind()));
+                out
+            }
             Expr::If { condition, then_block, else_block } => {
                 if let (Some(te), Some(eb)) = (&then_block.expr, else_block) {
                     if then_block.statements.is_empty() {
