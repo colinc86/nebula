@@ -533,6 +533,13 @@ impl Interpreter {
                 Ok(Value::Break(Box::new(val)))
             }
             Statement::Continue => Ok(Value::Continue),
+            Statement::Throw(expr) => {
+                let val = match expr {
+                    Some(e) => self.eval_expr(e)?,
+                    None => Value::Nil,
+                };
+                Err(RuntimeError { message: format!("Uncaught exception: {:?}", val) })
+            }
             Statement::Assignment { target, op, value } => {
                 let new_val = self.eval_expr(value)?;
                 match target {
@@ -942,6 +949,46 @@ impl Interpreter {
                             idx.type_name()
                         ),
                     }),
+                }
+            }
+
+            Expr::Slice { object, start, end } => {
+                let obj = self.eval_expr(object)?;
+                // Resolve start/end, defaulting to [0, len].
+                let len = match &obj {
+                    Value::List(items) => items.len(),
+                    Value::String(s) => s.chars().count(),
+                    _ => return Err(RuntimeError {
+                        message: format!("Cannot slice {}", obj.type_name()),
+                    }),
+                };
+                let s_idx = match start.as_ref() {
+                    Some(e) => match self.eval_expr(e)? {
+                        Value::Int(i) => self.resolve_index(i, len),
+                        v => return Err(RuntimeError {
+                            message: format!("Slice start must be int, got {}", v.type_name()),
+                        }),
+                    },
+                    None => 0,
+                };
+                let e_idx = match end.as_ref() {
+                    Some(e) => match self.eval_expr(e)? {
+                        Value::Int(i) => self.resolve_index(i, len).min(len),
+                        v => return Err(RuntimeError {
+                            message: format!("Slice end must be int, got {}", v.type_name()),
+                        }),
+                    },
+                    None => len,
+                };
+                let s_idx = s_idx.min(len);
+                let e_idx = e_idx.max(s_idx);
+                match obj {
+                    Value::List(items) => Ok(Value::List(items[s_idx..e_idx].to_vec())),
+                    Value::String(s) => {
+                        let chars: Vec<char> = s.chars().collect();
+                        Ok(Value::String(chars[s_idx..e_idx].iter().collect()))
+                    }
+                    _ => unreachable!(),
                 }
             }
 

@@ -4,6 +4,33 @@
 use crate::ast::*;
 use crate::lexer::{StringPart, Token};
 
+/// snake_case → camelCase. Idempotent on already-camelCase input.
+fn snake_to_camel(s: &str) -> String {
+    if !s.contains('_') { return s.to_string(); }
+    let mut out = String::new();
+    let mut up = false;
+    for ch in s.chars() {
+        if ch == '_' { up = true; continue; }
+        if up {
+            out.extend(ch.to_uppercase());
+            up = false;
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// snake_case or lowercase → PascalCase (TitleCase first char + camelCase rest).
+fn snake_to_pascal(s: &str) -> String {
+    let camel = snake_to_camel(s);
+    let mut chars = camel.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(c) => c.to_uppercase().chain(chars).collect(),
+    }
+}
+
 /// Convert an interpolation token to target language text.
 /// `self_keyword` controls what `sf` maps to in the target language.
 fn interpolation_token_to_target(tok: &Token, self_keyword: &str) -> String {
@@ -30,7 +57,13 @@ fn interpolation_token_to_target(tok: &Token, self_keyword: &str) -> String {
             }).collect();
             format!("\"{inner}\"")
         }
-        Token::Colon => ": ".into(),
+        // Tight colon — the canonical case inside interpolation is the Python
+        // f-string format spec `{x:.2f}` where any space would corrupt the
+        // spec. Pre-spaced forms like `{a, b}` already separate with Comma.
+        Token::Colon => ":".into(),
+        // `=` appears in Python's f-string debug form `{name=}`. Without
+        // this arm it fell through to "?" (observed: `{name=}` → `{name?}`).
+        Token::Assign => "=".into(),
         _ => "?".into(),
     }
 }
@@ -62,7 +95,8 @@ pub fn interpolation_token_to_nebula(tok: &Token) -> String {
             }).collect();
             format!("\"{inner}\"")
         }
-        Token::Colon => ": ".into(),
+        Token::Colon => ":".into(),
+        Token::Assign => "=".into(),
         Token::Eq => " == ".into(),
         Token::Less => " < ".into(),
         Token::Greater => " > ".into(),
@@ -86,7 +120,22 @@ pub fn to_javascript(program: &Program) -> String {
 }
 
 pub fn to_go(program: &Program) -> String {
-    let mut gen = GoGen { indent: 0 };
+    let mut gen = GoGen { indent: 0, package_name: None, scopes: vec![std::collections::HashSet::new()] };
+    gen.gen_program(program)
+}
+
+/// Generate Go source with an explicit package name. Iter-24 Bug A fix: the
+/// Go ingester discards package declarations (converts them to Nebula
+/// comments), so the package name can't be round-tripped. Callers that know
+/// the target file's directory (e.g. `tool_write_code` in mcp.rs) can derive
+/// the package name from sibling files and pass it here. Default `to_go`
+/// remains `package main`.
+pub fn to_go_with_package(program: &Program, package_name: Option<&str>) -> String {
+    let mut gen = GoGen {
+        indent: 0,
+        package_name: package_name.map(str::to_owned),
+        scopes: vec![std::collections::HashSet::new()],
+    };
     gen.gen_program(program)
 }
 
@@ -96,7 +145,7 @@ pub fn to_swift(program: &Program) -> String {
 }
 
 pub fn to_kotlin(program: &Program) -> String {
-    let mut gen = KotlinGen { indent: 0 };
+    let mut gen = KotlinGen { indent: 0, scopes: vec![std::collections::HashSet::new()] };
     gen.gen_program(program)
 }
 
@@ -106,12 +155,12 @@ pub fn to_typescript(program: &Program) -> String {
 }
 
 pub fn to_rust_lang(program: &Program) -> String {
-    let mut gen = RustGen { indent: 0 };
+    let mut gen = RustGen { indent: 0, scopes: vec![std::collections::HashSet::new()], enum_struct_variants: std::collections::HashMap::new(), all_enum_variants: std::collections::HashSet::new(), current_fn_returns_string: false };
     gen.gen_program(program)
 }
 
 pub fn to_c(program: &Program) -> String {
-    let mut gen = CGen { indent: 0 };
+    let mut gen = CGen { indent: 0, scopes: vec![std::collections::HashSet::new()] };
     gen.gen_program(program)
 }
 
@@ -264,6 +313,8 @@ impl PythonGen {
             Statement::Return(None) => format!("{}return", self.ind()),
             Statement::Break(_) => format!("{}break", self.ind()),
             Statement::Continue => format!("{}continue", self.ind()),
+            Statement::Throw(Some(e)) => format!("{}raise {}", self.ind(), self.gen_expr(e)),
+            Statement::Throw(None) => format!("{}raise", self.ind()),
             Statement::Assignment { target, op, value } => {
                 let op_str = match op {
                     AssignOp::Assign => "=",
@@ -297,9 +348,12 @@ impl PythonGen {
             Statement::TypeAlias { name, type_expr } => {
                 format!("{}{} = {}", self.ind(), name, self.gen_type(type_expr))
             }
-            Statement::EnumDecl { .. }
-            | Statement::TraitDecl { .. }
-            | Statement::Module { .. } => {
+            Statement::Module { .. } => {
+                // Python has no file-level module statement — module identity
+                // is derived from the filesystem path. Emit nothing.
+                String::new()
+            }
+            Statement::EnumDecl { .. } | Statement::TraitDecl { .. } => {
                 format!("{}pass  # TODO: translate", self.ind())
             }
         }
@@ -331,8 +385,8 @@ impl PythonGen {
             if PythonGen::is_statement_expr(expr) {
                 // Control-flow "expressions" in Nebula translate to statements
                 // in Python — for/while/loop return unit, and multi-line
-                // if/match can't be wrapped in `return`.
-                out.push_str(&self.ind());
+                // if/match can't be wrapped in `return`. The expression's own
+                // gen_expr prepends its leading indent, so we don't.
                 out.push_str(&self.gen_expr(expr));
                 if !out.ends_with('\n') {
                     out.push('\n');
@@ -356,7 +410,8 @@ impl PythonGen {
             Expr::For { .. }
             | Expr::While { .. }
             | Expr::Loop { .. }
-            | Expr::TryCatch { .. } => true,
+            | Expr::TryCatch { .. }
+            | Expr::Match { .. } => true,
             // Multi-line if/match can't be wrapped in `return`. The ternary
             // fast-path in gen_expr handles pure-value ifs before we get here.
             Expr::If { then_block, else_block, .. } => {
@@ -601,7 +656,24 @@ impl PythonGen {
             }
 
             Expr::Index { object, index } => {
+                // Legacy `xs[a..b]` (Index with a Range inside) → Python slice.
+                if let Expr::Range { start, end, inclusive } = index.as_ref() {
+                    let s = self.gen_expr(start);
+                    let e = self.gen_expr(end);
+                    let end_str = if *inclusive {
+                        format!("{} + 1", e)
+                    } else {
+                        e
+                    };
+                    return format!("{}[{}:{}]", self.gen_expr(object), s, end_str);
+                }
                 format!("{}[{}]", self.gen_expr(object), self.gen_expr(index))
+            }
+
+            Expr::Slice { object, start, end } => {
+                let s = start.as_ref().map(|e| self.gen_expr(e)).unwrap_or_default();
+                let e_s = end.as_ref().map(|e| self.gen_expr(e)).unwrap_or_default();
+                format!("{}[{}:{}]", self.gen_expr(object), s, e_s)
             }
 
             Expr::Lambda { params, body } => {
@@ -648,7 +720,7 @@ impl PythonGen {
             }
 
             Expr::Match { subject, arms } => {
-                let mut out = format!("match {}:\n", self.gen_expr(subject));
+                let mut out = format!("{}match {}:\n", self.ind(), self.gen_expr(subject));
                 self.indent += 1;
                 for arm in arms {
                     let pat = self.gen_pattern(&arm.pattern);
@@ -664,11 +736,19 @@ impl PythonGen {
                         guard
                     ));
                     self.indent += 1;
-                    out.push_str(&format!(
-                        "{}return {}\n",
-                        self.ind(),
-                        self.gen_expr(&arm.body)
-                    ));
+                    // Match-arm body can be a Block — emit each statement
+                    // directly rather than wrapping the block in `return`,
+                    // which would hit the Block-as-expr catch-all and
+                    // emit `(...)`.
+                    if let Expr::Block(b) = &arm.body {
+                        out.push_str(&self.gen_block_body(b));
+                    } else {
+                        out.push_str(&format!(
+                            "{}return {}\n",
+                            self.ind(),
+                            self.gen_expr(&arm.body)
+                        ));
+                    }
                     self.indent -= 1;
                 }
                 self.indent -= 1;
@@ -846,7 +926,24 @@ impl PythonGen {
                     )
                 }
             }
-            Pattern::Variant(name, _) => name.clone(),
+            Pattern::Variant(name, subs) => {
+                let children: Vec<String> = subs.iter().map(|p| self.gen_pattern(p)).collect();
+                match name.as_str() {
+                    "(tuple)" => format!("({})", children.join(", ")),
+                    "[array]" => format!("[{}]", children.join(", ")),
+                    // Map-pattern key info is lost in Nebula's grammar — fall
+                    // back to wildcard so the arm body still runs.
+                    "{map}" => "_".to_string(),
+                    n if n.starts_with('.') => {
+                        if subs.is_empty() { n[1..].to_string() }
+                        else { format!("{}({})", &n[1..], children.join(", ")) }
+                    }
+                    n => {
+                        if subs.is_empty() { n.to_string() }
+                        else { format!("{}({})", n, children.join(", ")) }
+                    }
+                }
+            }
         }
     }
 }
@@ -866,10 +963,83 @@ impl JsGen {
 
     fn gen_program(&mut self, program: &Program) -> String {
         let mut out = String::new();
-        for stmt in &program.statements {
+        // Pair StructDecl with its ImplBlock and emit ES6 class for each.
+        let mut consumed: Vec<bool> = vec![false; program.statements.len()];
+        for (i, stmt) in program.statements.iter().enumerate() {
+            if consumed[i] { continue; }
+            if let Statement::StructDecl { name, fields, .. } = stmt {
+                // Find a matching ImplBlock in the rest of the program.
+                let mut impl_idx: Option<usize> = None;
+                for (j, s2) in program.statements.iter().enumerate().skip(i + 1) {
+                    if let Statement::ImplBlock { target, .. } = s2 {
+                        if target == name { impl_idx = Some(j); break; }
+                    }
+                }
+                if let Some(j) = impl_idx {
+                    let methods = if let Statement::ImplBlock { methods, .. } = &program.statements[j] { methods.clone() } else { vec![] };
+                    out.push_str(&self.gen_class_for_struct(name, fields, &methods));
+                    out.push('\n');
+                    consumed[i] = true;
+                    consumed[j] = true;
+                    continue;
+                }
+            }
+            // ImplBlock without preceding StructDecl: emit class with no fields.
+            if let Statement::ImplBlock { target, methods, .. } = stmt {
+                out.push_str(&self.gen_class_for_struct(target, &[], methods));
+                out.push('\n');
+                consumed[i] = true;
+                continue;
+            }
             out.push_str(&self.gen_statement(stmt));
             out.push('\n');
         }
+        out
+    }
+
+    fn gen_class_for_struct(&mut self, name: &str, fields: &[crate::ast::Field], methods: &[Statement]) -> String {
+        let mut out = format!("{}class {} {{\n", self.ind(), name);
+        self.indent += 1;
+        // Emit constructor — either from struct fields or from a method named `new`/`constructor`.
+        let new_method = methods.iter().find(|m| matches!(m, Statement::FnDecl { name, .. } if name == "new" || name == "constructor"));
+        if let Some(Statement::FnDecl { params, body, .. }) = new_method {
+            let ps: Vec<String> = params.iter().filter(|p| p.name != "sf").map(|p| p.name.clone()).collect();
+            out.push_str(&format!("{}constructor({}) {{\n", self.ind(), ps.join(", ")));
+            self.indent += 1;
+            // body — emit raw statements without `return` wrapping
+            for s in &body.statements {
+                out.push_str(&self.gen_statement(s));
+                out.push('\n');
+            }
+            if let Some(e) = &body.expr {
+                out.push_str(&format!("{}{};\n", self.ind(), self.gen_expr(e)));
+            }
+            self.indent -= 1;
+            out.push_str(&format!("{}}}\n", self.ind()));
+        } else if !fields.is_empty() {
+            let names: Vec<&str> = fields.iter().map(|f| f.name.as_str()).collect();
+            out.push_str(&format!("{}constructor({}) {{\n", self.ind(), names.join(", ")));
+            self.indent += 1;
+            for n in &names { out.push_str(&format!("{}this.{n} = {n};\n", self.ind())); }
+            self.indent -= 1;
+            out.push_str(&format!("{}}}\n", self.ind()));
+        }
+        // Other methods.
+        for m in methods {
+            if let Statement::FnDecl { name: mname, params, body, .. } = m {
+                if mname == "new" || mname == "constructor" { continue; }
+                let has_self = params.iter().any(|p| p.name == "sf");
+                let ps: Vec<String> = params.iter().filter(|p| p.name != "sf").map(|p| p.name.clone()).collect();
+                let prefix = if has_self { "" } else { "static " };
+                out.push_str(&format!("{}{}{}({}) {{\n", self.ind(), prefix, mname, ps.join(", ")));
+                self.indent += 1;
+                out.push_str(&self.gen_block_body(body));
+                self.indent -= 1;
+                out.push_str(&format!("{}}}\n", self.ind()));
+            }
+        }
+        self.indent -= 1;
+        out.push_str(&format!("{}}}", self.ind()));
         out
     }
 
@@ -987,6 +1157,8 @@ impl JsGen {
             Statement::Return(None) => format!("{}return;", self.ind()),
             Statement::Break(_) => format!("{}break;", self.ind()),
             Statement::Continue => format!("{}continue;", self.ind()),
+            Statement::Throw(Some(e)) => format!("{}throw {};", self.ind(), self.gen_expr(e)),
+            Statement::Throw(None) => format!("{}throw;", self.ind()),
             Statement::Assignment { target, op, value } => {
                 let op_str = match op {
                     AssignOp::Assign => "=",
@@ -1018,9 +1190,13 @@ impl JsGen {
             Statement::TypeAlias { name, .. } => {
                 format!("{}// type {} = ...", self.ind(), name)
             }
-            Statement::EnumDecl { .. }
-            | Statement::TraitDecl { .. }
-            | Statement::Module { .. } => {
+            Statement::Module { path } => {
+                // JS/TS modules are file-scoped; no explicit module statement.
+                // Leave an informational comment so round-trips don't lose the
+                // module hint, but don't emit anything that affects semantics.
+                format!("{}// module {}", self.ind(), path.join("."))
+            }
+            Statement::EnumDecl { .. } | Statement::TraitDecl { .. } => {
                 format!("{}// TODO: translate", self.ind())
             }
         }
@@ -1036,10 +1212,10 @@ impl JsGen {
             // Don't add return before statement-like expressions
             let is_stmt_like = matches!(expr.as_ref(),
                 Expr::For { .. } | Expr::While { .. } | Expr::Loop { .. }
-                | Expr::If { .. } | Expr::Match { .. }
+                | Expr::If { .. } | Expr::Match { .. } | Expr::TryCatch { .. }
             );
             if is_stmt_like {
-                out.push_str(&format!("{}{};\n", self.ind(), self.gen_expr(expr)));
+                out.push_str(&format!("{}{}\n", self.ind(), self.gen_expr(expr)));
             } else {
                 out.push_str(&format!("{}return {};\n", self.ind(), self.gen_expr(expr)));
             }
@@ -1197,6 +1373,17 @@ impl JsGen {
 
             Expr::Index { object, index } => {
                 format!("{}[{}]", self.gen_expr(object), self.gen_expr(index))
+            }
+
+            Expr::Slice { object, start, end } => {
+                // JS: no slice-subscript syntax; use .slice(start, end).
+                let obj = self.gen_expr(object);
+                match (start.as_ref(), end.as_ref()) {
+                    (None, None) => format!("{}.slice()", obj),
+                    (Some(s), None) => format!("{}.slice({})", obj, self.gen_expr(s)),
+                    (None, Some(e)) => format!("{}.slice(0, {})", obj, self.gen_expr(e)),
+                    (Some(s), Some(e)) => format!("{}.slice({}, {})", obj, self.gen_expr(s), self.gen_expr(e)),
+                }
             }
 
             Expr::Lambda { params, body } => {
@@ -1485,18 +1672,61 @@ impl JsGen {
 
 struct GoGen {
     indent: usize,
+    /// Iter-24 Bug A: overrides the hard-coded `package main` when set. Driven
+    /// from `to_go_with_package` / `lang_detect::from_nebula_to_path`.
+    package_name: Option<String>,
+    /// Stack of declared names per scope. Nebula's bare `x = 5` is a
+    /// new-declaration-or-reassignment; Go requires explicit `:=` on first
+    /// use. First-use simple-ident Assignment gets promoted to `x := v`.
+    scopes: Vec<std::collections::HashSet<String>>,
 }
 
 impl GoGen {
     fn ind(&self) -> String { "\t".repeat(self.indent) }
+    fn is_declared(&self, name: &str) -> bool {
+        self.scopes.iter().any(|s| s.contains(name))
+    }
+    fn declare(&mut self, name: &str) {
+        if let Some(top) = self.scopes.last_mut() { top.insert(name.to_string()); }
+    }
+
+    /// Recognise common Go stdlib packages so we can PascalCase their members.
+    fn is_go_stdlib_pkg(name: &str) -> bool {
+        matches!(name, "fmt" | "strings" | "strconv" | "os" | "io" | "errors"
+            | "sort" | "time" | "bytes" | "math" | "unicode" | "bufio"
+            | "regexp" | "filepath" | "json" | "log" | "encoding"
+            | "context" | "sync" | "atomic" | "reflect" | "runtime"
+            | "http" | "url" | "ioutil" | "syscall" | "path"
+            | "rand" | "binary" | "base64" | "hex" | "csv"
+            | "image" | "color")
+    }
 
     fn gen_type(&self, ty: &TypeExpr) -> String {
         match ty {
             TypeExpr::Named(n) => match n.as_str() {
+                // Iter-24 Bug B fix: width-specific numeric types must lower
+                // to their Go native forms. Previously these fell through the
+                // `other => other.to_string()` catch-all and leaked into
+                // output as `Float64`, `Int64`, etc. Keep this list in sync
+                // with the Go arm of text_level_translate in lang_detect.rs.
                 "Int" => "int".into(),
-                "Float" => "float64".into(),
+                "Int8" => "int8".into(),
+                "Int16" => "int16".into(),
+                "Int32" => "int32".into(),
+                "Int64" => "int64".into(),
+                "Uint" => "uint".into(),
+                "Uint8" | "Byte" => "byte".into(),
+                "Uint16" => "uint16".into(),
+                "Uint32" => "uint32".into(),
+                "Uint64" => "uint64".into(),
+                "Rune" => "rune".into(),
+                "Float" | "Float64" => "float64".into(),
+                "Float32" => "float32".into(),
+                "Complex64" => "complex64".into(),
+                "Complex128" => "complex128".into(),
                 "Bool" => "bool".into(),
                 "String" | "Str" => "string".into(),
+                "Any" => "interface{}".into(),
                 "Error" => "error".into(),
                 // Reverse qualified type merging: TimeTime → time.Time, SyncWaitGroup → sync.WaitGroup
                 "TimeTime" => "time.Time".into(),
@@ -1536,7 +1766,8 @@ impl GoGen {
 
     fn gen_program(&mut self, program: &Program) -> String {
         // Collect imports by scanning the program
-        let mut out = "package main\n\n".to_string();
+        let pkg = self.package_name.as_deref().unwrap_or("main");
+        let mut out = format!("package {}\n\n", pkg);
         // We'll add imports after scanning
         let mut body = String::new();
         for stmt in &program.statements {
@@ -1567,9 +1798,14 @@ impl GoGen {
         match stmt {
             Statement::Let { name, value, type_ann, .. } | Statement::Const { name, value, type_ann, .. } => {
                 let ty = type_ann.as_ref().map(|t| self.gen_type(t));
-                match ty {
-                    Some(t) => format!("{}var {} {} = {}", self.ind(), name, t, self.gen_expr(value)),
-                    None => format!("{}{} := {}", self.ind(), name, self.gen_expr(value)),
+                let v = self.gen_expr(value);
+                self.declare(name);
+                let top_level = self.indent == 0;
+                match (top_level, ty) {
+                    (true, Some(t)) => format!("var {} {} = {}", name, t, v),
+                    (true, None) => format!("const {} = {}", name, v),
+                    (false, Some(t)) => format!("{}var {} {} = {}", self.ind(), name, t, v),
+                    (false, None) => format!("{}{} := {}", self.ind(), name, v),
                 }
             }
             Statement::Mut { name, value, type_ann, .. } => {
@@ -1591,6 +1827,7 @@ impl GoGen {
                 }
                 let val = self.gen_expr(value);
                 let ty = type_ann.as_ref().map(|t| self.gen_type(t));
+                self.declare(name);
                 match ty {
                     Some(t) => format!("{}var {} {} = {}", self.ind(), name, t, val),
                     None => {
@@ -1610,10 +1847,13 @@ impl GoGen {
                 let ret = return_type.as_ref()
                     .map(|t| format!(" {}", self.gen_type(t)))
                     .unwrap_or_default();
+                self.scopes.push(std::collections::HashSet::new());
+                for p in params { self.declare(&p.name); }
                 let mut out = format!("{}func {}({}){} {{\n", self.ind(), name, ps.join(", "), ret);
                 self.indent += 1;
                 out.push_str(&self.gen_block(body));
                 self.indent -= 1;
+                self.scopes.pop();
                 out.push_str(&format!("{}}}\n", self.ind()));
                 out
             }
@@ -1701,12 +1941,44 @@ impl GoGen {
                     AssignOp::SubAssign => "-=", AssignOp::MulAssign => "*=",
                     AssignOp::DivAssign => "/=", AssignOp::ModAssign => "%=",
                 };
+                // Nebula bare `x = 5` at first use becomes Go `x := 5`.
+                // Subsequent reassigns stay `x = 5`.
+                if matches!(op, AssignOp::Assign) {
+                    if let Expr::Ident(name) = target {
+                        if !self.is_declared(name) {
+                            let v = self.gen_expr(value);
+                            self.declare(name);
+                            return format!("{}{} := {}", self.ind(), name, v);
+                        }
+                    }
+                }
                 format!("{}{} {} {}", self.ind(), self.gen_expr(target), o, self.gen_expr(value))
             }
             Statement::Break(_) => format!("{}break", self.ind()),
             Statement::Continue => format!("{}continue", self.ind()),
+            Statement::Throw(Some(e)) => format!("{}panic({})", self.ind(), self.gen_expr(e)),
+            Statement::Throw(None) => format!("{}panic(\"error\")", self.ind()),
             Statement::LetDestructure { names, value, .. } => {
                 format!("{}{} := {}", self.ind(), names.join(", "), self.gen_expr(value))
+            }
+            // Iter-24 Bug D: explicit handlers for Use/Module so these don't
+            // fall through to the TODO catch-all (which silently corrupts file
+            // output). gen_program also collects imports by scanning the body
+            // for `fmt.`, `strings.` etc., so these may be redundant with the
+            // auto-import block — goimports would dedupe, but we emit them
+            // anyway to preserve the explicit intent.
+            Statement::Use { path, alias, .. } => {
+                let joined = path.join("/");
+                if let Some(alias) = alias {
+                    format!("{}import {} \"{}\"", self.ind(), alias, joined)
+                } else {
+                    format!("{}import \"{}\"", self.ind(), joined)
+                }
+            }
+            Statement::Module { .. } => {
+                // Package declaration is emitted by gen_program (see Bug A
+                // fix via package_name), not as a statement.
+                String::new()
             }
             _ => format!("{}// TODO: {:?}", self.ind(), std::mem::discriminant(stmt)),
         }
@@ -1727,6 +1999,7 @@ impl GoGen {
                 }
             }
         }
+        self.scopes.pop();
         out
     }
 
@@ -1744,7 +2017,7 @@ impl GoGen {
                         StringPart::Interpolation(tokens) => {
                             out.push_str("%v");
                             let a: String = tokens.iter().map(|t| {
-                                interpolation_token_to_target(t, "self")
+                                interpolation_token_to_target(t, "sf")
                             }).collect();
                             args.push(a);
                         }
@@ -1820,20 +2093,44 @@ impl GoGen {
             Expr::MethodCall { object, method, args } => {
                 let a: Vec<String> = args.iter().map(|a| self.gen_expr(&a.value)).collect();
                 let obj = self.gen_expr(object);
-                // Reverse Nebula method translations back to Go builtins
                 match method.as_str() {
                     "remove" => format!("delete({}, {})", obj, a.join(", ")),
                     "send" => format!("{} <- {}", obj, a.join(", ")),
                     "recv" => format!("<-{}", obj),
                     "close" => format!("close({})", obj),
-                    _ => format!("{}.{}({})", obj, method, a.join(", ")),
+                    // `out.append(x)` → `out = append(out, x)` in Go —
+                    // append is a builtin, not a method, and returns a new
+                    // slice. Emit the assign so the caller's slice is
+                    // actually extended.
+                    "append" => {
+                        let mut all_args = vec![obj.clone()];
+                        all_args.extend(a);
+                        format!("{} = append({})", obj, all_args.join(", "))
+                    }
+                    "len" if a.is_empty() => format!("len({})", obj),
+                    "cap" if a.is_empty() => format!("cap({})", obj),
+                    _ => {
+                        let m = if Self::is_go_stdlib_pkg(&obj) {
+                            snake_to_pascal(method)
+                        } else { method.clone() };
+                        format!("{}.{}({})", obj, m, a.join(", "))
+                    }
                 }
             }
             Expr::FieldAccess { object, field } => {
-                // Preserve field names as-is (Go struct fields keep original casing)
-                format!("{}.{}", self.gen_expr(object), field)
+                let obj = self.gen_expr(object);
+                let f = if Self::is_go_stdlib_pkg(&obj) {
+                    snake_to_pascal(field)
+                } else { field.clone() };
+                format!("{}.{}", obj, f)
             }
             Expr::Index { object, index } => format!("{}[{}]", self.gen_expr(object), self.gen_expr(index)),
+            Expr::Slice { object, start, end } => {
+                // Go: native `xs[a:b]`; either bound may be elided.
+                let s = start.as_ref().map(|e| self.gen_expr(e)).unwrap_or_default();
+                let e_s = end.as_ref().map(|e| self.gen_expr(e)).unwrap_or_default();
+                format!("{}[{}:{}]", self.gen_expr(object), s, e_s)
+            }
             Expr::Lambda { params, body } => {
                 let ps: Vec<String> = params.iter().map(|p| format!("{} {}", p.name, self.gen_param_type(p))).collect();
                 match body.as_ref() {
@@ -2050,8 +2347,18 @@ impl SwiftGen {
             }
             Statement::Break(_) => format!("{}break", self.ind()),
             Statement::Continue => format!("{}continue", self.ind()),
+            Statement::Throw(Some(e)) => format!("{}throw {}", self.ind(), self.gen_expr(e)),
+            Statement::Throw(None) => format!("{}throw NebulaError.unknown", self.ind()),
             Statement::LetDestructure { names, value, .. } => {
                 format!("{}({}) = {}", self.ind(), names.join(", "), self.gen_expr(value))
+            }
+            // Iter-24 Bug D: explicit Use/Module handlers for Swift.
+            Statement::Use { path, .. } => {
+                format!("{}import {}", self.ind(), path.first().cloned().unwrap_or_default())
+            }
+            Statement::Module { .. } => {
+                // Swift has no explicit module statement in source files.
+                String::new()
             }
             _ => format!("{}// TODO", self.ind()),
         }
@@ -2128,6 +2435,16 @@ impl SwiftGen {
             }
             Expr::FieldAccess { object, field } => format!("{}.{}", self.gen_expr(object), field),
             Expr::Index { object, index } => format!("{}[{}]", self.gen_expr(object), self.gen_expr(index)),
+            Expr::Slice { object, start, end } => {
+                // Swift: Array slicing via `xs[a..<b]` / `xs[..<b]` / `xs[a...]` / `xs[...]`.
+                let obj = self.gen_expr(object);
+                match (start.as_ref(), end.as_ref()) {
+                    (None, None) => format!("{}[...]", obj),
+                    (Some(s), None) => format!("{}[{}...]", obj, self.gen_expr(s)),
+                    (None, Some(e)) => format!("{}[..<{}]", obj, self.gen_expr(e)),
+                    (Some(s), Some(e)) => format!("{}[{}..<{}]", obj, self.gen_expr(s), self.gen_expr(e)),
+                }
+            }
             Expr::Lambda { params, body } => {
                 let ps: Vec<String> = params.iter().map(|p| format!("{}: Any", p.name)).collect();
                 format!("{{ ({}) -> Any in {} }}", ps.join(", "), self.gen_expr(body))
@@ -2146,8 +2463,12 @@ impl SwiftGen {
                 if let Some(eb) = else_block { out.push_str(" else {\n"); self.indent += 1; out.push_str(&self.gen_block(eb)); self.indent -= 1; out.push_str(&format!("{}}}", self.ind())); }
                 out
             }
-            Expr::For { binding, iterable, body, .. } => {
-                let mut out = format!("for {} in {} {{\n", binding, self.gen_expr(iterable));
+            Expr::For { binding, index_binding, iterable, body } => {
+                let bind = match index_binding {
+                    Some(idx) => format!("({}, {})", idx, binding),
+                    None => binding.clone(),
+                };
+                let mut out = format!("for {} in {} {{\n", bind, self.gen_expr(iterable));
                 self.indent += 1; out.push_str(&self.gen_block(body)); self.indent -= 1;
                 out.push_str(&format!("{}}}", self.ind()));
                 out
@@ -2167,6 +2488,31 @@ impl SwiftGen {
             Expr::List(items) => {
                 let i: Vec<String> = items.iter().map(|e| self.gen_expr(e)).collect();
                 format!("[{}]", i.join(", "))
+            }
+            Expr::Map(entries) => {
+                if entries.is_empty() {
+                    return "[:]".into();
+                }
+                let pairs: Vec<String> = entries.iter()
+                    .map(|(k, v)| format!("{}: {}", self.gen_expr(k), self.gen_expr(v)))
+                    .collect();
+                format!("[{}]", pairs.join(", "))
+            }
+            Expr::TryCatch { try_block, error_binding, catch_block } => {
+                let mut out = String::from("{ () -> Any in\n");
+                self.indent += 1;
+                out.push_str(&format!("{}do {{\n", self.ind()));
+                self.indent += 1;
+                out.push_str(&self.gen_block(try_block));
+                self.indent -= 1;
+                out.push_str(&format!("{}}} catch let {} {{\n", self.ind(), error_binding));
+                self.indent += 1;
+                out.push_str(&self.gen_block(catch_block));
+                self.indent -= 1;
+                out.push_str(&format!("{}}}\n", self.ind()));
+                self.indent -= 1;
+                out.push_str(&format!("{}}}()", self.ind()));
+                out
             }
             Expr::NilCoalesce { left, right } => format!("({} ?? {})", self.gen_expr(left), self.gen_expr(right)),
             Expr::Range { start, end, inclusive } => {
@@ -2222,10 +2568,20 @@ impl SwiftGen {
 
 struct KotlinGen {
     indent: usize,
+    scopes: Vec<std::collections::HashSet<String>>,
 }
 
 impl KotlinGen {
     fn ind(&self) -> String { "    ".repeat(self.indent) }
+
+    fn is_declared(&self, name: &str) -> bool {
+        self.scopes.iter().any(|s| s.contains(name))
+    }
+    fn declare(&mut self, name: &str) {
+        if let Some(top) = self.scopes.last_mut() {
+            top.insert(name.to_string());
+        }
+    }
 
     fn gen_program(&mut self, program: &Program) -> String {
         let mut out = String::new();
@@ -2233,26 +2589,107 @@ impl KotlinGen {
         out
     }
 
+    fn neb_type(&self, t: &TypeExpr) -> String {
+        match t {
+            TypeExpr::Named(n) => match n.as_str() {
+                "Int" => "Int".into(),
+                "Long" => "Long".into(),
+                "Float" => "Float".into(),
+                "Double" => "Double".into(),
+                "Number" => "Double".into(),
+                "Str" | "String" => "String".into(),
+                "Char" => "Char".into(),
+                "Bool" | "Boolean" => "Boolean".into(),
+                "List" | "Array" => "List<Any>".into(),
+                "Map" | "Dictionary" => "MutableMap<Any, Any>".into(),
+                "Set" => "Set<Any>".into(),
+                "Any" => "Any".into(),
+                "None" | "Unit" => "Unit".into(),
+                other => other.to_string(),
+            },
+            TypeExpr::Generic(name, args) => {
+                let a: Vec<String> = args.iter().map(|a| self.neb_type(a)).collect();
+                match name.as_str() {
+                    "List" | "Array" => format!("List<{}>", a.first().cloned().unwrap_or_else(|| "Any".into())),
+                    "Map" | "Dictionary" => format!("MutableMap<{}, {}>", a.first().cloned().unwrap_or_else(|| "Any".into()), a.get(1).cloned().unwrap_or_else(|| "Any".into())),
+                    "Set" => format!("Set<{}>", a.first().cloned().unwrap_or_else(|| "Any".into())),
+                    "Option" | "Optional" => format!("{}?", a.first().cloned().unwrap_or_else(|| "Any".into())),
+                    "pair" | "Pair" => match a.len() {
+                        2 => format!("Pair<{}, {}>", a[0], a[1]),
+                        _ => format!("Pair<{}>", a.join(", ")),
+                    },
+                    "triple" | "Triple" => match a.len() {
+                        3 => format!("Triple<{}, {}, {}>", a[0], a[1], a[2]),
+                        _ => format!("Triple<{}>", a.join(", ")),
+                    },
+                    _ => format!("{}<{}>", name, a.join(", ")),
+                }
+            }
+            TypeExpr::Option(inner) => format!("{}?", self.neb_type(inner)),
+            TypeExpr::Function(params, ret) => {
+                let ps: Vec<String> = params.iter().map(|p| self.neb_type(p)).collect();
+                format!("({}) -> {}", ps.join(", "), self.neb_type(ret))
+            }
+            TypeExpr::Tuple(items) => {
+                match items.len() {
+                    2 => format!("Pair<{}, {}>", self.neb_type(&items[0]), self.neb_type(&items[1])),
+                    3 => format!("Triple<{}, {}, {}>", self.neb_type(&items[0]), self.neb_type(&items[1]), self.neb_type(&items[2])),
+                    _ => format!("List<Any>"),
+                }
+            }
+        }
+    }
+
     fn gen_stmt(&mut self, stmt: &Statement) -> String {
         match stmt {
-            Statement::Let { name, value, .. } | Statement::Const { name, value, .. } => {
-                format!("{}val {} = {}", self.ind(), name, self.gen_expr(value))
+            Statement::Let { name, value, type_ann } | Statement::Const { name, value, type_ann } => {
+                let v = self.gen_expr(value);
+                self.declare(name);
+                let t = type_ann.as_ref().map(|t| format!(": {}", self.neb_type(t))).unwrap_or_default();
+                format!("{}val {}{} = {}", self.ind(), name, t, v)
             }
-            Statement::Mut { name, value, .. } => {
-                format!("{}var {} = {}", self.ind(), name, self.gen_expr(value))
+            Statement::Mut { name, value, type_ann } => {
+                let v = self.gen_expr(value);
+                self.declare(name);
+                let t = type_ann.as_ref().map(|t| format!(": {}", self.neb_type(t))).unwrap_or_default();
+                format!("{}var {}{} = {}", self.ind(), name, t, v)
             }
-            Statement::FnDecl { name, params, body, .. } => {
+            Statement::FnDecl { name, params, body, return_type, .. } => {
                 let ps: Vec<String> = params.iter()
                     .filter(|p| p.name != "sf")
-                    .map(|p| format!("{}: Any", p.name))
+                    .map(|p| {
+                        let t = p.type_ann.as_ref().map(|t| self.neb_type(t)).unwrap_or_else(|| "Any".into());
+                        format!("{}: {}", p.name, t)
+                    })
                     .collect();
-                let mut out = format!("{}fun {}({}): Any {{\n", self.ind(), name, ps.join(", "));
-                self.indent += 1; out.push_str(&self.gen_block(body)); self.indent -= 1;
+                let ret = return_type.as_ref().map(|t| self.neb_type(t)).unwrap_or_else(|| "Any".into());
+                let body_empty = body.statements.is_empty() && body.expr.is_none();
+                let mut out = format!("{}fun {}({}): {} {{\n", self.ind(), name, ps.join(", "), ret);
+                self.indent += 1;
+                self.scopes.push(std::collections::HashSet::new());
+                for p in params { self.declare(&p.name); }
+                let body_str = self.gen_fn_block(body);
+                self.scopes.pop();
+                out.push_str(&body_str);
+                if body_empty {
+                    out.push_str(&format!("{}return Unit\n", self.ind()));
+                }
+                self.indent -= 1;
                 out.push_str(&format!("{}}}", self.ind()));
                 out
             }
             Statement::StructDecl { name, fields, .. } => {
-                let fs: Vec<String> = fields.iter().map(|f| format!("val {}: Any", f.name)).collect();
+                // Kotlin `data class` requires at least one primary-ctor
+                // param. Emit a regular `class` with no body for empty
+                // structs (placeholder `_empty: Any` from upstream pad).
+                let real_fields: Vec<&crate::ast::Field> = fields.iter()
+                    .filter(|f| !(f.name == "_empty" && matches!(&f.type_ann,
+                        crate::ast::TypeExpr::Named(n) if n == "Any")))
+                    .collect();
+                if real_fields.is_empty() {
+                    return format!("{}class {}", self.ind(), name);
+                }
+                let fs: Vec<String> = real_fields.iter().map(|f| format!("val {}: Any", f.name)).collect();
                 format!("{}data class {}({})", self.ind(), name, fs.join(", "))
             }
             Statement::EnumDecl { name, variants, .. } => {
@@ -2281,32 +2718,135 @@ impl KotlinGen {
                     AssignOp::SubAssign => "-=", AssignOp::MulAssign => "*=",
                     AssignOp::DivAssign => "/=", AssignOp::ModAssign => "%=",
                 };
+                if matches!(op, AssignOp::Assign) {
+                    if let Expr::Ident(name) = target {
+                        if !self.is_declared(name) {
+                            let v = self.gen_expr(value);
+                            self.declare(name);
+                            return format!("{}var {} = {}", self.ind(), name, v);
+                        }
+                    }
+                }
                 format!("{}{} {} {}", self.ind(), self.gen_expr(target), o, self.gen_expr(value))
             }
             Statement::Break(_) => format!("{}break", self.ind()),
             Statement::Continue => format!("{}continue", self.ind()),
+            Statement::Throw(Some(e)) => format!("{}throw {}", self.ind(), self.gen_expr(e)),
+            Statement::Throw(None) => format!("{}throw RuntimeException(\"error\")", self.ind()),
             Statement::LetDestructure { names, value, .. } => {
                 format!("{}({}) = {}", self.ind(), names.join(", "), self.gen_expr(value))
+            }
+            // Iter-24 Bug D: explicit Use/Module handlers for Kotlin.
+            Statement::Use { path, .. } => {
+                format!("{}import {}", self.ind(), path.join("."))
+            }
+            Statement::Module { path } => {
+                format!("{}package {}", self.ind(), path.join("."))
+            }
+            Statement::TraitDecl { name, methods, generics, .. } => {
+                let gen = if generics.is_empty() { String::new() } else { format!("<{}>", generics.join(", ")) };
+                let mut out = format!("{}interface {}{} {{\n", self.ind(), name, gen);
+                self.indent += 1;
+                for m in methods {
+                    let ps: Vec<String> = m.params.iter().filter(|p| p.name != "sf").map(|p| {
+                        let t = p.type_ann.as_ref().map(|t| self.neb_type(t)).unwrap_or_else(|| "Any".into());
+                        format!("{}: {}", p.name, t)
+                    }).collect();
+                    let ret = m.return_type.as_ref().map(|t| self.neb_type(t)).unwrap_or_else(|| "Any".into());
+                    match &m.body {
+                        Some(b) => {
+                            let body_empty = b.statements.is_empty() && b.expr.is_none();
+                            if body_empty {
+                                out.push_str(&format!("{}fun {}({}): {}\n", self.ind(), m.name, ps.join(", "), ret));
+                            } else {
+                                out.push_str(&format!("{}fun {}({}): {} {{\n", self.ind(), m.name, ps.join(", "), ret));
+                                self.indent += 1;
+                                self.scopes.push(std::collections::HashSet::new());
+                                for p in &m.params { self.declare(&p.name); }
+                                let bs = self.gen_fn_block(b);
+                                self.scopes.pop();
+                                out.push_str(&bs);
+                                self.indent -= 1;
+                                out.push_str(&format!("{}}}\n", self.ind()));
+                            }
+                        }
+                        None => {
+                            out.push_str(&format!("{}fun {}({}): {}\n", self.ind(), m.name, ps.join(", "), ret));
+                        }
+                    }
+                }
+                self.indent -= 1;
+                out.push_str(&format!("{}}}", self.ind()));
+                out
+            }
+            Statement::ImplBlock { target, methods, .. } => {
+                // Kotlin doesn't have free-standing impl blocks. Emit each
+                // method as an extension function on `target`.
+                let mut out = String::new();
+                for m in methods {
+                    if let Statement::FnDecl { name: mname, params, body, return_type, .. } = m {
+                        let ps: Vec<String> = params.iter().filter(|p| p.name != "sf").map(|p| {
+                            let t = p.type_ann.as_ref().map(|t| self.neb_type(t)).unwrap_or_else(|| "Any".into());
+                            format!("{}: {}", p.name, t)
+                        }).collect();
+                        let ret = return_type.as_ref().map(|t| self.neb_type(t)).unwrap_or_else(|| "Any".into());
+                        let has_self = params.iter().any(|p| p.name == "sf");
+                        // Self-bearing methods become extension functions on
+                        // the type. "Static" methods (no self) become regular
+                        // top-level functions named `<Target>_<method>` to
+                        // avoid Kotlin needing a `companion object` to host
+                        // them — the original call sites use `Target.method()`
+                        // which we can't easily preserve without it.
+                        let prefix = if has_self {
+                            format!("fun {}.{}", target, mname)
+                        } else {
+                            format!("fun {}_{}", target, mname)
+                        };
+                        let body_empty = body.statements.is_empty() && body.expr.is_none();
+                        out.push_str(&format!("{}{}({}): {} {{\n", self.ind(), prefix, ps.join(", "), ret));
+                        self.indent += 1;
+                        self.scopes.push(std::collections::HashSet::new());
+                        for p in params { self.declare(&p.name); }
+                        let bs = self.gen_fn_block(body);
+                        self.scopes.pop();
+                        out.push_str(&bs);
+                        if body_empty {
+                            out.push_str(&format!("{}return Unit\n", self.ind()));
+                        }
+                        self.indent -= 1;
+                        out.push_str(&format!("{}}}\n", self.ind()));
+                    }
+                }
+                out.trim_end_matches('\n').to_string()
             }
             _ => format!("{}// TODO", self.ind()),
         }
     }
 
     fn gen_block(&mut self, block: &Block) -> String {
+        self.gen_block_inner(block, false)
+    }
+
+    fn gen_fn_block(&mut self, block: &Block) -> String {
+        self.gen_block_inner(block, true)
+    }
+
+    fn gen_block_inner(&mut self, block: &Block, is_fn_body: bool) -> String {
+        self.scopes.push(std::collections::HashSet::new());
         let mut out = String::new();
         for s in &block.statements { out.push_str(&self.gen_stmt(s)); out.push('\n'); }
         if let Some(e) = &block.expr {
-            match e.as_ref() {
+            let needs_return = is_fn_body && !matches!(e.as_ref(),
                 Expr::If { .. } | Expr::Match { .. } | Expr::For { .. }
                 | Expr::While { .. } | Expr::Loop { .. } | Expr::Block(_)
-                | Expr::MethodCall { .. } | Expr::Call { .. } => {
-                    out.push_str(&format!("{}{}\n", self.ind(), self.gen_expr(e)));
-                }
-                _ => {
-                    out.push_str(&format!("{}return {}\n", self.ind(), self.gen_expr(e)));
-                }
+            );
+            if needs_return {
+                out.push_str(&format!("{}return {}\n", self.ind(), self.gen_expr(e)));
+            } else {
+                out.push_str(&format!("{}{}\n", self.ind(), self.gen_expr(e)));
             }
         }
+        self.scopes.pop();
         out
     }
 
@@ -2352,19 +2892,83 @@ impl KotlinGen {
                 let a: Vec<String> = args.iter().map(|a| self.gen_expr(&a.value)).collect();
                 let c = self.gen_expr(callee);
                 if c == "prt" || c == "print" || c == "println" { format!("println({})", a.join(", ")) }
-                else { format!("{}({})", c, a.join(", ")) }
+                else {
+                    let converted = match c.as_str() {
+                        "mutable_list_of" => "mutableListOf".into(),
+                        "mutable_map_of" => "mutableMapOf".into(),
+                        "mutable_set_of" => "mutableSetOf".into(),
+                        "list_of" => "listOf".into(),
+                        "map_of" => "mapOf".into(),
+                        "set_of" => "setOf".into(),
+                        "array_of" => "arrayOf".into(),
+                        "int_array_of" => "intArrayOf".into(),
+                        _ => c,
+                    };
+                    format!("{}({})", converted, a.join(", "))
+                }
             }
             Expr::MethodCall { object, method, args } => {
-                let a: Vec<String> = args.iter().map(|a| self.gen_expr(&a.value)).collect();
-                let m = match method.as_str() {
-                    "fold" => "fold", "any" => "any", "all" => "all",
-                    "to_upper" => "uppercase", "to_lower" => "lowercase",
-                    other => other,
+                let a: Vec<String> = args.iter().map(|ca| {
+                    let v = self.gen_expr(&ca.value);
+                    if let Some(n) = &ca.name { format!("{} = {}", n, v) } else { v }
+                }).collect();
+                let m_owned: String = match method.as_str() {
+                    "to_upper" => "uppercase".into(),
+                    "to_lower" => "lowercase".into(),
+                    "with_index" => "withIndex".into(),
+                    "to_list" => "toList".into(),
+                    "to_set" => "toSet".into(),
+                    "to_string" => "toString".into(),
+                    "step_by" => "step".into(),
+                    "is_empty" => "isEmpty".into(),
+                    "to_int" => "toInt".into(),
+                    "to_double" => "toDouble".into(),
+                    "to_float" => "toFloat".into(),
+                    "is_na_n" => "isNaN".into(),
+                    other => snake_to_camel(other),
                 };
-                format!("{}.{}({})", self.gen_expr(object), m, a.join(", "))
+                format!("{}.{}({})", self.gen_expr(object), m_owned, a.join(", "))
+            }
+            Expr::Tuple(items) => {
+                let i: Vec<String> = items.iter().map(|e| self.gen_expr(e)).collect();
+                match items.len() {
+                    2 => format!("Pair({})", i.join(", ")),
+                    3 => format!("Triple({})", i.join(", ")),
+                    _ => format!("listOf({})", i.join(", ")),
+                }
+            }
+            Expr::Map(entries) => {
+                if entries.is_empty() {
+                    return "mutableMapOf<Any, Any>()".into();
+                }
+                let pairs: Vec<String> = entries.iter()
+                    .map(|(k, v)| format!("{} to {}", self.gen_expr(k), self.gen_expr(v)))
+                    .collect();
+                format!("mutableMapOf({})", pairs.join(", "))
+            }
+            Expr::TryCatch { try_block, error_binding, catch_block } => {
+                let mut out = String::from("try {\n");
+                self.indent += 1; out.push_str(&self.gen_block(try_block)); self.indent -= 1;
+                out.push_str(&format!("{}}} catch ({}: Exception) {{\n", self.ind(), error_binding));
+                self.indent += 1; out.push_str(&self.gen_block(catch_block)); self.indent -= 1;
+                out.push_str(&format!("{}}}", self.ind()));
+                out
             }
             Expr::FieldAccess { object, field } => format!("{}.{}", self.gen_expr(object), field),
             Expr::Index { object, index } => format!("{}[{}]", self.gen_expr(object), self.gen_expr(index)),
+            Expr::Slice { object, start, end } => {
+                // Kotlin: no subscript slice; use subList(a, b) for List<T>.
+                // `xs.subList(a, xs.size)` requires re-evaluating xs — acceptable for
+                // idiomatic uses; complex objects with side effects should be bound
+                // to a local var upstream.
+                let obj = self.gen_expr(object);
+                match (start.as_ref(), end.as_ref()) {
+                    (None, None) => format!("{}.toList()", obj),
+                    (Some(s), None) => format!("{}.subList({}, {}.size)", obj, self.gen_expr(s), obj),
+                    (None, Some(e)) => format!("{}.subList(0, {})", obj, self.gen_expr(e)),
+                    (Some(s), Some(e)) => format!("{}.subList({}, {})", obj, self.gen_expr(s), self.gen_expr(e)),
+                }
+            }
             Expr::Lambda { params, body } => {
                 let ps: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
                 if ps.is_empty() { format!("{{ {} }}", self.gen_expr(body)) }
@@ -2384,8 +2988,12 @@ impl KotlinGen {
                 if let Some(eb) = else_block { out.push_str(" else {\n"); self.indent += 1; out.push_str(&self.gen_block(eb)); self.indent -= 1; out.push_str(&format!("{}}}", self.ind())); }
                 out
             }
-            Expr::For { binding, iterable, body, .. } => {
-                let mut out = format!("for ({} in {}) {{\n", binding, self.gen_expr(iterable));
+            Expr::For { binding, index_binding, iterable, body } => {
+                let bind = match index_binding {
+                    Some(idx) => format!("({}, {})", idx, binding),
+                    None => binding.clone(),
+                };
+                let mut out = format!("for ({} in {}) {{\n", bind, self.gen_expr(iterable));
                 self.indent += 1; out.push_str(&self.gen_block(body)); self.indent -= 1;
                 out.push_str(&format!("{}}}", self.ind()));
                 out
@@ -2404,12 +3012,16 @@ impl KotlinGen {
             }
             Expr::List(items) => {
                 let i: Vec<String> = items.iter().map(|e| self.gen_expr(e)).collect();
-                format!("listOf({})", i.join(", "))
+                if items.is_empty() {
+                    "mutableListOf<Any>()".into()
+                } else {
+                    format!("mutableListOf({})", i.join(", "))
+                }
             }
             Expr::NilCoalesce { left, right } => format!("({} ?: {})", self.gen_expr(left), self.gen_expr(right)),
             Expr::Range { start, end, inclusive } => {
-                if *inclusive { format!("{}..{}", self.gen_expr(start), self.gen_expr(end)) }
-                else { format!("{} until {}", self.gen_expr(start), self.gen_expr(end)) }
+                if *inclusive { format!("({}..{})", self.gen_expr(start), self.gen_expr(end)) }
+                else { format!("({} until {})", self.gen_expr(start), self.gen_expr(end)) }
             }
             Expr::Pipe { left, right } => {
                 if let Expr::Ident(n) = right.as_ref() { format!("{}({})", n, self.gen_expr(left)) }
@@ -2605,6 +3217,8 @@ impl TsGen {
             Statement::Return(None) => format!("{}return;", self.ind()),
             Statement::Break(_) => format!("{}break;", self.ind()),
             Statement::Continue => format!("{}continue;", self.ind()),
+            Statement::Throw(Some(e)) => format!("{}throw {};", self.ind(), self.gen_expr(e)),
+            Statement::Throw(None) => format!("{}throw new Error();", self.ind()),
             Statement::Assignment { target, op, value } => {
                 let o = match op { AssignOp::Assign => "=", AssignOp::AddAssign => "+=", AssignOp::SubAssign => "-=", AssignOp::MulAssign => "*=", AssignOp::DivAssign => "/=", AssignOp::ModAssign => "%=" };
                 format!("{}{} {} {};", self.ind(), self.gen_expr(target), o, self.gen_expr(value))
@@ -2718,6 +3332,16 @@ impl TsGen {
             }
             Expr::FieldAccess { object, field } => format!("{}.{}", self.gen_expr(object), field),
             Expr::Index { object, index } => format!("{}[{}]", self.gen_expr(object), self.gen_expr(index)),
+            Expr::Slice { object, start, end } => {
+                // TS: same as JS — use .slice(start, end) method.
+                let obj = self.gen_expr(object);
+                match (start.as_ref(), end.as_ref()) {
+                    (None, None) => format!("{}.slice()", obj),
+                    (Some(s), None) => format!("{}.slice({})", obj, self.gen_expr(s)),
+                    (None, Some(e)) => format!("{}.slice(0, {})", obj, self.gen_expr(e)),
+                    (Some(s), Some(e)) => format!("{}.slice({}, {})", obj, self.gen_expr(s), self.gen_expr(e)),
+                }
+            }
             Expr::Lambda { params, body } => {
                 let ps: Vec<String> = params.iter().map(|p| self.typed_param(p)).collect();
                 format!("({}) => {}", ps.join(", "), self.gen_expr(body))
@@ -2866,23 +3490,298 @@ impl TsGen {
 
 struct RustGen {
     indent: usize,
+    // Stack of declared names per scope. Nebula's canonicalized bare
+    // `x = 5` is ambiguous — it's either a new declaration or a reassign.
+    // Python/JS don't care. Rust does. We resolve it here by tracking
+    // which names have been declared in enclosing blocks: first use emits
+    // `let mut`, subsequent uses emit plain `=`.
+    scopes: Vec<std::collections::HashSet<String>>,
+    // Map of "Enum::Variant" → struct field names (for variants declared
+    // with named fields like `Circle { r: f64 }`). Used to emit match
+    // arms in struct-form `Enum::Variant { r }` instead of tuple-form.
+    enum_struct_variants: std::collections::HashMap<String, Vec<String>>,
+    /// All `(Enum, variant)` pairs seen in the program. Used to tell a
+    /// variant constructor from an associated function when both share the
+    /// surface `Type::name` form.
+    all_enum_variants: std::collections::HashSet<(String, String)>,
+    /// Whether the current function being emitted returns `String` —
+    /// drives `.to_string()` wrapping on bare string-literal return sites.
+    current_fn_returns_string: bool,
+}
+
+impl RustGen {
+    fn is_declared(&self, name: &str) -> bool {
+        self.scopes.iter().any(|s| s.contains(name))
+    }
+    fn declare(&mut self, name: &str) {
+        if let Some(top) = self.scopes.last_mut() {
+            top.insert(name.to_string());
+        }
+    }
 }
 
 impl RustGen {
     fn ind(&self) -> String { "    ".repeat(self.indent) }
 
+    /// Scan the program for EnumDecls and record per-variant field-shape
+    /// (struct-like with named fields, or tuple-like) so match arms can
+    /// render the correct form regardless of whether the Pattern lost that info.
+    fn collect_enum_variants(program: &Program) -> std::collections::HashMap<String, Vec<String>> {
+        let mut struct_variants: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+        for stmt in &program.statements {
+            if let Statement::EnumDecl { name, variants, .. } = stmt {
+                for v in variants {
+                    let any_named = v.fields.iter().any(|f| f.name.is_some());
+                    if any_named {
+                        let field_names: Vec<String> = v.fields.iter().enumerate()
+                            .map(|(i, f)| f.name.clone().unwrap_or_else(|| format!("f{i}")))
+                            .collect();
+                        let key = format!("{}::{}", name, Self::pascal(&v.name));
+                        struct_variants.insert(key, field_names);
+                    }
+                }
+            }
+        }
+        struct_variants
+    }
+
+    /// Collect all `(Enum, variant)` pairs so codegen can distinguish a
+    /// variant constructor (PascalCase) from an associated function
+    /// (snake_case) when both share `Type::name` surface syntax.
+    fn collect_all_enum_variants(program: &Program) -> std::collections::HashSet<(String, String)> {
+        let mut set = std::collections::HashSet::new();
+        for stmt in &program.statements {
+            if let Statement::EnumDecl { name, variants, .. } = stmt {
+                for v in variants {
+                    set.insert((name.clone(), v.name.clone()));
+                    set.insert((name.clone(), Self::pascal(&v.name)));
+                }
+            }
+        }
+        set
+    }
+
     fn gen_program(&mut self, program: &Program) -> String {
-        let mut out = String::new();
-        for stmt in &program.statements { out.push_str(&self.gen_stmt(stmt)); out.push('\n'); }
-        out
+        self.enum_struct_variants = Self::collect_enum_variants(program);
+        self.all_enum_variants = Self::collect_all_enum_variants(program);
+        let mut body = String::new();
+        for stmt in &program.statements { body.push_str(&self.gen_stmt(stmt)); body.push('\n'); }
+        let mut prefix = String::new();
+        let coll_needs: Vec<&str> = ["HashMap", "HashSet", "BTreeMap", "BTreeSet", "VecDeque"]
+            .iter()
+            .filter(|t| body.contains(&format!("{}<", t))
+                || body.contains(&format!("{}::", t))
+                || body.contains(&format!(" {}", t)))
+            .filter(|t| !body.contains(&format!("std::collections::{}", t))
+                && !body.contains(&format!("collections::{{")))
+            .copied()
+            .collect();
+        if !coll_needs.is_empty() {
+            prefix.push_str(&format!("use std::collections::{{{}}};\n", coll_needs.join(", ")));
+        }
+        // Common stdlib types referenced in signatures.
+        let path_needs: Vec<&str> = ["Path", "PathBuf"]
+            .iter()
+            .filter(|t| {
+                let has_type = body.contains(&format!(" {}", t))
+                    || body.contains(&format!("<{}>", t))
+                    || body.contains(&format!(": {}", t))
+                    || body.contains(&format!("-> {}", t));
+                let already = body.contains(&format!("std::path::{}", t))
+                    || body.contains("std::path::{");
+                has_type && !already
+            })
+            .copied()
+            .collect();
+        if !path_needs.is_empty() {
+            prefix.push_str(&format!("use std::path::{{{}}};\n", path_needs.join(", ")));
+        }
+        let time_needs: Vec<&str> = ["Duration", "Instant"]
+            .iter()
+            .filter(|t| {
+                let has_type = body.contains(&format!(" {}", t))
+                    || body.contains(&format!("-> {}", t))
+                    || body.contains(&format!("<{}>", t));
+                let already = body.contains(&format!("std::time::{}", t))
+                    || body.contains("std::time::{");
+                has_type && !already
+            })
+            .copied()
+            .collect();
+        if !time_needs.is_empty() {
+            prefix.push_str(&format!("use std::time::{{{}}};\n", time_needs.join(", ")));
+        }
+        format!("{}{}", prefix, body)
+    }
+
+    /// Render a match pattern for Rust. Converts `Enum.Variant` field-access
+    /// shapes to `Enum::Variant` path form and PascalCases the variant.
+    fn rust_pattern(&mut self, p: &Pattern) -> String {
+        use Pattern::*;
+        match p {
+            Wildcard => "_".into(),
+            Binding(n) => n.clone(),
+            Literal(e) => Self::rust_expr_as_pat(e),
+            Range(s, e, inc) => format!("{}..{}{}", self.gen_expr(s), if *inc { "=" } else { "" }, self.gen_expr(e)),
+            Variant(name, subs) => {
+                let path = Self::variant_path(name);
+                if subs.is_empty() { return path; }
+                let sub_strs: Vec<String> = subs.iter().map(|p| self.rust_pattern(p)).collect();
+                // Use struct-form `{ f1, f2 }` when the enum decl says this
+                // variant has named fields; tuple-form `(x, y)` otherwise.
+                if self.enum_struct_variants.contains_key(&path) {
+                    format!("{} {{ {} }}", path, sub_strs.join(", "))
+                } else {
+                    format!("{}({})", path, sub_strs.join(", "))
+                }
+            }
+        }
+    }
+
+    /// When the Literal pattern is `FieldAccess(Named, member)` (e.g. `Shape.Circle`)
+    /// or a `Call` to such, render with `::` separator and PascalCase variant.
+    fn rust_expr_as_pat(e: &Expr) -> String {
+        match e {
+            Expr::FieldAccess { object, field } => {
+                if let Expr::Ident(o) = object.as_ref() {
+                    let f = Self::pascal(field);
+                    return format!("{}::{}", o, f);
+                }
+                format!("{}.{}", Self::rust_expr_as_pat(object), field)
+            }
+            Expr::IntLit(n) => n.to_string(),
+            Expr::StringLit(s) => {
+                let mut out = String::from("\"");
+                for p in &s.parts {
+                    if let StringPart::Literal(t) = p { out.push_str(t); }
+                }
+                out.push('"'); out
+            }
+            Expr::BoolLit(b) => b.to_string(),
+            Expr::Ident(n) => n.clone(),
+            _ => format!("/* unsupported pat: {:?} */", std::mem::discriminant(e)),
+        }
+    }
+
+    fn pascal(s: &str) -> String {
+        let camel = snake_to_camel(s);
+        let mut cs = camel.chars();
+        match cs.next() {
+            Some(c) => c.to_uppercase().chain(cs).collect(),
+            None => String::new(),
+        }
+    }
+
+    /// Return `true` if the name is a well-known Rust path root — a crate
+    /// name or a short module from the stdlib — so field/method access
+    /// through it should use `::` instead of `.`.
+    fn is_rust_path_root(s: &str) -> bool {
+        matches!(s,
+            "std" | "core" | "alloc" | "crate" | "self" | "super" | "proc_macro"
+            | "io" | "fs" | "net" | "env" | "mem" | "str" | "fmt" | "iter"
+            | "cmp" | "ops" | "mpsc" | "sync" | "thread" | "atomic"
+            | "collections" | "ptr" | "cell" | "rc" | "arc" | "path"
+            | "num" | "convert" | "hash" | "time" | "any" | "char" | "vec"
+        )
+    }
+
+    /// Detect whether the expression chain is rooted at a path-like ident
+    /// (so `std.fs.read_to_string` propagates `::` through the whole chain).
+    fn chain_rooted_at_path(e: &Expr) -> bool {
+        match e {
+            Expr::Ident(n) => Self::is_rust_path_root(n),
+            Expr::FieldAccess { object, .. } => Self::chain_rooted_at_path(object),
+            Expr::MethodCall { object, .. } => Self::chain_rooted_at_path(object),
+            _ => false,
+        }
+    }
+
+    /// Lowercase stdlib type identifiers that lost their case at ingest.
+    fn rust_type_rename(s: &str) -> Option<&'static str> {
+        Some(match s {
+            "path_buf" => "PathBuf",
+            "duration" => "Duration",
+            "instant" => "Instant",
+            "hash_map" => "HashMap",
+            "hash_set" => "HashSet",
+            "b_tree_map" => "BTreeMap",
+            "b_tree_set" => "BTreeSet",
+            "vec_deque" => "VecDeque",
+            "parse_int_error" => "ParseIntError",
+            _ => return None,
+        })
+    }
+
+    fn variant_path(name: &str) -> String {
+        // Accept inputs like `Shape.circle`, `Shape::Circle`, `Circle`.
+        let parts: Vec<&str> = name.split(&['.', ':'][..]).filter(|s| !s.is_empty()).collect();
+        if parts.len() <= 1 { return Self::pascal(name); }
+        let mut out: Vec<String> = parts.iter().take(parts.len() - 1).map(|s| s.to_string()).collect();
+        out.push(Self::pascal(parts.last().unwrap()));
+        out.join("::")
+    }
+
+    /// Walk a type expr and collect names that look like generic params:
+    /// single uppercase letters (T, U, F, E, K, V) that aren't known concrete types.
+    fn collect_generics(t: &TypeExpr, out: &mut std::collections::BTreeSet<String>) {
+        const KNOWN: &[&str] = &["String", "Str", "Bool", "Char", "Int", "Float", "Nil",
+            "Vec", "HashMap", "HashSet", "Option", "Result", "Box", "Any", "Self"];
+        match t {
+            TypeExpr::Named(n) => {
+                if n.len() == 1 && n.chars().next().unwrap().is_ascii_uppercase() {
+                    out.insert(n.clone());
+                } else if !KNOWN.contains(&n.as_str()) && !n.contains('.')
+                    && n.chars().next().map_or(false, |c| c.is_ascii_uppercase())
+                    && n.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+                {
+                    out.insert(n.clone());
+                }
+            }
+            TypeExpr::Generic(_, args) => {
+                for a in args { Self::collect_generics(a, out); }
+            }
+            TypeExpr::Option(inner) => Self::collect_generics(inner, out),
+            TypeExpr::Function(params, ret) => {
+                for p in params { Self::collect_generics(p, out); }
+                Self::collect_generics(ret, out);
+            }
+            TypeExpr::Tuple(items) => {
+                for i in items { Self::collect_generics(i, out); }
+            }
+        }
     }
 
     fn neb_type(&self, t: &TypeExpr) -> String {
         match t {
             TypeExpr::Named(n) => match n.as_str() {
                 "Int" => "i64".into(), "Float" => "f64".into(),
-                "String" => "String".into(), "Bool" => "bool".into(),
+                // `String` in Nebula IL maps to Rust `String` (owned);
+                // `Str` is the more common form and maps to `&str`, which is
+                // compatible with string literals that appear frequently in
+                // match-arm returns. Uses that genuinely need owned strings
+                // should emit `.to_string()` or `String::from(...)`.
+                "String" | "Str" => "String".into(),
+                "Bool" => "bool".into(),
                 "Char" => "char".into(), "Nil" => "()".into(),
+                // Dotted qualified paths (`io.Reader`, `std.fmt.Display`) use
+                // `::` in Rust, not `.`. PascalCase the last segment if it
+                // looks like a type, preserving short stdlib module names.
+                other if other.contains('.') => {
+                    let parts: Vec<&str> = other.split('.').collect();
+                    let mut out: Vec<String> = parts.iter().map(|s| s.to_string()).collect();
+                    if let Some(last) = out.last_mut() {
+                        let short = matches!(last.as_str(), "io" | "fmt" | "fs" | "net" | "str"
+                            | "collections" | "path" | "num" | "time" | "convert");
+                        if !short && last.chars().next().map_or(false, |c| c.is_ascii_lowercase()) {
+                            *last = Self::pascal(last);
+                        }
+                    }
+                    out.join("::")
+                }
+                // Lowercase named types that aren't primitives likely lost
+                // their case during ingest; PascalCase them.
+                other if other.chars().next().map_or(false, |c| c.is_ascii_lowercase())
+                    && other.contains('_') => Self::pascal(other),
                 other => other.to_string(),
             },
             TypeExpr::Generic(name, args) => {
@@ -2890,7 +3789,23 @@ impl RustGen {
                 match name.as_str() {
                     "List" => format!("Vec<{}>", a.first().unwrap_or(&"_".into())),
                     "Map" => format!("HashMap<{}, {}>", a.first().unwrap_or(&"String".into()), a.get(1).unwrap_or(&"_".into())),
-                    _ => format!("{}<{}>", name, a.join(", ")),
+                    "box" | "Box" => format!("Box<{}>", a.first().unwrap_or(&"_".into())),
+                    _ => {
+                        // Dotted generic name `io.Result` → `io::Result`
+                        let n = if name.contains('.') {
+                            let parts: Vec<&str> = name.split('.').collect();
+                            let mut out: Vec<String> = parts.iter().map(|s| s.to_string()).collect();
+                            if let Some(last) = out.last_mut() {
+                                if last.chars().next().map_or(false, |c| c.is_ascii_lowercase()) {
+                                    let short = matches!(last.as_str(), "io" | "fmt" | "fs" | "net" | "str"
+                                        | "collections" | "path" | "num" | "time" | "convert");
+                                    if !short { *last = Self::pascal(last); }
+                                }
+                            }
+                            out.join("::")
+                        } else { name.clone() };
+                        format!("{}<{}>", n, a.join(", "))
+                    }
                 }
             }
             TypeExpr::Option(inner) => format!("Option<{}>", self.neb_type(inner)),
@@ -2909,15 +3824,21 @@ impl RustGen {
         match stmt {
             Statement::Let { name, type_ann, value } => {
                 let t = type_ann.as_ref().map(|t| format!(": {}", self.neb_type(t))).unwrap_or_default();
-                format!("{}let {}{} = {};", self.ind(), name, t, self.gen_expr(value))
+                let v = self.gen_expr(value);
+                self.declare(name);
+                format!("{}let {}{} = {};", self.ind(), name, t, v)
             }
             Statement::Mut { name, type_ann, value } => {
                 let t = type_ann.as_ref().map(|t| format!(": {}", self.neb_type(t))).unwrap_or_default();
-                format!("{}let mut {}{} = {};", self.ind(), name, t, self.gen_expr(value))
+                let v = self.gen_expr(value);
+                self.declare(name);
+                format!("{}let mut {}{} = {};", self.ind(), name, t, v)
             }
             Statement::Const { name, type_ann, value } => {
                 let t = type_ann.as_ref().map(|t| format!(": {}", self.neb_type(t))).unwrap_or_default();
-                format!("{}const {}{} = {};", self.ind(), name, t, self.gen_expr(value))
+                let v = self.gen_expr(value);
+                self.declare(name);
+                format!("{}const {}{} = {};", self.ind(), name, t, v)
             }
             Statement::FnDecl { name, params, return_type, body, .. } => {
                 let ps: Vec<String> = params.iter().filter(|p| p.name != "sf")
@@ -2926,16 +3847,46 @@ impl RustGen {
                         format!("{}: {}", p.name, t)
                     }).collect();
                 let ret = return_type.as_ref().map(|t| format!(" -> {}", self.neb_type(t))).unwrap_or_default();
-                let mut out = format!("{}fn {}({}){} {{\n", self.ind(), name, ps.join(", "), ret);
+                let mut generic_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+                for p in params.iter().filter(|p| p.name != "sf") {
+                    if let Some(t) = &p.type_ann { Self::collect_generics(t, &mut generic_set); }
+                }
+                if let Some(rt) = return_type { Self::collect_generics(rt, &mut generic_set); }
+                let generics_str = if generic_set.is_empty() { String::new() }
+                    else { format!("<{}>", generic_set.into_iter().collect::<Vec<_>>().join(", ")) };
+                // Track whether this fn returns String so match-arm /
+                // return-value emission can wrap bare string literals.
+                let prev_ret = self.current_fn_returns_string;
+                self.current_fn_returns_string = matches!(return_type,
+                    Some(TypeExpr::Named(n)) if n == "String" || n == "Str");
+                self.scopes.push(std::collections::HashSet::new());
+                for p in params { self.declare(&p.name); }
+                let mut out = format!("{}fn {}{}({}){} {{\n", self.ind(), name, generics_str, ps.join(", "), ret);
                 self.indent += 1; out.push_str(&self.gen_block(body)); self.indent -= 1;
+                self.scopes.pop();
+                self.current_fn_returns_string = prev_ret;
                 out.push_str(&format!("{}}}", self.ind()));
                 out
             }
             Statement::StructDecl { name, fields, generics, .. } => {
                 let gen = if generics.is_empty() { String::new() } else { format!("<{}>", generics.join(", ")) };
+                let real_fields: Vec<&crate::ast::Field> = fields.iter()
+                    .filter(|f| !(f.name == "_empty" && matches!(&f.type_ann,
+                        crate::ast::TypeExpr::Named(n) if n == "Any")))
+                    .collect();
+                if real_fields.is_empty() {
+                    return format!("{}struct {}{};", self.ind(), name, gen);
+                }
+                // Detect tuple-struct shape: fields named `_0`, `_1`, … emit
+                // `struct Name(T0, T1, ...);`.
+                let is_tuple = real_fields.iter().enumerate().all(|(i, f)| f.name == format!("_{}", i));
+                if is_tuple {
+                    let tys: Vec<String> = real_fields.iter().map(|f| self.neb_type(&f.type_ann)).collect();
+                    return format!("{}struct {}{}({});", self.ind(), name, gen, tys.join(", "));
+                }
                 let mut out = format!("{}struct {}{} {{\n", self.ind(), name, gen);
                 self.indent += 1;
-                for f in fields { out.push_str(&format!("{}{}: {},\n", self.ind(), f.name, self.neb_type(&f.type_ann))); }
+                for f in &real_fields { out.push_str(&format!("{}{}: {},\n", self.ind(), f.name, self.neb_type(&f.type_ann))); }
                 self.indent -= 1;
                 out.push_str(&format!("{}}}", self.ind()));
                 out
@@ -2945,14 +3896,24 @@ impl RustGen {
                 let mut out = format!("{}enum {}{} {{\n", self.ind(), name, gen);
                 self.indent += 1;
                 for v in variants {
+                    // Rust enum variants are PascalCase. Convert snake_case →
+                    // PascalCase via pascal() (which passes through already-
+                    // PascalCase inputs unchanged).
+                    let vname = Self::pascal(&v.name);
                     if v.fields.is_empty() {
-                        out.push_str(&format!("{}{},\n", self.ind(), v.name));
+                        out.push_str(&format!("{}{},\n", self.ind(), vname));
                     } else {
-                        let fs: Vec<String> = v.fields.iter().map(|f| {
-                            if let Some(n) = &f.name { format!("{}: {}", n, self.neb_type(&f.type_ann)) }
-                            else { self.neb_type(&f.type_ann) }
-                        }).collect();
-                        out.push_str(&format!("{}{}({}),\n", self.ind(), v.name, fs.join(", ")));
+                        let any_named = v.fields.iter().any(|f| f.name.is_some());
+                        if any_named {
+                            let fs: Vec<String> = v.fields.iter().enumerate().map(|(i, f)| {
+                                let fname = f.name.clone().unwrap_or_else(|| format!("f{i}"));
+                                format!("{}: {}", fname, self.neb_type(&f.type_ann))
+                            }).collect();
+                            out.push_str(&format!("{}{} {{ {} }},\n", self.ind(), vname, fs.join(", ")));
+                        } else {
+                            let fs: Vec<String> = v.fields.iter().map(|f| self.neb_type(&f.type_ann)).collect();
+                            out.push_str(&format!("{}{}({}),\n", self.ind(), vname, fs.join(", ")));
+                        }
                     }
                 }
                 self.indent -= 1;
@@ -2963,7 +3924,39 @@ impl RustGen {
                 let header = if let Some(t) = trait_name { format!("impl {} for {}", t, target) } else { format!("impl {}", target) };
                 let mut out = format!("{}{} {{\n", self.ind(), header);
                 self.indent += 1;
-                for m in methods { out.push_str(&self.gen_stmt(m)); out.push('\n'); }
+                for m in methods {
+                    // Emit impl methods directly with proper &self handling,
+                    // not via the top-level FnDecl path which lacks receiver logic.
+                    if let Statement::FnDecl { name: mname, params, body, return_type, .. } = m {
+                        let has_self = params.iter().any(|p| p.name == "sf");
+                        let mut ps: Vec<String> = Vec::new();
+                        if has_self { ps.push("&self".into()); }
+                        for p in params.iter().filter(|p| p.name != "sf") {
+                            let t = p.type_ann.as_ref().map(|t| self.neb_type(t)).unwrap_or_else(|| "_".into());
+                            ps.push(format!("{}: {}", p.name, t));
+                        }
+                        let ret = return_type.as_ref().map(|t| format!(" -> {}", self.neb_type(t))).unwrap_or_default();
+                        // Recover generics from param/return types
+                        let mut generic_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+                        for p in params.iter().filter(|p| p.name != "sf") {
+                            if let Some(t) = &p.type_ann { Self::collect_generics(t, &mut generic_set); }
+                        }
+                        if let Some(rt) = return_type { Self::collect_generics(rt, &mut generic_set); }
+                        let generics_str = if generic_set.is_empty() { String::new() }
+                            else { format!("<{}>", generic_set.into_iter().collect::<Vec<_>>().join(", ")) };
+                        out.push_str(&format!("{}fn {}{}({}){} {{\n", self.ind(), mname, generics_str, ps.join(", "), ret));
+                        self.indent += 1;
+                        self.scopes.push(std::collections::HashSet::new());
+                        for p in params { self.declare(&p.name); }
+                        out.push_str(&self.gen_block(body));
+                        self.scopes.pop();
+                        self.indent -= 1;
+                        out.push_str(&format!("{}}}\n", self.ind()));
+                    } else {
+                        out.push_str(&self.gen_stmt(m));
+                        out.push('\n');
+                    }
+                }
                 self.indent -= 1;
                 out.push_str(&format!("{}}}", self.ind()));
                 out
@@ -2978,7 +3971,16 @@ impl RustGen {
                         else { let t = p.type_ann.as_ref().map(|t| self.neb_type(t)).unwrap_or("_".into()); format!("{}: {}", p.name, t) }
                     }).collect();
                     let ret = m.return_type.as_ref().map(|t| format!(" -> {}", self.neb_type(t))).unwrap_or_default();
-                    out.push_str(&format!("{}fn {}({}){}{}\n", self.ind(), m.name, ps.join(", "), ret, if m.body.is_some() { " { ... }" } else { ";" }));
+                    let tail = match &m.body {
+                        Some(b) => {
+                            self.indent += 1;
+                            let body = self.gen_block(b);
+                            self.indent -= 1;
+                            format!(" {{\n{}{}}}", body, self.ind())
+                        }
+                        None => ";".to_string(),
+                    };
+                    out.push_str(&format!("{}fn {}({}){}{}\n", self.ind(), m.name, ps.join(", "), ret, tail));
                 }
                 self.indent -= 1;
                 out.push_str(&format!("{}}}", self.ind()));
@@ -2989,11 +3991,44 @@ impl RustGen {
             Statement::Return(None) => format!("{}return;", self.ind()),
             Statement::Break(_) => format!("{}break;", self.ind()),
             Statement::Continue => format!("{}continue;", self.ind()),
+            Statement::Throw(Some(e)) => format!("{}panic!(\"{{:?}}\", {});", self.ind(), self.gen_expr(e)),
+            Statement::Throw(None) => format!("{}panic!();", self.ind()),
             Statement::Assignment { target, op, value } => {
                 let o = match op { AssignOp::Assign => "=", AssignOp::AddAssign => "+=", AssignOp::SubAssign => "-=", AssignOp::MulAssign => "*=", AssignOp::DivAssign => "/=", AssignOp::ModAssign => "%=" };
+                // Nebula bare `x = 5` at first use in a block is a new
+                // declaration in Python/JS semantics. Rust needs `let mut`.
+                // Promote simple-ident, plain-assign, first-use targets to
+                // `let mut`; everything else is a plain reassign.
+                if matches!(op, AssignOp::Assign) {
+                    if let Expr::Ident(name) = target {
+                        if !self.is_declared(name) {
+                            let v = self.gen_expr(value);
+                            self.declare(name);
+                            return format!("{}let mut {} = {};", self.ind(), name, v);
+                        }
+                    }
+                }
                 format!("{}{} {} {};", self.ind(), self.gen_expr(target), o, self.gen_expr(value))
             }
-            Statement::Use { path, .. } => format!("{}use {};", self.ind(), path.join("::")),
+            Statement::Use { path, .. } => {
+                // PascalCase the last segment when it looks like a type
+                // (snake_case or all-lowercase), so `std.fmt.display` →
+                // `std::fmt::Display`. Leave already-PascalCase or short
+                // stdlib-module names (`io`, `fmt`) alone.
+                let mut parts: Vec<String> = path.iter().cloned().collect();
+                if let Some(last) = parts.last_mut() {
+                    let short_stdlib = matches!(last.as_str(),
+                        "io" | "fmt" | "fs" | "net" | "env" | "mem" | "str"
+                        | "vec" | "iter" | "cmp" | "ops" | "mpsc" | "sync"
+                        | "thread" | "atomic" | "collections" | "ptr" | "cell"
+                        | "rc" | "arc" | "path" | "num" | "convert" | "hash"
+                        | "time" | "any" | "char");
+                    if !short_stdlib && last.chars().next().map_or(false, |c| c.is_ascii_lowercase()) {
+                        *last = Self::pascal(last);
+                    }
+                }
+                format!("{}use {};", self.ind(), parts.join("::"))
+            }
             Statement::LetDestructure { names, value, mutable } => {
                 let kw = if *mutable { "let mut" } else { "let" };
                 format!("{}{} ({}) = {};", self.ind(), kw, names.join(", "), self.gen_expr(value))
@@ -3006,9 +4041,11 @@ impl RustGen {
     }
 
     fn gen_block(&mut self, block: &Block) -> String {
+        self.scopes.push(std::collections::HashSet::new());
         let mut out = String::new();
         for s in &block.statements { out.push_str(&self.gen_stmt(s)); out.push('\n'); }
         if let Some(e) = &block.expr { out.push_str(&format!("{}{}\n", self.ind(), self.gen_expr(e))); }
+        self.scopes.pop();
         out
     }
 
@@ -3018,9 +4055,16 @@ impl RustGen {
             Expr::FloatLit(f) => format!("{f:?}"),
             Expr::BoolLit(b) => b.to_string(),
             Expr::StringLit(s) => {
-                let has_interp = s.parts.iter().any(|p| matches!(p, StringPart::Interpolation(_)));
-                if !has_interp {
-                    let text: String = s.parts.iter().map(|p| if let StringPart::Literal(t) = p { t.as_str() } else { "" }).collect();
+                // A non-empty Interpolation becomes a `{}` with an arg.
+                // An empty Interpolation (e.g. literal `{}` in the source)
+                // stays as `{}` without consuming an arg — lets callers like
+                // `panic!("x: {}", v)` get their positional placeholder back.
+                let has_real_interp = s.parts.iter().any(|p| matches!(p, StringPart::Interpolation(t) if !t.is_empty()));
+                if !has_real_interp {
+                    let text: String = s.parts.iter().map(|p| match p {
+                        StringPart::Literal(t) => t.as_str().to_string(),
+                        StringPart::Interpolation(_) => "{}".to_string(),
+                    }).collect();
                     return format!("\"{}\"", text);
                 }
                 let mut out = String::from("format!(\"");
@@ -3028,6 +4072,10 @@ impl RustGen {
                 for part in &s.parts {
                     match part {
                         StringPart::Literal(t) => out.push_str(&t.replace('\n', "\\n").replace('\t', "\\t")),
+                        StringPart::Interpolation(tokens) if tokens.is_empty() => {
+                            // Bare `{}` — leave as positional placeholder with no arg.
+                            out.push_str("{}");
+                        }
                         StringPart::Interpolation(tokens) => {
                             out.push_str("{}");
                             let a: String = tokens.iter().map(|t| interpolation_token_to_target(t, "self")).collect();
@@ -3058,22 +4106,131 @@ impl RustGen {
                 format!("{}{}", o, self.gen_expr(operand))
             }
             Expr::Call { callee, args } => {
-                let a: Vec<String> = args.iter().map(|a| self.gen_expr(&a.value)).collect();
                 let c = self.gen_expr(callee);
-                match c.as_str() {
-                    "prt" | "print" | "println" => format!("println!(\"{}\", {})", "{}".repeat(a.len()), a.join(", ")),
-                    _ => format!("{}({})", c, a.join(", ")),
+                // Internal markers from the ingester.
+                if c == "__deref" {
+                    let a: Vec<String> = args.iter().map(|arg| self.gen_expr(&arg.value)).collect();
+                    return format!("*{}", a.join(""));
                 }
+                if c == "__addr" {
+                    let a: Vec<String> = args.iter().map(|arg| self.gen_expr(&arg.value)).collect();
+                    return format!("&{}", a.join(""));
+                }
+                // Rust format-like calls are macros: pass all args through to
+                // `<name>!(...)`. Skip wrapping the first string arg in a nested
+                // `format!(...)` call — the macro does its own formatting.
+                let is_macro = matches!(c.as_str(),
+                    "panic" | "print" | "println" | "eprint" | "eprintln" | "prt"
+                    | "format" | "fmt" | "write" | "writeln" | "assert" | "assert_eq"
+                    | "debug_assert" | "debug_assert_eq" | "todo" | "unimplemented"
+                    | "unreachable" | "dbg" | "vec");
+                if is_macro {
+                    let name = if c == "prt" || c == "print" { "println".to_string() }
+                        else if c == "fmt" { "format".to_string() }
+                        else { c };
+                    let a: Vec<String> = args.iter().map(|arg| self.gen_expr(&arg.value)).collect();
+                    return format!("{}!({})", name, a.join(", "));
+                }
+                let a: Vec<String> = args.iter().map(|a| self.gen_expr(&a.value)).collect();
+                format!("{}({})", c, a.join(", "))
             }
             Expr::MethodCall { object, method, args } => {
                 let a: Vec<String> = args.iter().map(|a| self.gen_expr(&a.value)).collect();
-                format!("{}.{}({})", self.gen_expr(object), method, a.join(", "))
+                if let Expr::Ident(o) = object.as_ref() {
+                    if Self::is_rust_path_root(o) {
+                        return format!("{}::{}({})", o, method, a.join(", "));
+                    }
+                    if o.chars().next().map_or(false, |c| c.is_ascii_uppercase()) {
+                        // Known enum variant → PascalCase constructor call.
+                        // Otherwise assume associated function (snake_case).
+                        let m = if self.all_enum_variants.contains(&(o.clone(), method.clone())) {
+                            Self::pascal(method)
+                        } else { method.clone() };
+                        return format!("{}::{}({})", o, m, a.join(", "));
+                    }
+                    if let Some(rn) = Self::rust_type_rename(o) {
+                        return format!("{}::{}({})", rn, method, a.join(", "));
+                    }
+                }
+                if Self::chain_rooted_at_path(object) {
+                    return format!("{}::{}({})", self.gen_expr(object), method, a.join(", "));
+                }
+                let m = match method.as_str() {
+                    "emp" => "is_empty",
+                    "uw" => "unwrap",
+                    "clr" => "clear",
+                    "str" => "to_string",
+                    other => other,
+                };
+                let obj_str = self.gen_expr(object);
+                let needs_parens = matches!(object.as_ref(), Expr::Range { .. });
+                // Iterator methods need `.iter()` or `.into_iter()` on a
+                // Vec/slice receiver. Without a type inferencer we add it
+                // speculatively for well-known iter-only methods.
+                let iter_methods = ["enumerate", "map", "filter", "fold", "sum",
+                    "product", "count", "any", "all", "find", "min", "max",
+                    "zip", "take", "skip", "flat_map", "rev"];
+                let needs_iter = iter_methods.contains(&m);
+                // Ranges and already-iterator method chains are iterators on
+                // their own; only wrap a concrete collection (Vec, &[]) with
+                // `.iter()`.
+                let already_iter = match object.as_ref() {
+                    Expr::Range { .. } => true,
+                    Expr::MethodCall { method: m2, .. } => matches!(m2.as_str(),
+                        "iter" | "into_iter" | "iter_mut" | "enumerate"
+                        | "map" | "filter" | "fold" | "zip" | "take"
+                        | "skip" | "flat_map" | "rev" | "chain"),
+                    _ => false,
+                };
+                let obj_wrapped = if needs_iter && !already_iter {
+                    if needs_parens { format!("({}).iter()", obj_str) }
+                    else { format!("{}.iter()", obj_str) }
+                } else if needs_parens { format!("({})", obj_str) }
+                else { obj_str };
+                format!("{}.{}({})", obj_wrapped, m, a.join(", "))
             }
-            Expr::FieldAccess { object, field } => format!("{}.{}", self.gen_expr(object), field),
+            Expr::FieldAccess { object, field } => {
+                if let Expr::Ident(o) = object.as_ref() {
+                    if Self::is_rust_path_root(o) {
+                        return format!("{}::{}", o, field);
+                    }
+                    if o.chars().next().map_or(false, |c| c.is_ascii_uppercase()) {
+                        // Known enum variant → pascal-case. Otherwise it's
+                        // likely an associated constant — leave the case alone.
+                        if self.all_enum_variants.contains(&(o.clone(), field.clone())) {
+                            return format!("{}::{}", o, Self::pascal(field));
+                        }
+                        return format!("{}::{}", o, field);
+                    }
+                    if let Some(rn) = Self::rust_type_rename(o) {
+                        return format!("{}::{}", rn, field);
+                    }
+                }
+                if Self::chain_rooted_at_path(object) {
+                    return format!("{}::{}", self.gen_expr(object), field);
+                }
+                format!("{}.{}", self.gen_expr(object), field)
+            }
             Expr::Index { object, index } => format!("{}[{}]", self.gen_expr(object), self.gen_expr(index)),
+            Expr::Slice { object, start, end } => {
+                // Rust slice indices must be `usize`. The IL has no usize
+                // distinction (everything's `Int`), so cast explicitly.
+                let obj = self.gen_expr(object);
+                let cast = |e: String| format!("({}) as usize", e);
+                match (start.as_ref(), end.as_ref()) {
+                    (None, None) => format!("{}.to_vec()", obj),
+                    (Some(s), None) => format!("{}[{}..].to_vec()", obj, cast(self.gen_expr(s))),
+                    (None, Some(e)) => format!("{}[..{}].to_vec()", obj, cast(self.gen_expr(e))),
+                    (Some(s), Some(e)) => format!("{}[{}..{}].to_vec()", obj, cast(self.gen_expr(s)), cast(self.gen_expr(e))),
+                }
+            }
             Expr::Lambda { params, body } => {
                 let ps: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
-                format!("|{}| {}", ps.join(", "), self.gen_expr(body))
+                // Multi-param lambdas in iter chains (map/filter on an
+                // enumerate/zip result) are single-tuple closures in Rust;
+                // wrap params in a tuple pattern.
+                let pat = if ps.len() >= 2 { format!("({})", ps.join(", ")) } else { ps.join(", ") };
+                format!("|{}| {}", pat, self.gen_expr(body))
             }
             Expr::If { condition, then_block, else_block } => {
                 let mut out = format!("if {} {{\n", self.gen_expr(condition));
@@ -3090,22 +4247,29 @@ impl RustGen {
                 let mut out = format!("match {} {{\n", self.gen_expr(subject));
                 self.indent += 1;
                 for arm in arms {
-                    let pat = match &arm.pattern {
-                        Pattern::Wildcard => "_".into(),
-                        Pattern::Binding(n) => n.clone(),
-                        Pattern::Literal(e) => self.gen_expr(e),
-                        Pattern::Range(s, e, inc) => format!("{}..{}{}", self.gen_expr(s), if *inc { "=" } else { "" }, self.gen_expr(e)),
-                        Pattern::Variant(n, _) => n.clone(),
-                    };
+                    let pat = self.rust_pattern(&arm.pattern);
                     let guard = arm.guard.as_ref().map(|g| format!(" if {}", self.gen_expr(g))).unwrap_or_default();
-                    out.push_str(&format!("{}{}{} => {},\n", self.ind(), pat, guard, self.gen_expr(&arm.body)));
+                    let body = self.gen_expr(&arm.body);
+                    // When the enclosing fn returns String and this arm body
+                    // is a bare string literal, coerce with `.to_string()`.
+                    let body = if self.current_fn_returns_string
+                        && matches!(arm.body, Expr::StringLit(_))
+                        && !body.starts_with("format!") {
+                        format!("{}.to_string()", body)
+                    } else { body };
+                    out.push_str(&format!("{}{}{} => {},\n", self.ind(), pat, guard, body));
                 }
                 self.indent -= 1;
                 out.push_str(&format!("{}}}", self.ind()));
                 out
             }
-            Expr::For { binding, iterable, body, .. } => {
-                let mut out = format!("for {} in {} {{\n", binding, self.gen_expr(iterable));
+            Expr::For { binding, index_binding, iterable, body } => {
+                // `for i, x in xs.enumerate()` → `for (i, x) in xs.iter().enumerate()`.
+                let bind = match index_binding {
+                    Some(idx) => format!("({}, {})", idx, binding),
+                    None => binding.clone(),
+                };
+                let mut out = format!("for {} in {} {{\n", bind, self.gen_expr(iterable));
                 self.indent += 1; out.push_str(&self.gen_block(body)); self.indent -= 1;
                 out.push_str(&format!("{}}}", self.ind()));
                 out
@@ -3147,6 +4311,23 @@ impl RustGen {
             }
             Expr::NilCoalesce { left, right } => format!("{}.unwrap_or({})", self.gen_expr(left), self.gen_expr(right)),
             Expr::Try(inner) => format!("{}?", self.gen_expr(inner)),
+            Expr::Block(block) => {
+                // Rust block expression: { stmt; stmt; final_expr }. Used as
+                // a closure body (`move || { ... }`) or as a standalone expr.
+                let mut out = String::from("{\n");
+                self.indent += 1;
+                out.push_str(&self.gen_block(block));
+                self.indent -= 1;
+                out.push_str(&format!("{}}}", self.ind()));
+                out
+            }
+            Expr::Map(entries) => {
+                // Rust: emit as a HashMap via the from-array constructor.
+                let pairs: Vec<String> = entries.iter()
+                    .map(|(k, v)| format!("({}, {})", self.gen_expr(k), self.gen_expr(v)))
+                    .collect();
+                format!("HashMap::from([{}])", pairs.join(", "))
+            }
             _ => "/* TODO */".into(),
         }
     }
@@ -3158,6 +4339,18 @@ impl RustGen {
 
 struct CGen {
     indent: usize,
+    scopes: Vec<std::collections::HashSet<String>>,
+}
+
+impl CGen {
+    fn is_declared(&self, name: &str) -> bool {
+        self.scopes.iter().any(|s| s.contains(name))
+    }
+    fn declare(&mut self, name: &str) {
+        if let Some(top) = self.scopes.last_mut() {
+            top.insert(name.to_string());
+        }
+    }
 }
 
 impl CGen {
@@ -3205,8 +4398,13 @@ impl CGen {
                 "Int" => "int64_t".into(),
                 "Float" => "double".into(),
                 "Bool" => "int".into(),
-                "String" => "const char*".into(),
+                "String" | "Str" => "const char*".into(),
                 "Char" => "char".into(),
+                "Nil" => "void".into(),
+                "Any" => "void*".into(),
+                // Dotted qualified paths flatten to underscores for C (no
+                // native namespace). `io.Reader` → `io_Reader*`.
+                other if other.contains('.') => format!("{}*", other.replace('.', "_")),
                 other => format!("{}*", other),
             },
             TypeExpr::Option(inner) => format!("{}*", self.c_type(inner)),
@@ -3218,11 +4416,15 @@ impl CGen {
         match stmt {
             Statement::Let { name, type_ann, value } | Statement::Const { name, type_ann, value } => {
                 let t = type_ann.as_ref().map(|t| self.c_type(t)).unwrap_or_else(|| self.infer_c_type(value));
-                format!("{}{} {} = {};", self.ind(), t, name, self.gen_expr(value))
+                let v = self.gen_expr(value);
+                self.declare(name);
+                format!("{}{} {} = {};", self.ind(), t, name, v)
             }
             Statement::Mut { name, type_ann, value } => {
                 let t = type_ann.as_ref().map(|t| self.c_type(t)).unwrap_or_else(|| self.infer_c_type(value));
-                format!("{}{} {} = {};", self.ind(), t, name, self.gen_expr(value))
+                let v = self.gen_expr(value);
+                self.declare(name);
+                format!("{}{} {} = {};", self.ind(), t, name, v)
             }
             Statement::FnDecl { name, params, return_type, body, .. } => {
                 let ret = return_type.as_ref().map(|t| self.c_type(t)).unwrap_or("void".into());
@@ -3231,10 +4433,13 @@ impl CGen {
                         let t = p.type_ann.as_ref().map(|t| self.c_type(t)).unwrap_or("void*".into());
                         format!("{} {}", t, p.name)
                     }).collect();
+                self.scopes.push(std::collections::HashSet::new());
+                for p in params { self.declare(&p.name); }
                 let mut out = format!("{}{} {}({}) {{\n", self.ind(), ret, name, ps.join(", "));
                 self.indent += 1;
                 out.push_str(&self.gen_block(body));
                 self.indent -= 1;
+                self.scopes.pop();
                 out.push_str(&format!("{}}}\n", self.ind()));
                 out
             }
@@ -3243,25 +4448,64 @@ impl CGen {
             Statement::Return(None) => format!("{}return;", self.ind()),
             Statement::Break(_) => format!("{}break;", self.ind()),
             Statement::Continue => format!("{}continue;", self.ind()),
+            Statement::Throw(Some(e)) => format!("{}/* throw */ exit(1); /* {} */", self.ind(), self.gen_expr(e)),
+            Statement::Throw(None) => format!("{}exit(1);", self.ind()),
             Statement::Assignment { target, op, value } => {
                 let o = match op {
                     AssignOp::Assign => "=", AssignOp::AddAssign => "+=",
                     AssignOp::SubAssign => "-=", AssignOp::MulAssign => "*=",
                     AssignOp::DivAssign => "/=", AssignOp::ModAssign => "%=",
                 };
+                // Nebula bare `x = 5` at first use is a new binding in the
+                // source languages with implicit declaration (Python, JS).
+                // C requires explicit declaration — infer a type and emit
+                // one for simple-ident first-use assignments.
+                if matches!(op, AssignOp::Assign) {
+                    if let Expr::Ident(name) = target {
+                        if !self.is_declared(name) {
+                            let v = self.gen_expr(value);
+                            let t = self.infer_c_type(value);
+                            self.declare(name);
+                            return format!("{}{} {} = {};", self.ind(), t, name, v);
+                        }
+                    }
+                }
                 format!("{}{} {} {};", self.ind(), self.gen_expr(target), o, self.gen_expr(value))
             }
             Statement::LetDestructure { names, value, .. } => {
                 format!("{}/* destructure */ {} = {};", self.ind(), names.join(", "), self.gen_expr(value))
+            }
+            // Iter-24 Bug D: explicit Use/Module handlers for C.
+            Statement::Use { path, .. } => {
+                // Best-effort: treat last path segment as a header name.
+                let name = path.last().cloned().unwrap_or_default();
+                format!("{}#include <{}.h>", self.ind(), name)
+            }
+            Statement::Module { .. } => {
+                // C has no module statement.
+                String::new()
             }
             _ => format!("{}/* TODO */", self.ind()),
         }
     }
 
     fn gen_block(&mut self, block: &Block) -> String {
+        self.scopes.push(std::collections::HashSet::new());
         let mut out = String::new();
         for s in &block.statements { out.push_str(&self.gen_stmt(s)); out.push('\n'); }
-        if let Some(e) = &block.expr { out.push_str(&format!("{}return {};\n", self.ind(), self.gen_expr(e))); }
+        if let Some(e) = &block.expr {
+            // Don't wrap statement-like exprs in return
+            let is_stmt_like = matches!(e.as_ref(),
+                Expr::For { .. } | Expr::While { .. } | Expr::Loop { .. }
+                | Expr::If { .. } | Expr::Match { .. } | Expr::TryCatch { .. }
+            );
+            if is_stmt_like {
+                out.push_str(&format!("{}{};\n", self.ind(), self.gen_expr(e)));
+            } else {
+                out.push_str(&format!("{}return {};\n", self.ind(), self.gen_expr(e)));
+            }
+        }
+        self.scopes.pop();
         out
     }
 
@@ -3273,7 +4517,25 @@ impl CGen {
             Expr::StringLit(_) => "const char*".into(),
             Expr::CharLit(_) => "char".into(),
             Expr::Nil => "void*".into(),
-            _ => "auto".into(), // C23 auto or just placeholder
+            // Arithmetic and comparisons are typed by their operands; lacking
+            // a real type inferencer we fall back to int64_t which matches
+            // the dominant integer width Nebula emits.
+            Expr::BinaryOp { op, left, right } => match op {
+                BinOp::Eq | BinOp::NotEq | BinOp::Less | BinOp::Greater
+                | BinOp::LessEq | BinOp::GreaterEq | BinOp::And | BinOp::Or => "int".into(),
+                _ => {
+                    let l = self.infer_c_type(left);
+                    let r = self.infer_c_type(right);
+                    if l == "double" || r == "double" { "double".into() } else { "int64_t".into() }
+                }
+            },
+            Expr::UnaryOp { op, operand } => match op {
+                UnaryOp::Not => "int".into(),
+                _ => self.infer_c_type(operand),
+            },
+            Expr::Index { .. } | Expr::FieldAccess { .. } | Expr::Call { .. }
+            | Expr::MethodCall { .. } | Expr::Ident(_) => "int64_t".into(),
+            _ => "int64_t".into(),
         }
     }
 
@@ -3345,6 +4607,21 @@ impl CGen {
             }
             Expr::FieldAccess { object, field } => format!("{}.{}", self.gen_expr(object), field),
             Expr::Index { object, index } => format!("{}[{}]", self.gen_expr(object), self.gen_expr(index)),
+            Expr::Slice { object, start, end } => {
+                // C has no slice type. Emit pointer-plus-start as the closest form;
+                // the length component is lost. Hosts using Nebula→C on slice-heavy
+                // code should restructure to pass (ptr, len) pairs explicitly.
+                let obj = self.gen_expr(object);
+                let base = match start.as_ref() {
+                    Some(s) => format!("({} + {})", obj, self.gen_expr(s)),
+                    None => obj,
+                };
+                if end.is_some() {
+                    format!("{} /* nebula: slice length lost in C */", base)
+                } else {
+                    base
+                }
+            }
             Expr::If { condition, then_block, else_block } => {
                 if let (Some(te), Some(eb)) = (&then_block.expr, else_block) {
                     if then_block.statements.is_empty() {
@@ -3599,8 +4876,9 @@ mod tests {
 
     #[test]
     fn test_go_let() {
+        // Top-level `lt` now emits `const` (Go forbids `:=` at package level).
         let go = translate_go("lt x = 42");
-        assert!(go.contains("x := 42"));
+        assert!(go.contains("const x = 42"), "got: {}", go);
     }
 
     #[test]
@@ -3643,7 +4921,7 @@ mod tests {
     #[test]
     fn test_go_string_literal() {
         let go = translate_go(r#"lt name = "World""#);
-        assert!(go.contains(r#"name := "World""#));
+        assert!(go.contains(r#"const name = "World""#), "got: {}", go);
     }
 
     // --- Swift tests ---

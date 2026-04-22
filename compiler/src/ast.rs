@@ -58,6 +58,7 @@ pub enum Statement {
     Return(Option<Expr>),
     Break(Option<Expr>),
     Continue,
+    Throw(Option<Expr>),
     Assignment {
         target: Expr,
         op: AssignOp,
@@ -178,6 +179,16 @@ pub enum Expr {
     Index {
         object: Box<Expr>,
         index: Box<Expr>,
+    },
+    /// Slice expression `xs[start:end]`. Either bound may be omitted
+    /// (`xs[:end]`, `xs[start:]`, `xs[:]`). Codegen emits the closest native
+    /// form per target: Python/Go use `xs[a:b]` directly; JS/TS use
+    /// `.slice(a, b)`; Swift uses `xs[a..<b]`; Rust uses `&xs[a..b]`; Kotlin
+    /// uses `xs.subList(a, b)`; C has no clean form.
+    Slice {
+        object: Box<Expr>,
+        start: Option<Box<Expr>>,
+        end: Option<Box<Expr>>,
     },
     Lambda {
         params: Vec<Param>,

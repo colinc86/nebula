@@ -248,6 +248,8 @@ impl NebFmt {
             }
             Statement::Break(None) => format!("{}break", self.ind()),
             Statement::Continue => format!("{}continue", self.ind()),
+            Statement::Throw(Some(expr)) => format!("{}throw {}", self.ind(), self.fmt_expr(expr)),
+            Statement::Throw(None) => format!("{}throw", self.ind()),
             Statement::Assignment { target, op, value } => {
                 let op_str = match op {
                     AssignOp::Assign => "=",
@@ -381,6 +383,12 @@ impl NebFmt {
 
             Expr::Index { object, index } => {
                 format!("{}[{}]", self.fmt_expr(object), self.fmt_expr(index))
+            }
+
+            Expr::Slice { object, start, end } => {
+                let s = start.as_ref().map(|e| self.fmt_expr(e)).unwrap_or_default();
+                let e_s = end.as_ref().map(|e| self.fmt_expr(e)).unwrap_or_default();
+                format!("{}[{}:{}]", self.fmt_expr(object), s, e_s)
             }
 
             Expr::Lambda { params, body } => {

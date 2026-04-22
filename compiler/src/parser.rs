@@ -26,11 +26,15 @@ struct Parser {
     pos: usize,
     /// When true, suppress struct literal parsing (inside if/for/while conditions)
     no_struct_literal: bool,
+    /// When true, suppress newline-then-dot method-chain continuation
+    /// (inside match-arm bodies, where `.variant` on the next line is a
+    /// new pattern, not a chained method call on this arm's body).
+    no_newline_chain: bool,
 }
 
 impl Parser {
     fn new(tokens: Vec<SpannedToken>) -> Self {
-        Parser { tokens, pos: 0, no_struct_literal: false }
+        Parser { tokens, pos: 0, no_struct_literal: false, no_newline_chain: false }
     }
 
     fn parse_program(&mut self) -> Result<Program, ParseError> {
@@ -245,6 +249,7 @@ impl Parser {
                 }
             }
             Token::Break => self.parse_break(),
+            Token::Throw => self.parse_throw(),
             Token::Continue => {
                 self.advance();
                 Ok(Statement::Continue)
@@ -366,8 +371,18 @@ impl Parser {
         } else {
             None
         };
-        self.expect(&Token::Assign)?;
-        let value = self.parse_expr()?;
+        // `lt x: Int` without `= value` — bare typed declaration. Only valid
+        // when a type annotation was present; else we'd allow `lt x` which is
+        // too loose. Emit Expr::Nil as the placeholder value.
+        let value = if matches!(self.peek(), Token::Assign) {
+            self.advance();
+            self.parse_expr()?
+        } else if type_ann.is_some() {
+            Expr::Nil
+        } else {
+            self.expect(&Token::Assign)?;
+            self.parse_expr()?
+        };
         Ok(Statement::Let {
             name,
             type_ann,
@@ -378,7 +393,6 @@ impl Parser {
     fn parse_mut(&mut self) -> Result<Statement, ParseError> {
         self.advance(); // mt
 
-        // Tuple destructuring: mt (a, b) = expr
         if matches!(self.peek(), Token::LeftParen) {
             return self.parse_destructure(true);
         }
@@ -390,8 +404,15 @@ impl Parser {
         } else {
             None
         };
-        self.expect(&Token::Assign)?;
-        let value = self.parse_expr()?;
+        let value = if matches!(self.peek(), Token::Assign) {
+            self.advance();
+            self.parse_expr()?
+        } else if type_ann.is_some() {
+            Expr::Nil
+        } else {
+            self.expect(&Token::Assign)?;
+            self.parse_expr()?
+        };
         Ok(Statement::Mut {
             name,
             type_ann,
@@ -589,8 +610,23 @@ impl Parser {
                     false
                 };
                 let fname = self.expect_ident()?;
-                self.expect(&Token::Colon)?;
-                let ftype = self.parse_type()?;
+                let ftype = if matches!(self.peek(), Token::Colon) {
+                    self.advance();
+                    self.parse_type()?
+                } else {
+                    // Field with no type annotation — common for Python-style
+                    // class bodies emitted by the ingester (`red = "red"`).
+                    // Default to `Any`. Still needs to consume the `=` and
+                    // value if present so downstream parser doesn't choke.
+                    TypeExpr::Named("Any".to_string())
+                };
+                // Optional default value `= EXPR` — Nebula's struct field
+                // grammar doesn't store defaults in the AST, but we accept
+                // and discard so Python-style class fields parse.
+                if matches!(self.peek(), Token::Assign) {
+                    self.advance();
+                    let _discard = self.parse_expr()?;
+                }
                 fields.push(Field {
                     name: fname,
                     type_ann: ftype,
@@ -660,9 +696,38 @@ impl Parser {
                 }
                 self.expect(&Token::RightParen)?;
                 vfields
+            } else if matches!(self.peek(), Token::LeftBrace) {
+                // Struct-variant form: `VariantName { f1: T1, f2: T2 }`
+                // (Rust, Swift). Fields must be `name: Type`; no positional.
+                self.advance();
+                self.skip_newlines();
+                let mut vfields = Vec::new();
+                while !matches!(self.peek(), Token::RightBrace) {
+                    if !vfields.is_empty() {
+                        // Allow comma OR newline as separator.
+                        if matches!(self.peek(), Token::Comma) {
+                            self.advance();
+                        }
+                        self.skip_newlines();
+                        if matches!(self.peek(), Token::RightBrace) { break; }
+                    }
+                    let fname = self.expect_ident()?;
+                    self.expect(&Token::Colon)?;
+                    let type_ann = self.parse_type()?;
+                    vfields.push(VariantField { name: Some(fname), type_ann });
+                }
+                self.expect(&Token::RightBrace)?;
+                vfields
             } else {
                 Vec::new()
             };
+            // Skip explicit discriminant `= value` on the variant
+            // (Rust, C-like enums). Nebula doesn't preserve the value;
+            // the name-index mapping is lost but the declaration parses.
+            if matches!(self.peek(), Token::Assign) {
+                self.advance();
+                let _discard = self.parse_expr()?;
+            }
             variants.push(Variant {
                 name: vname,
                 fields,
@@ -787,6 +852,16 @@ impl Parser {
         }
     }
 
+    fn parse_throw(&mut self) -> Result<Statement, ParseError> {
+        self.advance(); // throw
+        if self.at_statement_end() {
+            Ok(Statement::Throw(None))
+        } else {
+            let expr = self.parse_expr()?;
+            Ok(Statement::Throw(Some(expr)))
+        }
+    }
+
     fn parse_use(&mut self) -> Result<Statement, ParseError> {
         self.advance(); // use
         let mut path = vec![self.expect_ident()?];
@@ -887,7 +962,46 @@ impl Parser {
             return Ok(TypeExpr::Tuple(types));
         }
 
-        let name = self.expect_ident()?;
+        // Bracketed tuple/array type: `[A, B]` (TS tuple) or `[A]` (Swift
+        // array shorthand). Both map to a tuple/list — codegen targets
+        // render them per-language. Without this arm, TS `Array[[T, U]]`
+        // fails because the inner `[T, U]` has no identifier before the
+        // bracket.
+        if matches!(self.peek(), Token::LeftBracket) {
+            self.advance();
+            let mut types = Vec::new();
+            while !matches!(self.peek(), Token::RightBracket) {
+                if !types.is_empty() {
+                    self.expect(&Token::Comma)?;
+                }
+                types.push(self.parse_type()?);
+            }
+            self.expect(&Token::RightBracket)?;
+            // Swift-style `[T]` is an array; multi-element `[A, B]` is a tuple.
+            if types.len() == 1 {
+                return Ok(TypeExpr::Generic("List".to_string(), types));
+            }
+            return Ok(TypeExpr::Tuple(types));
+        }
+
+        // Python uses `None` as the no-return type. Our lexer emits
+        // Token::Nil for the literal, which previously tripped parse_type
+        // expecting a bare identifier. Accept it and treat as `Nil` named.
+        if matches!(self.peek(), Token::Nil) {
+            self.advance();
+            return Ok(TypeExpr::Named("Nil".to_string()));
+        }
+        let mut name = self.expect_ident()?;
+        // Dotted type path — `io.Reader`, `np.ndarray`, `java.util.List`.
+        // Collapse to a single identifier so the codegen arms can emit it
+        // verbatim for languages that natively support qualified types (Go,
+        // Python, Kotlin, Java) or strip for languages that don't (C).
+        while matches!(self.peek(), Token::Dot) {
+            self.advance();
+            let seg = self.expect_ident()?;
+            name.push('.');
+            name.push_str(&seg);
+        }
         if matches!(self.peek(), Token::Less) {
             self.advance();
             let mut args = Vec::new();
@@ -906,7 +1020,8 @@ impl Parser {
             } else {
                 self.advance(); // consume >
             }
-            Ok(TypeExpr::Generic(name, args))
+            let t = TypeExpr::Generic(name, args);
+            Ok(Self::maybe_optional(self, t))
         } else if matches!(self.peek(), Token::LeftBracket) {
             // Python-style generics: List[Int], Map[String, Int], Tuple[Int, Int]
             self.advance();
@@ -918,9 +1033,22 @@ impl Parser {
                 args.push(self.parse_type()?);
             }
             self.expect(&Token::RightBracket)?;
-            Ok(TypeExpr::Generic(name, args))
+            let t = TypeExpr::Generic(name, args);
+            Ok(Self::maybe_optional(self, t))
         } else {
-            Ok(TypeExpr::Named(name))
+            let t = TypeExpr::Named(name);
+            Ok(Self::maybe_optional(self, t))
+        }
+    }
+
+    /// Trailing-`?` optional: `T?` → `Option<T>`. Lets Swift/Kotlin/TS
+    /// nullable-type suffixes round-trip without a separate grammar branch.
+    fn maybe_optional(p: &mut Self, t: TypeExpr) -> TypeExpr {
+        if matches!(p.peek(), Token::Question) {
+            p.advance();
+            TypeExpr::Option(Box::new(t))
+        } else {
+            t
         }
     }
 
@@ -1043,15 +1171,20 @@ impl Parser {
     }
 
     fn parse_bitwise_or(&mut self) -> Result<Expr, ParseError> {
-        let left = self.parse_bitwise_xor()?;
-        // Note: Token::Pipe is also used for lambdas. Only treat as bitwise or
-        // if it's clearly not a lambda context (i.e. we already have a left operand).
-        // For now, bitwise | is lower priority; we skip it here to avoid ambiguity
-        // with lambda syntax. Users should use explicit parentheses.
+        let mut left = self.parse_bitwise_xor()?;
+        // `Token::Pipe` is ambiguous — it opens a lambda parameter list OR
+        // acts as bitwise OR between two expressions. Once we have a left
+        // operand, any subsequent `|` must be bitwise (a lambda expression
+        // here would be a statement, not a binary operator). The lambda
+        // form is parsed at the primary-expression level (parse_lambda).
         while matches!(self.peek(), Token::Pipe) {
-            // Lookahead: if next after | is an ident followed by |, it's a lambda
-            // Otherwise treat as bitwise or. For now, skip bitwise or at this level.
-            break;
+            self.advance();
+            let right = self.parse_bitwise_xor()?;
+            left = Expr::BinaryOp {
+                left: Box::new(left),
+                op: BinOp::BitOr,
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
@@ -1257,19 +1390,53 @@ impl Parser {
                 }
                 Token::LeftBracket => {
                     self.advance();
-                    let index = self.parse_expr()?;
-                    self.expect(&Token::RightBracket)?;
-                    expr = Expr::Index {
-                        object: Box::new(expr),
-                        index: Box::new(index),
-                    };
+                    // Slice starting with `:` → xs[:end] or xs[:]
+                    if matches!(self.peek(), Token::Colon) {
+                        self.advance();
+                        let end = if matches!(self.peek(), Token::RightBracket) {
+                            None
+                        } else {
+                            Some(Box::new(self.parse_expr()?))
+                        };
+                        self.expect(&Token::RightBracket)?;
+                        expr = Expr::Slice {
+                            object: Box::new(expr),
+                            start: None,
+                            end,
+                        };
+                    } else {
+                        let first = self.parse_expr()?;
+                        if matches!(self.peek(), Token::Colon) {
+                            // Slice with start present: xs[a:end] or xs[a:]
+                            self.advance();
+                            let end = if matches!(self.peek(), Token::RightBracket) {
+                                None
+                            } else {
+                                Some(Box::new(self.parse_expr()?))
+                            };
+                            self.expect(&Token::RightBracket)?;
+                            expr = Expr::Slice {
+                                object: Box::new(expr),
+                                start: Some(Box::new(first)),
+                                end,
+                            };
+                        } else {
+                            self.expect(&Token::RightBracket)?;
+                            expr = Expr::Index {
+                                object: Box::new(expr),
+                                index: Box::new(first),
+                            };
+                        }
+                    }
                 }
                 Token::Question => {
                     self.advance();
                     expr = Expr::Try(Box::new(expr));
                 }
-                // Multi-line chaining: newline followed by `.` continues the expression
-                Token::Newline => {
+                // Multi-line chaining: newline followed by `.` continues the expression.
+                // Suppressed inside match arm bodies where `.variant` on the next
+                // line starts a new pattern, not a method call on the arm body.
+                Token::Newline if !self.no_newline_chain => {
                     // Peek past the newline(s) to see if a `.` follows
                     let mut lookahead = self.pos + 1;
                     while lookahead < self.tokens.len()
@@ -1510,7 +1677,10 @@ impl Parser {
                         None
                     };
                     self.expect(&Token::FatArrow)?;
+                    let prev_no_chain = self.no_newline_chain;
+                    self.no_newline_chain = true;
                     let body = self.parse_expr()?;
+                    self.no_newline_chain = prev_no_chain;
                     arms.push(MatchArm {
                         pattern,
                         guard,
@@ -1721,9 +1891,87 @@ impl Parser {
                 self.advance();
                 Ok(Pattern::Wildcard)
             }
+            // Swift-style enum-variant shorthand: `.circle(r)` / `.none`.
+            // The enum type name is implied from the match subject; we store
+            // the pattern as `Variant(".circle", subs)` so codegen can round-
+            // trip it without needing a subject lookup.
+            Token::Dot => {
+                self.advance();
+                let variant = self.expect_ident()?;
+                let full = format!(".{variant}");
+                if matches!(self.peek(), Token::LeftParen) {
+                    self.advance();
+                    let mut sub = Vec::new();
+                    while !matches!(self.peek(), Token::RightParen) {
+                        if !sub.is_empty() {
+                            self.expect(&Token::Comma)?;
+                        }
+                        sub.push(self.parse_pattern()?);
+                    }
+                    self.expect(&Token::RightParen)?;
+                    return Ok(Pattern::Variant(full, sub));
+                }
+                return Ok(Pattern::Variant(full, Vec::new()));
+            }
+            // Tuple pattern `(p1, p2, ...)` — already accepted for pattern
+            // parsing in parse_destructure but not here in match arms.
+            Token::LeftParen => {
+                self.advance();
+                let mut sub = Vec::new();
+                while !matches!(self.peek(), Token::RightParen) {
+                    if !sub.is_empty() {
+                        self.expect(&Token::Comma)?;
+                    }
+                    sub.push(self.parse_pattern()?);
+                }
+                self.expect(&Token::RightParen)?;
+                return Ok(Pattern::Variant(String::from("(tuple)"), sub));
+            }
+            // Array pattern `[p1, p2]` — Python / JS / Rust slice patterns.
+            // Nebula stores as a tuple-shaped Variant; codegen targets render
+            // per-language (Python keeps `[a, b]`, Rust keeps `[a, b]`, etc.).
+            Token::LeftBracket => {
+                self.advance();
+                let mut sub = Vec::new();
+                while !matches!(self.peek(), Token::RightBracket) {
+                    if !sub.is_empty() {
+                        self.expect(&Token::Comma)?;
+                    }
+                    // Accept `*name` rest-pattern (Python `*tail`, Rust `..rest`).
+                    // Strip the `*`; codegen can re-add it.
+                    if matches!(self.peek(), Token::Star) {
+                        self.advance();
+                    }
+                    sub.push(self.parse_pattern()?);
+                }
+                self.expect(&Token::RightBracket)?;
+                return Ok(Pattern::Variant(String::from("[array]"), sub));
+            }
+            // Object/map pattern `{key: val, ...}` — JS/Python destructuring.
+            // Kept as a single-item Variant with raw text; pattern matching
+            // against maps is rare and best-effort.
+            Token::LeftBrace => {
+                self.advance();
+                let mut sub = Vec::new();
+                while !matches!(self.peek(), Token::RightBrace) {
+                    if !sub.is_empty() {
+                        self.expect(&Token::Comma)?;
+                    }
+                    // Skip `key:` prefix if present (only keep the binding).
+                    if matches!(self.peek(), Token::String(_)) {
+                        self.advance();
+                        if matches!(self.peek(), Token::Colon) {
+                            self.advance();
+                        }
+                    }
+                    sub.push(self.parse_pattern()?);
+                }
+                self.expect(&Token::RightBrace)?;
+                return Ok(Pattern::Variant(String::from("{map}"), sub));
+            }
             Token::Ident(name) => {
                 self.advance();
-                // Check for variant pattern: Name.Variant(...)
+                // Check for variant pattern: Name.Variant(...) / Name.Variant { … }
                 if matches!(self.peek(), Token::Dot) {
                     self.advance();
                     let variant = self.expect_ident()?;
@@ -1739,6 +1987,26 @@ impl Parser {
                         }
                         self.expect(&Token::RightParen)?;
                         Ok(Pattern::Variant(full, sub))
+                    } else if matches!(self.peek(), Token::LeftBrace) {
+                        // Struct-variant pattern `X.Y { f1, f2 }` — fields
+                        // bind by name; treat each as a binding.
+                        self.advance();
+                        let mut sub = Vec::new();
+                        while !matches!(self.peek(), Token::RightBrace) {
+                            if !sub.is_empty() {
+                                self.expect(&Token::Comma)?;
+                            }
+                            let fname = self.expect_ident()?;
+                            // Optional `: Pattern` rename — `{ x: inner }`.
+                            if matches!(self.peek(), Token::Colon) {
+                                self.advance();
+                                sub.push(self.parse_pattern()?);
+                            } else {
+                                sub.push(Pattern::Binding(fname));
+                            }
+                        }
+                        self.expect(&Token::RightBrace)?;
+                        Ok(Pattern::Variant(full, sub))
                     } else {
                         Ok(Pattern::Variant(full, Vec::new()))
                     }
@@ -1753,6 +2021,24 @@ impl Parser {
                         sub.push(self.parse_pattern()?);
                     }
                     self.expect(&Token::RightParen)?;
+                    Ok(Pattern::Variant(name, sub))
+                } else if matches!(self.peek(), Token::LeftBrace)
+                    && name.chars().next().map_or(false, |c| c.is_uppercase())
+                {
+                    // Bare `Variant { f1, f2 }` — uppercase name + braces.
+                    self.advance();
+                    let mut sub = Vec::new();
+                    while !matches!(self.peek(), Token::RightBrace) {
+                        if !sub.is_empty() { self.expect(&Token::Comma)?; }
+                        let fname = self.expect_ident()?;
+                        if matches!(self.peek(), Token::Colon) {
+                            self.advance();
+                            sub.push(self.parse_pattern()?);
+                        } else {
+                            sub.push(Pattern::Binding(fname));
+                        }
+                    }
+                    self.expect(&Token::RightBrace)?;
                     Ok(Pattern::Variant(name, sub))
                 } else if name.chars().next().map_or(false, |c| c.is_uppercase()) {
                     // Uppercase identifier → treat as value/enum variant pattern

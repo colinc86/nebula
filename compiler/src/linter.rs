@@ -155,6 +155,9 @@ impl LintContext {
             Statement::Break(Some(expr)) => {
                 self.check_expr(expr, warnings);
             }
+            Statement::Throw(Some(expr)) => {
+                self.check_expr(expr, warnings);
+            }
             Statement::Assignment { target, value, .. } => {
                 if let Expr::Ident(name) = target {
                     self.mark_mutated(name);
@@ -191,6 +194,7 @@ impl LintContext {
             | Statement::Module { .. }
             | Statement::Return(None)
             | Statement::Break(None)
+            | Statement::Throw(None)
             | Statement::Continue => {}
         }
 
@@ -257,6 +261,11 @@ impl LintContext {
             Expr::Index { object, index } => {
                 self.check_expr(object, warnings);
                 self.check_expr(index, warnings);
+            }
+            Expr::Slice { object, start, end } => {
+                self.check_expr(object, warnings);
+                if let Some(s) = start { self.check_expr(s, warnings); }
+                if let Some(e) = end { self.check_expr(e, warnings); }
             }
             Expr::Lambda { params, body } => {
                 self.push_scope();
