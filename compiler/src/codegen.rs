@@ -156,7 +156,7 @@ pub fn to_typescript(program: &Program) -> String {
 }
 
 pub fn to_rust_lang(program: &Program) -> String {
-    let mut gen = RustGen { indent: 0, scopes: vec![std::collections::HashSet::new()], enum_struct_variants: std::collections::HashMap::new(), all_enum_variants: std::collections::HashSet::new(), trait_names: std::collections::HashSet::new(), current_fn_returns_string: false, current_fn_returns_vec: false, current_fn_result_ok_type: None };
+    let mut gen = RustGen { indent: 0, scopes: vec![std::collections::HashSet::new()], enum_struct_variants: std::collections::HashMap::new(), all_enum_variants: std::collections::HashSet::new(), trait_names: std::collections::HashSet::new(), current_fn_returns_string: false, current_fn_returns_vec: false, current_fn_result_ok_type: None, string_params: std::collections::HashSet::new() };
     gen.gen_program(program)
 }
 
@@ -4025,6 +4025,9 @@ struct RustGen {
     /// emit a turbofish on `.parse()` so type inference picks a concrete
     /// numeric type: `s.parse::<i64>()?`.
     current_fn_result_ok_type: Option<String>,
+    /// Params declared as `Str`/`String`/`&str` in the current fn — slice
+    /// operations on them need `.to_string()` not `.to_vec()`.
+    string_params: std::collections::HashSet<String>,
 }
 
 impl RustGen {
@@ -4800,6 +4803,12 @@ impl RustGen {
                     }
                     _ => None,
                 };
+                let prev_strings = self.string_params.clone();
+                for p in params.iter().filter(|p| p.name != "sf") {
+                    if matches!(&p.type_ann, Some(TypeExpr::Named(n)) if n == "Str" || n == "String") {
+                        self.string_params.insert(p.name.clone());
+                    }
+                }
                 self.scopes.push(std::collections::HashSet::new());
                 for p in params { self.declare(&p.name); }
                 let mut out = format!("{}fn {}{}({}){} {{\n", self.ind(), name, generics_str, ps.join(", "), ret);
@@ -4808,6 +4817,7 @@ impl RustGen {
                 self.current_fn_returns_string = prev_ret;
                 self.current_fn_returns_vec = prev_vec;
                 self.current_fn_result_ok_type = prev_ok;
+                self.string_params = prev_strings;
                 out.push_str(&format!("{}}}", self.ind()));
                 out
             }
@@ -4995,11 +5005,24 @@ impl RustGen {
         let mut out = String::new();
         for s in &block.statements { out.push_str(&self.gen_stmt(s)); out.push('\n'); }
         if let Some(e) = &block.expr {
-            // Auto-.collect() iter-chain trailing exprs in Vec-returning fns.
             let needs_collect = self.current_fn_returns_vec && Self::is_iter_chain_tail(e);
+            let needs_unwrap_default = matches!(e.as_ref(), Expr::MethodCall { method, .. }
+                if matches!(method.as_str(), "first" | "last" | "min" | "max" | "get"))
+                && !self.current_fn_returns_vec
+                && !matches!(e.as_ref(), Expr::Call { .. });
+            // When collecting into `Vec<i64>`/`Vec<f64>` etc. from a Vec
+            // reference iterator (e.g. `xs.iter().step_by(2).collect()`),
+            // the element type is `&T` — insert `.copied()` first.
+            let needs_copied_before_collect = needs_collect
+                && matches!(e.as_ref(), Expr::MethodCall { method, .. }
+                    if !matches!(method.as_str(), "copied" | "cloned" | "map"));
             let rendered = self.gen_expr(e);
-            let final_expr = if needs_collect {
+            let final_expr = if needs_collect && needs_copied_before_collect {
+                format!("{}.copied().collect::<Vec<_>>()", rendered)
+            } else if needs_collect {
                 format!("{}.collect::<Vec<_>>()", rendered)
+            } else if needs_unwrap_default {
+                format!("{}.copied().unwrap_or_default()", rendered)
             } else { rendered };
             out.push_str(&format!("{}{}\n", self.ind(), final_expr));
         }
@@ -5192,7 +5215,8 @@ impl RustGen {
                 // speculatively for well-known iter-only methods.
                 let iter_methods = ["enumerate", "map", "filter", "fold", "sum",
                     "product", "count", "any", "all", "find", "min", "max",
-                    "zip", "take", "skip", "flat_map", "rev"];
+                    "zip", "take", "skip", "flat_map", "rev", "step_by",
+                    "chain", "cloned", "copied", "collect"];
                 let needs_iter = iter_methods.contains(&m);
                 // Ranges and already-iterator method chains are iterators on
                 // their own; only wrap a concrete collection (Vec, &[]) with
@@ -5245,15 +5269,17 @@ impl RustGen {
                 format!("{}[{}]", self.gen_expr(object), self.gen_expr(index))
             }
             Expr::Slice { object, start, end } => {
-                // Rust slice indices must be `usize`. The IL has no usize
-                // distinction (everything's `Int`), so cast explicitly.
                 let obj = self.gen_expr(object);
                 let cast = |e: String| format!("({}) as usize", e);
+                // String slices use `.to_string()` not `.to_vec()`.
+                let materialise = if let Expr::Ident(n) = object.as_ref() {
+                    if self.string_params.contains(n) { ".to_string()" } else { ".to_vec()" }
+                } else { ".to_vec()" };
                 match (start.as_ref(), end.as_ref()) {
-                    (None, None) => format!("{}.to_vec()", obj),
-                    (Some(s), None) => format!("{}[{}..].to_vec()", obj, cast(self.gen_expr(s))),
-                    (None, Some(e)) => format!("{}[..{}].to_vec()", obj, cast(self.gen_expr(e))),
-                    (Some(s), Some(e)) => format!("{}[{}..{}].to_vec()", obj, cast(self.gen_expr(s)), cast(self.gen_expr(e))),
+                    (None, None) => format!("{}{}", obj, materialise),
+                    (Some(s), None) => format!("{}[{}..]{}", obj, cast(self.gen_expr(s)), materialise),
+                    (None, Some(e)) => format!("{}[..{}]{}", obj, cast(self.gen_expr(e)), materialise),
+                    (Some(s), Some(e)) => format!("{}[{}..{}]{}", obj, cast(self.gen_expr(s)), cast(self.gen_expr(e)), materialise),
                 }
             }
             Expr::Lambda { params, body } => {

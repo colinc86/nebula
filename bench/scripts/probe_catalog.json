@@ -1,9 +1,9 @@
 {
   "summary": {
     "total": 91,
-    "clean": 60,
+    "clean": 61,
     "minor": 1,
-    "major": 30,
+    "major": 29,
     "critical": 0,
     "by_lang": {
       "c": {
@@ -43,9 +43,9 @@
       },
       "rust": {
         "total": 11,
-        "clean": 5,
+        "clean": 6,
         "minor": 1,
-        "major": 5,
+        "major": 4,
         "critical": 0
       },
       "swift": {
@@ -925,10 +925,10 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: error[E0308]: mismatched types |   --> <tmp>/probe.rs:11:5 |    | | 10 | fn last_copy(xs: Vec<i64>) -> i64 { |    |                               --- expected `i64` because of return type | 11 |     xs.last() |    |     ^^^^^^^^^ expected `...",
+      "phase4_native_compile": "ok",
       "antipatterns": [],
       "nebula_len": 323,
-      "severity": "major",
+      "severity": "clean",
       "antipattern_detail": []
     },
     {
@@ -977,7 +977,7 @@
       "phase1_from_nebula": "ok",
       "phase2_nebula_check": "ok",
       "phase3_to_nebula": "ok",
-      "phase4_native_compile": "err: error[E0308]: mismatched types |  --> <tmp>/probe.rs:7:5 |   | | 6 | fn lookup(d: HashMap<String, i64>, k: String) -> i64 { |   |                                                  --- expected `i64` because of return type | 7 |     d.get(&k)...",
+      "phase4_native_compile": "err: error[E0308]: mismatched types |   --> <tmp>/probe.rs:10:5 |    | |  9 | fn to_set(xs: Vec<String>) -> HashSet<String> { |    |                               --------------- expected `HashSet<String>` because of return type | 10 |     xs.it...",
       "antipatterns": [
         "casing_variants"
       ],
