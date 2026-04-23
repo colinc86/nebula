@@ -104,6 +104,29 @@ impl Parser {
         }
     }
 
+    /// Like `expect_ident`, but after a `.` — accept keywords as method / field
+    /// names. Many host languages allow `.await()`, `.match`, `.try_from()`,
+    /// etc. as methods, and stripping them at ingest costs real semantic info.
+    fn expect_member_name(&mut self) -> Result<String, ParseError> {
+        let tok = self.peek().clone();
+        match tok {
+            Token::Ident(name) => { self.advance(); Ok(name) }
+            Token::Await => { self.advance(); Ok("await".into()) }
+            Token::Async => { self.advance(); Ok("async".into()) }
+            Token::Try => { self.advance(); Ok("try".into()) }
+            Token::Catch => { self.advance(); Ok("catch".into()) }
+            Token::Finally => { self.advance(); Ok("finally".into()) }
+            Token::Match => { self.advance(); Ok("match".into()) }
+            Token::Type => { self.advance(); Ok("type".into()) }
+            Token::As => { self.advance(); Ok("as".into()) }
+            Token::In => { self.advance(); Ok("in".into()) }
+            Token::Not => { self.advance(); Ok("not".into()) }
+            Token::And => { self.advance(); Ok("and".into()) }
+            Token::Or => { self.advance(); Ok("or".into()) }
+            _ => self.expect_ident(),
+        }
+    }
+
     fn skip_newlines(&mut self) {
         while matches!(self.peek(), Token::Newline) {
             self.advance();
@@ -1378,7 +1401,7 @@ impl Parser {
             match self.peek() {
                 Token::Dot => {
                     self.advance();
-                    let field = self.expect_ident()?;
+                    let field = self.expect_member_name()?;
                     if matches!(self.peek(), Token::LeftParen) {
                         self.advance();
                         let args = self.parse_call_args()?;
@@ -1514,6 +1537,7 @@ impl Parser {
     /// Parse a `{ ... }` as a trailing closure in Kotlin/Swift style.
     /// Shape:  `{ body }`  → `|| body`  (implicit `it` allowed)
     ///         `{ x -> body }` → `|x| body` (arrow-param form).
+    #[allow(dead_code)]
     fn try_parse_trailing_closure(&mut self) -> Result<Option<Expr>, ParseError> {
         if !matches!(self.peek(), Token::LeftBrace) {
             return Ok(None);
@@ -1764,8 +1788,15 @@ impl Parser {
                 self.no_struct_literal = false;
                 self.skip_newlines();
                 let then_block = self.parse_block()?;
-                self.skip_newlines();
-                let else_block = if matches!(self.peek(), Token::Else) {
+                // Peek-past-newlines to see if an `else` follows. Only commit
+                // to consuming newlines when we see one — otherwise, stop
+                // at the current token so post-if binary-op chains like
+                // `*out = 0` on the next line don't merge into the if-expr.
+                let saved_pos = self.pos;
+                while matches!(self.peek(), Token::Newline) { self.advance(); }
+                let has_else = matches!(self.peek(), Token::Else);
+                if !has_else { self.pos = saved_pos; }
+                let else_block = if has_else {
                     self.advance();
                     self.skip_newlines();
                     if matches!(self.peek(), Token::If) {
@@ -1881,14 +1912,30 @@ impl Parser {
                 self.skip_newlines();
                 let try_block = self.parse_block()?;
                 self.skip_newlines();
-                self.expect(&Token::Catch)?;
-                let error_binding = self.expect_ident()?;
-                self.skip_newlines();
-                let catch_block = self.parse_block()?;
+                // catch is optional when finally is present (Java/Kotlin style
+                // `try { ... } finally { ... }` with no catch).
+                let (error_binding, catch_block) = if matches!(self.peek(), Token::Catch) {
+                    self.expect(&Token::Catch)?;
+                    let binding = self.expect_ident()?;
+                    self.skip_newlines();
+                    let block = self.parse_block()?;
+                    self.skip_newlines();
+                    (binding, block)
+                } else {
+                    (String::from("_"), Block { statements: vec![], expr: None })
+                };
+                let finally_block = if matches!(self.peek(), Token::Finally) {
+                    self.advance();
+                    self.skip_newlines();
+                    Some(self.parse_block()?)
+                } else {
+                    None
+                };
                 Ok(Expr::TryCatch {
                     try_block,
                     error_binding,
                     catch_block,
+                    finally_block,
                 })
             }
 

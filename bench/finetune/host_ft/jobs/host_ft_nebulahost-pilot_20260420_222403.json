@@ -1,0 +1,19 @@
+{
+  "job_id": "ftjob-vu1AIF6rGVho9izE9ywDoAHk",
+  "base_model": "gpt-4o-mini-2024-07-18",
+  "fine_tuned_model": "ft:gpt-4.1-2025-04-14:personal:nebulahost-prod-v2:DWvnbtaT",
+  "n_train": 2630,
+  "n_val": 258,
+  "status": "succeeded",
+  "hyperparameters": {
+    "n_epochs": 2,
+    "batch_size": 3,
+    "learning_rate_multiplier": 2.0
+  },
+  "trained_tokens": 2165602,
+  "created_at": 1776736034,
+  "finished_at": 1776741046,
+  "train_sha256": "18dd57797b35a79e144347aac3e67c3e686103699510cae250be0ed122baa1f5",
+  "val_sha256": "19ec901c6aac9036fe74b41b60e35c4f8ac394307f6bc0969b80175553dc136e",
+  "started_wall": "2026-04-20 22:24:03"
+}

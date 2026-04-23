@@ -1,0 +1,43 @@
+# LiteLLM proxy config — routes Anthropic-format requests from Claude Code to
+# our OpenAI fine-tuned models. Claude Code sets `ANTHROPIC_BASE_URL` to the
+# proxy and talks its native Anthropic API shape; LiteLLM translates on the
+# way out to OpenAI's chat-completions endpoint and on the way back.
+#
+# Model naming: Claude Code sends `--model <name>` to the proxy. We expose
+# two aliases so the existing iter-23/25 harness (`--model sonnet`) routes
+# transparently to the FT model; we also expose an explicit `nebula-ft-v3`
+# name for clarity in new harnesses.
+
+model_list:
+  - model_name: sonnet
+    litellm_params:
+      model: openai/ft:gpt-4.1-2025-04-14:personal:nebulahost-prod-v2:DWvnbtaT
+      api_key: os.environ/OPENAI_API_KEY
+  - model_name: claude-sonnet-4-5
+    litellm_params:
+      model: openai/ft:gpt-4.1-2025-04-14:personal:nebulahost-prod-v2:DWvnbtaT
+      api_key: os.environ/OPENAI_API_KEY
+  - model_name: claude-sonnet-4-5-20250929
+    litellm_params:
+      model: openai/ft:gpt-4.1-2025-04-14:personal:nebulahost-prod-v2:DWvnbtaT
+      api_key: os.environ/OPENAI_API_KEY
+  - model_name: claude-sonnet-4-6
+    litellm_params:
+      model: openai/ft:gpt-4.1-2025-04-14:personal:nebulahost-prod-v2:DWvnbtaT
+      api_key: os.environ/OPENAI_API_KEY
+  - model_name: "*"  # wildcard catch-all so any Claude version routes here
+    litellm_params:
+      model: openai/ft:gpt-4.1-2025-04-14:personal:nebulahost-prod-v2:DWvnbtaT
+      api_key: os.environ/OPENAI_API_KEY
+  - model_name: nebula-ft-v3
+    litellm_params:
+      model: openai/ft:gpt-4.1-2025-04-14:personal:nebulahost-prod-v2:DWvnbtaT
+      api_key: os.environ/OPENAI_API_KEY
+
+litellm_settings:
+  drop_params: true            # Claude Code sometimes sends anthropic-only params
+  set_verbose: false
+  json_logs: false
+
+general_settings:
+  master_key: sk-nebula-proxy-local  # used by clients as bearer token

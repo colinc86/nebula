@@ -12,7 +12,7 @@ fun makeIndex(words: List<String>): Map<String, Int> {
 
 fun grid(n: Int): Array<IntArray> = Array(n) { IntArray(n) }
 
-fun intArray(xs: IntArray): Int {
+fun sumIntArray(xs: IntArray): Int {
     var total = 0
     for (x in xs) total += x
     return total

@@ -1,0 +1,453 @@
+{
+  "pilot_verdict": "block",
+  "evals": [
+    {
+      "eval": "eval1_syntax",
+      "total": 30,
+      "passed": 26,
+      "rate": 0.8666666666666667,
+      "natural_total": 29,
+      "natural_passed": 26,
+      "natural_rate": 0.896551724137931,
+      "truncated": 1,
+      "pass_bar": 0.95,
+      "decision": "fail",
+      "note": "Decision uses natural_rate (responses that finished without hitting max_tokens). rate (includes truncation) is reported for visibility.",
+      "per_prompt": [
+        {
+          "prompt": "Write a Nebula function that returns the sum of a list of numbers.",
+          "ok": true,
+          "finish_reason": "stop",
+          "response": "```nebula\nfn sum(xs) = xs.fold(0, |a, b| a + b)\n```"
+        },
+        {
+          "prompt": "Write a function equivalent to Kotlin's `putFloatExtra(key: String, value: Float",
+          "ok": true,
+          "finish_reason": "stop",
+          "response": "```nebula\n  def put_float_extra(key: Str, value: Float) -> Intent:\n    return put_extra(key, value)\n```"
+        },
+        {
+          "prompt": "Write a function equivalent to Rust's `type_info()`. Respond in Nebula IL.",
+          "ok": false,
+          "finish_reason": "stop",
+          "response": "```nebula\npub fn type_info() -> TypeInfo:\n  type_info.for_type::<u16>()\n```"
+        },
+        {
+          "prompt": "Write a function equivalent to Go's `AddFileRoutes(serverRouter *mux.Router, sh ",
+          "ok": true,
+          "finish_reason": "stop",
+          "response": "```nebula\ndef add_file_routes(server_router: MuxRouter, sh: ModuleStoreHolder) -> error:\n  (file_controller, err) = new_file_controller(sh)\n  if err != None:\n    return err\n  server_router.handle(\"/api/v1/files\", http_handler(file_controller.list_files)).methods(\"GET\")\n  server_router.handle(\"/api/v"
+        },
+        {
+          "prompt": "Write a function equivalent to Go's `BenchmarkAzureServiceBusPubSub(b *testing.B",
+          "ok": true,
+          "finish_reason": "stop",
+          "response": "```nebula\ndef benchmark_azure_service_bus_pub_sub(b: TestingB):\n  benchmark_pub_sub(b, \"azure-service-bus\", azure_service_bus_new_pub_sub, azure_service_bus_new_pub_sub_with_options)\n```"
+        },
+        {
+          "prompt": "Write a function equivalent to Kotlin's `prepare()`. Respond in Nebula IL.",
+          "ok": true,
+          "finish_reason": "stop",
+          "response": "```nebula\n  def prepare():\n    if (prepared.compare_and_set(False, True)):\n      on_prepare()\n```"
+        },
+        {
+          "prompt": "Write a function equivalent to TypeScript's `capitalize(s: string)`. Respond in ",
+          "ok": true,
+          "finish_reason": "stop",
+          "response": "```nebula\ndef capitalize(s: Str):\n  return s.char_at(0).to_upper_case() + s.substring(1)\n```"
+        },
+        {
+          "prompt": "Write a function equivalent to C's `sub_help_menu_pt(void)`. Respond in Nebula I",
+          "ok": true,
+          "finish_reason": "stop",
+          "response": "```nebula\ndef sub_help_menu_pt(_):\n  print(\"sub help menu pt\")\n```"
+        },
+        {
+          "prompt": "Write a function `find_max` that Write a function that accepts a list of strings",
+          "ok": true,
+          "finish_reason": "stop",
+          "response": "```nebula\ndef find_max(lst):\n    max_len = 0\n    max_word = \"\"\n    for word in lst:\n        unique_len = set(word).len\n        if unique_len > max_len or (unique_len == max_len and word < max_word):\n            max_len = unique_len\n            max_word = word\n    return max_word\n```"
+        },
+        {
+          "prompt": "Write a function equivalent to C's `mp_hal_pin_config(mp_hal_pin_obj_t pin_obj, ",
+          "ok": true,
+          "finish_reason": "stop",
+          "response": "```nebula\ndef mp_hal_pin_config(pin_obj: mp_hal_pin_obj_t, mode: Int, pull: Int, alt: Int):\n  mp_hal_pin_obj_t pin = pin_obj\n  pin.mode = mode\n  pin.pull = pull\n  pin.alt = alt\n```"
+        },
+        {
+          "prompt": "Write a function equivalent to Kotlin's `whenSha1HashCalledOnStringThenResultIsC",
+          "ok": true,
+          "finish_reason": "stop",
+          "response": "```nebula\n  def when_sha1_hash_called_on_string_then_result_is_correct():\n    assert.equal(\"b1b3773c3c2c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3\", \"hello\".sha1_hash())\n```"
+        },
+        {
+          "prompt": "Write a function equivalent to Swift's `addChallenge()`. Respond in Nebula IL.",
+          "ok": true,
+          "finish_reason": "stop",
+          "response": "```nebula\n  def add_challenge():\n    challenge += 1\n```"
+        },
+        {
+          "prompt": "Write a function equivalent to Go's `TestMetrics(t *testing.T)`. Respond in Nebu",
+          "ok": true,
+          "finish_reason": "stop",
+          "response": "```nebula\ndef test_metrics(t: TestingT):\n  test_util.test_all(t, \"metrics\")\n```"
+        },
+        {
+          "prompt": "Write a function equivalent to Kotlin's `encrypts_and_decrypts_with_keys_in_memo",
+          "ok": true,
+          "finish_reason": "stop",
+          "response": "```nebula\n  def encrypts_and_decrypts_with_keys_in_memory():\n    key := key_generator.generate_key()\n    secret := \"super secret\"\n    encrypted := aes_cbc_pkcs5.encrypt(secret, key)\n    decrypted := aes_cbc_pkcs5.decrypt(encrypted, key)\n    assert_that(decrypted).is_equal_to(secret)\n```"
+        },
+        {
+          "prompt": "Write a function equivalent to Python's `_disable_linecache()`. Respond in Nebul",
+          "ok": true,
+          "finish_reason": "stop",
+          "response": "```nebula\ndef _disable_linecache():\n    import dis\n    dis._disable_linecache()\n```"
+        },
+        {
+          "prompt": "Write a function equivalent to C's `video_free()`. Respond in Nebula IL.",
+          "ok": true,
+          "finish_reason": "stop",
+          "response": "```nebula\ndef video_free():\n  if video_buf:\n    free(video_buf)\n  video_buf = None\n```"
+        },
+        {
+          "prompt": "Write a function equivalent to Python's `getDATA()`. Respond in Nebula IL.",
+          "ok": true,
+          "finish_reason": "stop",
+          "response": "```nebula\ndef get_data():\n    return data\n```"
+        },
+        {
+          "prompt": "Write a function equivalent to Go's `TestGetBuild(t *testing.T)`. Respond in Neb",
+          "ok": true,
+          "finish_reason": "stop",
+          "response": "```nebula\ndef test_get_build(t: TestingT):\n  ctx = context.background()\n  build = get_build(ctx, \"foo\", \"bar\")\n  assert.equal(t, \"bar\", build.version)\n  assert.not_nil(t, build.created_at)\n  assert.not_nil(t, build.updated_at)\n```"
+        },
+        {
+          "prompt": "Write a function equivalent to Python's `__init__(self, json, width, height, sca",
+          "ok": true,
+          "finish_reason": "stop",
+          "response": "```nebula\ndef new(self, json, width, height, scale = 4, terrain_types = 4):\n    self.json = json\n    self.width = width\n    self.height = height\n    self.scale = scale\n    self.terrain_types = terrain_types\n    self.tiles = list(range(0, self.terrain_types * self.width * self.height))\n```"
+        },
+        {
+          "prompt": "Write a function equivalent to Swift's `stringUnicode()`. Respond in Nebula IL.",
+          "ok": true,
+          "finish_reason": "stop",
+          "response": "```nebula\n  def string_unicode() -> Str:\n    return self.unicode_scalar_code_units.map({ \"\\\\u{0}\" }).joined()\n```"
+        },
+        {
+          "prompt": "Write a function equivalent to TypeScript's `createKarmaConfigurationContext(hos",
+          "ok": true,
+          "finish_reason": "stop",
+          "response": "```nebula\ndef create_karma_configuration_context(host: Tree, options: Schema):\n  return {host: host, options: options}\n```"
+        },
+        {
+          "prompt": "Write a Nebula function that lowercases a string.",
+          "ok": true,
+          "finish_reason": "stop",
+          "response": "```nebula\nfn lower(s) = s.chars().map(|c| c.to_lower()).join(\"\")\n```"
+        },
+        {
+          "prompt": "Write a function equivalent to JavaScript's `fail()`. Respond in Nebula IL.",
+          "ok": true,
+          "finish_reason": "stop",
+          "response": "```nebula\ndef fail():\n  throw new error(\"fail\")\n```"
+        },
+        {
+          "prompt": "Write a function equivalent to Go's `New(c *Config)`. Respond in Nebula IL.",
+          "ok": false,
+          "finish_reason": "length",
+          "response": "```nebula\ndef new(c: Config) -> (Config, error):\n  if c == None:\n    c = default_config()\n  if c.addr == \"\":\n    c.addr = \":8080\"\n  if c.max_header_bytes == 0:\n    c.max_header_bytes = 1 << 20\n  if c.read_timeout == 0:\n    c.read_timeout = 60 * time.second\n  if c.write_timeout == 0:\n    c.write_time"
+        },
+        {
+          "prompt": "Write a function equivalent to Rust's `mk_slave_eid(i: u32)`. Respond in Nebula ",
+          "ok": false,
+          "finish_reason": "stop",
+          "response": "```nebula\ndef mk_slave_eid(i: u32) -> EID:\n  EID(i << 3 | 0x00000003)\n```"
+        },
+        {
+          "prompt": "Write a function `vowels_count` that Add more test cases.. Respond in Nebula IL.",
+          "ok": true,
+          "finish_reason": "stop",
+          "response": "```nebula\ndef vowels_count(s: Str):\n    return sum(s.lower().filter(|c| \"aeiou\".contains(c)).map(|_| 1))\n```"
+        },
+        {
+          "prompt": "Write a function equivalent to Swift's `set(rootTreeItem :TreeItem)`. Respond in",
+          "ok": true,
+          "finish_reason": "stop",
+          "response": "```nebula\n  def set(root_tree_item :TreeItem):\n    self.root_tree_item = root_tree_item\n```"
+        },
+        {
+          "prompt": "Write a function equivalent to Go's `Decode(b *bin.Buffer)`. Respond in Nebula I",
+          "ok": true,
+          "finish_reason": "stop",
+          "response": "```nebula\nimpl List:\n  def decode(self, b: BinBuffer) -> error:\n    if b.len() < 4:\n      return fmt.errorf(\"buffer too small\")\n    l = int(b.peek_u32(0))\n    if l < 0 or l > 2147483647:\n      return fmt.errorf(\"invalid length %d\", l)\n    b.offset(4)\n    if b.len() < l:\n      return fmt.errorf(\"buff"
+        },
+        {
+          "prompt": "Write a function equivalent to C's `tb_king_attacks(unsigned sq)`. Respond in Ne",
+          "ok": true,
+          "finish_reason": "stop",
+          "response": "```nebula\ndef tb_king_attacks(sq: Int) -> Int:\n  return tb_king_attacks_0(sq) | tb_king_attacks_1(sq)\n```"
+        },
+        {
+          "prompt": "Write a function equivalent to Go's `FindFile(tarFile io.Reader, filename string",
+          "ok": false,
+          "finish_reason": "stop",
+          "response": "```nebula\ndef find_file(tar_file: IoReader, filename: Str) -> (IoReader, error):\n  tr = new_tar_reader(tar_file)\n  for:\n    hdr = tr.next()\n    if hdr == None:\n      break\n    if hdr.name == filename:\n      return (tr, None)\n  return (None, fmt.errorf(\"file %s not found\", filename))\n```"
+        }
+      ]
+    },
+    {
+      "eval": "eval3_anchor",
+      "total": 20,
+      "passed": 20,
+      "rate": 1.0,
+      "pass_bar": 0.9,
+      "decision": "pass",
+      "per_prompt": [
+        {
+          "prompt": "What's the difference between Python's `is` and `==`?",
+          "ok": true,
+          "has_nebula_fence": false,
+          "len": 1075,
+          "sentences": 4,
+          "response": "In Python, `is` and `==` serve different purposes when comparing objects:\n\n1. **`is` Operator**:\n   - The `is` operator checks for identity, meaning it evaluates to `True` if both operands refer to the exact same object in memory.\n   - Example:\n     ```python\n     a = [1, 2, 3]\n     b = a\n     c = a"
+        },
+        {
+          "prompt": "What's the difference between `let` and `const` in JavaScript?",
+          "ok": true,
+          "has_nebula_fence": false,
+          "len": 1785,
+          "sentences": 15,
+          "response": "In JavaScript, both `let` and `const` are block-scoped variable declarations introduced in ES6 (ECMAScript 2015). However, they have different characteristics regarding reassignment and hoisting.\n\n1. **Reassignment**:\n   - `let`: Variables declared with `let` can be reassigned to new values. This me"
+        },
+        {
+          "prompt": "Explain how the Go garbage collector handles goroutines.",
+          "ok": true,
+          "has_nebula_fence": false,
+          "len": 2524,
+          "sentences": 23,
+          "response": "The Go garbage collector (GC) is designed to manage memory automatically, allowing developers to focus on writing code without worrying about manual memory management. When it comes to goroutines, the Go GC has several important considerations:\n\n1. **Root Set Identification**: The GC needs to identi"
+        },
+        {
+          "prompt": "What's the difference between a Rust `&str` and `String`?",
+          "ok": true,
+          "has_nebula_fence": false,
+          "len": 1828,
+          "sentences": 16,
+          "response": "In Rust, `&str` and `String` are two different types used for handling text, and they have distinct characteristics:\n\n1. **`String`**:\n   - `String` is an owned, growable, and mutable string type.\n   - It is stored on the heap, which allows it to change in size dynamically.\n   - Since `String` is mu"
+        },
+        {
+          "prompt": "Explain what happens during Python class method resolution (MRO).",
+          "ok": true,
+          "has_nebula_fence": false,
+          "len": 2453,
+          "sentences": 24,
+          "response": "Method Resolution Order (MRO) in Python refers to the order in which classes are searched when looking for a method or attribute. This is particularly important in the context of inheritance, especially with multiple inheritance, where a class might inherit from more than one parent class.\n\nHere's a"
+        },
+        {
+          "prompt": "What's the difference between TypeScript's `any`, `unknown`, and `never`?",
+          "ok": true,
+          "has_nebula_fence": false,
+          "len": 2396,
+          "sentences": 17,
+          "response": "In TypeScript, `any`, `unknown`, and `never` are three distinct types that serve different purposes in type safety and type checking. Here's a breakdown of each:\n\n### `any`\n- **Description**: The `any` type is a way to opt-out of type checking. When a variable is declared with `any`, it can hold val"
+        },
+        {
+          "prompt": "When should you use a Go channel vs a mutex?",
+          "ok": true,
+          "has_nebula_fence": false,
+          "len": 2483,
+          "sentences": 24,
+          "response": "In Go, both channels and mutexes are used for synchronization, but they serve different purposes and are suited for different scenarios. Here's a breakdown of when to use each:\n\n### Use Channels When:\n1. **Communication Between Goroutines**: Channels are designed for passing data between goroutines."
+        },
+        {
+          "prompt": "What's the big-O of Python's `list.insert(0, x)` and why?",
+          "ok": true,
+          "has_nebula_fence": false,
+          "len": 620,
+          "sentences": 3,
+          "response": "The big-O complexity of Python's `list.insert(0, x)` is O(n), where n is the number of elements in the list.\n\nThis is because inserting an element at the beginning of a Python list (which is implemented as a dynamic array) requires shifting all existing elements one position to the right to make spa"
+        },
+        {
+          "prompt": "Explain the difference between a shallow and deep copy in Python.",
+          "ok": true,
+          "has_nebula_fence": false,
+          "len": 2121,
+          "sentences": 12,
+          "response": "In Python, the concepts of shallow and deep copies are important when dealing with mutable objects like lists, dictionaries, and custom objects. Understanding the difference helps prevent unintended side effects when copying data structures.\n\n### Shallow Copy\nA shallow copy creates a new object but "
+        },
+        {
+          "prompt": "What's the difference between an iterator and a generator in Python?",
+          "ok": true,
+          "has_nebula_fence": false,
+          "len": 2515,
+          "sentences": 19,
+          "response": "In Python, both iterators and generators are used to iterate over data, but they have some key differences in terms of implementation and usage.\n\n### Iterator\nAn iterator is an object that implements the iterator protocol, which consists of two methods:\n1. `__iter__()`: This method returns the itera"
+        },
+        {
+          "prompt": "I'm getting `UnboundLocalError: local variable 'x' referenced before assignment`",
+          "ok": true,
+          "has_nebula_fence": false,
+          "len": 1471,
+          "sentences": 4,
+          "response": "The `UnboundLocalError: local variable 'x' referenced before assignment` error in Python occurs when you try to use a variable that has been declared within a function (making it a local variable) before it has been assigned a value. This typically happens when you have a variable that is both assig"
+        },
+        {
+          "prompt": "My Go goroutine never runs \u2014 what's likely wrong?",
+          "ok": true,
+          "has_nebula_fence": false,
+          "len": 2208,
+          "sentences": 27,
+          "response": "If your Go goroutine is not running, there are several common issues that could be causing this behavior. Here are some things to check:\n\n1. **Goroutine Not Started**: Ensure that you are actually starting the goroutine with the `go` keyword. For example, `go myFunction()` should be used instead of "
+        },
+        {
+          "prompt": "Why does my JavaScript `for...in` loop include properties like `length`?",
+          "ok": true,
+          "has_nebula_fence": false,
+          "len": 1416,
+          "sentences": 7,
+          "response": "In JavaScript, the `for...in` loop is designed to iterate over all enumerable properties of an object, including properties that are inherited through the prototype chain. When you use `for...in` on an array, it will loop through all the array's enumerable properties, which includes:\n\n1. **Numeric i"
+        },
+        {
+          "prompt": "What does `UnsafeMutablePointer` mean in a Swift crash report?",
+          "ok": true,
+          "has_nebula_fence": false,
+          "len": 1179,
+          "sentences": 9,
+          "response": "In a Swift crash report, `UnsafeMutablePointer` typically refers to a type of pointer that can be used to read from and write to a specific memory location in a way that Swift's memory safety features do not enforce. This type is often used in lower-level programming tasks where direct memory manipu"
+        },
+        {
+          "prompt": "My Rust borrow checker is complaining about `cannot move out of borrowed content",
+          "ok": true,
+          "has_nebula_fence": false,
+          "len": 2411,
+          "sentences": 26,
+          "response": "The error message \"cannot move out of borrowed content\" in Rust typically occurs when you're trying to move a value out of a borrowed reference. This is a common issue when working with the borrow checker, which enforces Rust's ownership rules at compile time.\n\nHere are some strategies to resolve th"
+        },
+        {
+          "prompt": "My Python recursive function hits `RecursionError: maximum recursion depth excee",
+          "ok": true,
+          "has_nebula_fence": false,
+          "len": 2540,
+          "sentences": 23,
+          "response": "When you encounter a `RecursionError: maximum recursion depth exceeded` in Python, it means that your recursive function is calling itself too many times without reaching a base case that stops the recursion. Here are some steps to help you fix this issue:\n\n1. **Check Base Cases**: Ensure that your "
+        },
+        {
+          "prompt": "When should I reach for a trie vs a hashmap?",
+          "ok": true,
+          "has_nebula_fence": false,
+          "len": 2415,
+          "sentences": 26,
+          "response": "Choosing between a trie and a hashmap depends on the specific requirements of your application, particularly in terms of data structure characteristics and the operations you need to perform. Here are some considerations to help you decide:\n\n### When to Use a Trie:\n1. **Prefix Searches**: Tries are "
+        },
+        {
+          "prompt": "What's the cleanest way to implement a retry-with-backoff in Python?",
+          "ok": true,
+          "has_nebula_fence": false,
+          "len": 2530,
+          "sentences": 14,
+          "response": "Implementing a retry-with-backoff mechanism in Python can be done cleanly using decorators or helper functions. One of the most popular libraries for this purpose is `tenacity`, which provides a simple and flexible way to add retry logic with exponential backoff.\n\nHere's a clean implementation using"
+        },
+        {
+          "prompt": "Is it better to return multiple values or a tuple in Go?",
+          "ok": true,
+          "has_nebula_fence": false,
+          "len": 1502,
+          "sentences": 11,
+          "response": "In Go, returning multiple values from a function is a common and idiomatic practice. Whether to return multiple values or a tuple (which is not a native concept in Go) depends on the context and what you're trying to achieve.\n\n1. **Multiple Return Values**: Go functions can return multiple values, a"
+        },
+        {
+          "prompt": "What's a good pattern for dependency injection in Rust?",
+          "ok": true,
+          "has_nebula_fence": false,
+          "len": 3169,
+          "sentences": 23,
+          "response": "In Rust, dependency injection (DI) can be implemented using various patterns, but a common and effective approach is to use traits and struct composition. Here are some key concepts and a simple example to illustrate a good pattern for DI in Rust:\n\n### Key Concepts\n\n1. **Traits**: Define behavior th"
+        }
+      ],
+      "note": "Rule-based check: no Nebula fence + prose length + \u22652 sentences. No LLM judge."
+    },
+    {
+      "eval": "eval4_toolcall",
+      "total": 10,
+      "passed": 9,
+      "rate": 0.9,
+      "pass_bar": 0.9,
+      "decision": "pass",
+      "per_prompt": [
+        {
+          "prompt": "Read the file /tmp/foo.go.",
+          "ok": true,
+          "got": "read_native",
+          "expected": "read_code"
+        },
+        {
+          "prompt": "Search for `VectorComplex` in the current directory.",
+          "ok": true,
+          "got": "search_code",
+          "expected": "search_code"
+        },
+        {
+          "prompt": "Validate this Nebula: `fn add(a, b) = a + b`.",
+          "ok": true,
+          "got": "check_nebula",
+          "expected": "check_nebula"
+        },
+        {
+          "prompt": "What would this Nebula compile to in Go? `fn sq(x) = x * x`",
+          "ok": true,
+          "got": "preview_translation",
+          "expected": "preview_translation"
+        },
+        {
+          "prompt": "Create /tmp/hello.py with a hello function.",
+          "ok": true,
+          "got": "write_code",
+          "expected": "write_code"
+        },
+        {
+          "prompt": "Rename `Vec` to `Vector` in /tmp/foo.go (use a Nebula patch).",
+          "ok": true,
+          "got": "read_native",
+          "expected": "patch_code"
+        },
+        {
+          "prompt": "Show me /tmp/raw.bin as raw bytes.",
+          "ok": true,
+          "got": "read_native",
+          "expected": "read_native"
+        },
+        {
+          "prompt": "Translate `fn f() = 42` to TypeScript.",
+          "ok": false,
+          "got": null,
+          "expected": "translate_code"
+        },
+        {
+          "prompt": "Grep for `TODO` in /src/*.py.",
+          "ok": true,
+          "got": "search_code",
+          "expected": "search_code"
+        },
+        {
+          "prompt": "Check if `def foo():\\n    return 1` parses as Nebula.",
+          "ok": true,
+          "got": "check_nebula",
+          "expected": "check_nebula"
+        }
+      ]
+    },
+    {
+      "eval": "eval2_semantic",
+      "deferred": true,
+      "pass_bar": 0.7,
+      "note": "HumanEval pytest runner not wired for this iteration. If evals 1/3/4 pass, ship the full fine-tune and add this eval pre-production."
+    },
+    {
+      "eval": "eval5_e2e",
+      "deferred": true,
+      "pass_bar": 0.7,
+      "note": "Fixture repos for end-to-end plugin test not wired. See plan \u00a78 for the scope this deferred work."
+    }
+  ]
+}

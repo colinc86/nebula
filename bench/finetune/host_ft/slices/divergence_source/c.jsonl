@@ -1,0 +1,46 @@
+{"pattern":"typedef_struct","native":"typedef struct {\n    int id;\n    char name[32];\n    double balance;\n} Account;"}
+{"pattern":"typedef_struct","native":"typedef struct {\n    int x;\n    int y;\n} Point;"}
+{"pattern":"typedef_enum","native":"typedef enum {\n    LEVEL_DEBUG = 0,\n    LEVEL_INFO = 1,\n    LEVEL_WARN = 2,\n    LEVEL_ERROR = 3\n} LogLevel;"}
+{"pattern":"typedef_enum","native":"typedef enum {\n    RED,\n    GREEN,\n    BLUE\n} Color;"}
+{"pattern":"fn_pointer_typedef","native":"typedef int (*cmp_fn)(int, int);"}
+{"pattern":"fn_pointer_typedef","native":"typedef void (*callback)(void *ctx);"}
+{"pattern":"char_pointer","native":"int count_chars(const char *s) {\n    int n = 0;\n    while (*s) { n++; s++; }\n    return n;\n}"}
+{"pattern":"char_pointer","native":"void strcpy_safe(char *dst, const char *src, size_t n) {\n    strncpy(dst, src, n - 1);\n    dst[n - 1] = '\\0';\n}"}
+{"pattern":"array_param","native":"int sum_array(const int *xs, size_t n) {\n    int total = 0;\n    for (size_t i = 0; i < n; i++) {\n        total += xs[i];\n    }\n    return total;\n}"}
+{"pattern":"array_param","native":"int sum_matrix(int m[3][3]) {\n    int total = 0;\n    for (int i = 0; i < 3; i++)\n        for (int j = 0; j < 3; j++)\n            total += m[i][j];\n    return total;\n}"}
+{"pattern":"malloc","native":"int *make_array(size_t n) {\n    int *p = (int *)malloc(n * sizeof(int));\n    if (p == NULL) return NULL;\n    for (size_t i = 0; i < n; i++) p[i] = 0;\n    return p;\n}"}
+{"pattern":"malloc","native":"char *dup_string(const char *s) {\n    size_t n = strlen(s) + 1;\n    char *out = (char *)malloc(n);\n    if (out == NULL) return NULL;\n    strcpy(out, s);\n    return out;\n}"}
+{"pattern":"do_while","native":"int countdown(int n) {\n    int steps = 0;\n    do {\n        n--;\n        steps++;\n    } while (n > 0);\n    return steps;\n}"}
+{"pattern":"do_while","native":"int skip_whitespace(const char *s, int i) {\n    do {\n        i++;\n    } while (s[i] == ' ');\n    return i;\n}"}
+{"pattern":"switch_case","native":"const char *level_name(int l) {\n    switch (l) {\n        case 0: return \"debug\";\n        case 1: return \"info\";\n        case 2: return \"warn\";\n        case 3: return \"error\";\n        default: return \"unknown\";\n    }\n}"}
+{"pattern":"switch_case","native":"int to_nibble(char c) {\n    switch (c) {\n        case '0'...'9': return c - '0';\n        case 'a'...'f': return c - 'a' + 10;\n        default: return -1;\n    }\n}"}
+{"pattern":"bitwise","native":"unsigned int pack_rgb(unsigned int r, unsigned int g, unsigned int b) {\n    return ((r & 0xff) << 16) | ((g & 0xff) << 8) | (b & 0xff);\n}"}
+{"pattern":"bitwise","native":"unsigned int low_byte(unsigned int v) {\n    return v & 0xff;\n}"}
+{"pattern":"hex_literal","native":"int flags() {\n    return 0xFF | 0xAB00;\n}"}
+{"pattern":"hex_literal","native":"int mask(int v) {\n    return v & 0xFFFF;\n}"}
+{"pattern":"char_literal","native":"int is_null(char c) {\n    return c == '\\0';\n}"}
+{"pattern":"char_literal","native":"int is_newline(char c) {\n    return c == '\\n';\n}"}
+{"pattern":"struct_access","native":"int account_id(Account *a) {\n    return a->id;\n}"}
+{"pattern":"struct_access","native":"void set_name(Account *a, const char *name) {\n    strncpy(a->name, name, 31);\n    a->name[31] = '\\0';\n}"}
+{"pattern":"for_loop_c","native":"int factorial(int n) {\n    int result = 1;\n    for (int i = 2; i <= n; i++) {\n        result *= i;\n    }\n    return result;\n}"}
+{"pattern":"for_loop_c","native":"void zero_array(int *xs, size_t n) {\n    for (size_t i = 0; i < n; i++) {\n        xs[i] = 0;\n    }\n}"}
+{"pattern":"while_loop_c","native":"int strlen_manual(const char *s) {\n    int n = 0;\n    while (*s++) n++;\n    return n;\n}"}
+{"pattern":"pointer_cast","native":"void *make_node(int val) {\n    Node *p = (Node *)malloc(sizeof(Node));\n    p->val = val;\n    p->next = NULL;\n    return p;\n}"}
+{"pattern":"variadic","native":"int sum_n(int count, int *nums) {\n    int total = 0;\n    for (int i = 0; i < count; i++) total += nums[i];\n    return total;\n}"}
+{"pattern":"static_local","native":"int next_id() {\n    static int counter = 0;\n    return ++counter;\n}"}
+{"pattern":"const_param","native":"int first_non_space(const char *s) {\n    int i = 0;\n    while (s[i] == ' ') i++;\n    return i;\n}"}
+{"pattern":"enum_plain","native":"enum Direction {\n    NORTH,\n    SOUTH,\n    EAST,\n    WEST\n};"}
+{"pattern":"sizeof","native":"int byte_count(const int *xs, size_t n) {\n    return n * sizeof(int);\n}"}
+{"pattern":"ternary_c","native":"int max(int a, int b) {\n    return (a > b) ? a : b;\n}"}
+{"pattern":"ternary_c","native":"int abs_val(int x) {\n    return x < 0 ? -x : x;\n}"}
+{"pattern":"string_literal","native":"const char *greet() {\n    return \"hello, world\";\n}"}
+{"pattern":"printf","native":"void dump(const char *label, int val) {\n    printf(\"%s = %d\\n\", label, val);\n}"}
+{"pattern":"multi_dim","native":"void identity(int m[3][3]) {\n    for (int i = 0; i < 3; i++)\n        for (int j = 0; j < 3; j++)\n            m[i][j] = (i == j) ? 1 : 0;\n}"}
+{"pattern":"struct_init","native":"Point origin() {\n    Point p = {0, 0};\n    return p;\n}"}
+{"pattern":"nested_loop","native":"int count_pairs(int *xs, size_t n) {\n    int count = 0;\n    for (size_t i = 0; i < n; i++)\n        for (size_t j = i + 1; j < n; j++)\n            if (xs[i] + xs[j] == 10) count++;\n    return count;\n}"}
+{"pattern":"early_return","native":"int find_first(int *xs, size_t n, int target) {\n    for (size_t i = 0; i < n; i++) {\n        if (xs[i] == target) return (int)i;\n    }\n    return -1;\n}"}
+{"pattern":"file_ops","native":"int read_file(const char *path, char *buf, size_t n) {\n    FILE *f = fopen(path, \"r\");\n    if (f == NULL) return -1;\n    int r = (int)fread(buf, 1, n, f);\n    fclose(f);\n    return r;\n}"}
+{"pattern":"math_fn","native":"double distance(double x1, double y1, double x2, double y2) {\n    double dx = x1 - x2;\n    double dy = y1 - y2;\n    return sqrt(dx * dx + dy * dy);\n}"}
+{"pattern":"bit_shift","native":"unsigned int pack16(unsigned int hi, unsigned int lo) {\n    return (hi << 8) | (lo & 0xff);\n}"}
+{"pattern":"type_wide","native":"long long sum_to(long long n) {\n    long long total = 0;\n    for (long long i = 1; i <= n; i++) total += i;\n    return total;\n}"}
+{"pattern":"unsigned_loop","native":"int count_set_bits(unsigned int x) {\n    int count = 0;\n    while (x) {\n        count += x & 1;\n        x >>= 1;\n    }\n    return count;\n}"}

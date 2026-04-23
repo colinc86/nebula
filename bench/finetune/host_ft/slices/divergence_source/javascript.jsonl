@@ -1,0 +1,35 @@
+{"pattern":"arrow_fn","native":"const double = x => x * 2;\nconst add = (a, b) => a + b;"}
+{"pattern":"arrow_fn","native":"const triple = (x) => x * 3;"}
+{"pattern":"arrow_body","native":"const body = (x, y) => {\n    const z = x + y;\n    return z;\n};"}
+{"pattern":"async_fn","native":"async function fetchJson(url) {\n    const resp = await fetch(url);\n    return resp.json();\n}"}
+{"pattern":"async_fn","native":"async function loadUser(id) {\n    const resp = await fetch(`/users/${id}`);\n    const user = await resp.json();\n    return user;\n}"}
+{"pattern":"promise_then","native":"function chain(x) {\n    return Promise.resolve(x)\n        .then(v => v + 1)\n        .catch(e => console.error(e));\n}"}
+{"pattern":"destructure","native":"function merge({a, b, ...rest}) {\n    return {a, b, rest};\n}"}
+{"pattern":"destructure","native":"function greet({name, age}) {\n    return `hi, ${name}, ${age}`;\n}"}
+{"pattern":"template_literal","native":"function greet(name) {\n    return `Hello, ${name}!`;\n}"}
+{"pattern":"class_basic","native":"class Animal {\n    constructor(name) {\n        this.name = name;\n    }\n    speak() {\n        return `${this.name} makes a sound`;\n    }\n}"}
+{"pattern":"class_basic","native":"class Dog extends Animal {\n    constructor(name) {\n        super(name);\n    }\n    speak() {\n        return `${this.name} barks`;\n    }\n}"}
+{"pattern":"getter_setter","native":"class Temperature {\n    constructor(c) { this._c = c; }\n    get fahrenheit() { return this._c * 9 / 5 + 32; }\n    set fahrenheit(f) { this._c = (f - 32) * 5 / 9; }\n}"}
+{"pattern":"static_method","native":"class MathUtil {\n    static square(x) {\n        return x * x;\n    }\n}"}
+{"pattern":"spread","native":"function concat(a, b) {\n    return [...a, ...b];\n}"}
+{"pattern":"spread","native":"function call(fn, args) {\n    return fn(...args);\n}"}
+{"pattern":"default_param_js","native":"function greet(name = \"world\", emoji = \"👋\") {\n    return `${emoji} hi, ${name}`;\n}"}
+{"pattern":"object_method","native":"const util = {\n    square(x) { return x * x; },\n    cube(x) { return x * x * x; },\n};"}
+{"pattern":"catch_method","native":"function safeGet(url) {\n    return fetch(url).catch(err => null);\n}"}
+{"pattern":"await","native":"async function sum(ids) {\n    const users = await Promise.all(ids.map(fetchUser));\n    return users.length;\n}"}
+{"pattern":"arrow_chain","native":"function evens(xs) {\n    return xs.filter(x => x % 2 === 0).map(x => x * 2);\n}"}
+{"pattern":"array_reduce","native":"function total(xs) {\n    return xs.reduce((a, b) => a + b, 0);\n}"}
+{"pattern":"ternary_js","native":"function abs(x) {\n    return x < 0 ? -x : x;\n}"}
+{"pattern":"for_of","native":"function sum(xs) {\n    let total = 0;\n    for (const x of xs) {\n        total += x;\n    }\n    return total;\n}"}
+{"pattern":"for_of","native":"function keys(m) {\n    const out = [];\n    for (const k of Object.keys(m)) {\n        out.push(k);\n    }\n    return out;\n}"}
+{"pattern":"for_in","native":"function dump(obj) {\n    const out = [];\n    for (const k in obj) {\n        out.push(k);\n    }\n    return out;\n}"}
+{"pattern":"const_let","native":"function demo() {\n    const PI = 3.14;\n    let count = 0;\n    for (let i = 0; i < 10; i++) {\n        count += i;\n    }\n    return count * PI;\n}"}
+{"pattern":"object_shorthand","native":"function makeUser(name, age) {\n    return {name, age};\n}"}
+{"pattern":"iife","native":"const result = (function() {\n    return 42;\n})();"}
+{"pattern":"try_catch","native":"function safeParse(s) {\n    try {\n        return JSON.parse(s);\n    } catch (e) {\n        return null;\n    }\n}"}
+{"pattern":"throw","native":"function divide(a, b) {\n    if (b === 0) throw new Error(\"divide by zero\");\n    return a / b;\n}"}
+{"pattern":"nullish","native":"function withDefault(x) {\n    return x ?? \"default\";\n}"}
+{"pattern":"optional_chain","native":"function city(user) {\n    return user?.addr?.city ?? \"unknown\";\n}"}
+{"pattern":"array_destruct","native":"function swap(arr) {\n    const [a, b] = arr;\n    return [b, a];\n}"}
+{"pattern":"nested_fn","native":"function counter() {\n    let n = 0;\n    return function() {\n        return ++n;\n    };\n}"}
+{"pattern":"arr_methods","native":"function unique(xs) {\n    return [...new Set(xs)];\n}"}

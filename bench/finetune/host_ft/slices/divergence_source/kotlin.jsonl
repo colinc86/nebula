@@ -1,0 +1,42 @@
+{"pattern":"data_class","native":"data class User(val id: Int, val name: String, val email: String? = null)"}
+{"pattern":"data_class","native":"data class Point(val x: Double, val y: Double)"}
+{"pattern":"data_class","native":"data class Config(val host: String = \"localhost\", val port: Int = 8080)"}
+{"pattern":"elvis","native":"fun greet(name: String?): String {\n    val n = name ?: \"anonymous\"\n    return \"hi, $n\"\n}"}
+{"pattern":"elvis","native":"fun firstOrDefault(xs: List<Int>): Int {\n    return xs.firstOrNull() ?: 0\n}"}
+{"pattern":"destructure_for","native":"fun dump(m: Map<String, Int>) {\n    for ((k, v) in m) {\n        println(\"$k: $v\")\n    }\n}"}
+{"pattern":"destructure_for","native":"fun indexed(xs: List<String>): List<String> {\n    val out = mutableListOf<String>()\n    for ((i, v) in xs.withIndex()) {\n        out.add(\"$i: $v\")\n    }\n    return out\n}"}
+{"pattern":"extension_fn","native":"fun String.shout(): String = this.uppercase() + \"!\"\nfun Int.squared(): Int = this * this"}
+{"pattern":"extension_fn","native":"fun <T> List<T>.second(): T = this[1]"}
+{"pattern":"companion_object","native":"class Counter {\n    companion object {\n        var count: Int = 0\n        fun inc() { count += 1 }\n    }\n}"}
+{"pattern":"companion_object","native":"class User(val name: String) {\n    companion object {\n        fun anonymous() = User(\"anonymous\")\n    }\n}"}
+{"pattern":"interpolation_kotlin","native":"fun greet(name: String, age: Int): String {\n    return \"hi, $name, you are ${age + 1} next year\"\n}"}
+{"pattern":"interpolation_kotlin","native":"fun coords(x: Double, y: Double): String {\n    return \"(${x.toInt()}, ${y.toInt()})\"\n}"}
+{"pattern":"sealed_class","native":"sealed class Shape {\n    data class Circle(val r: Double) : Shape()\n    data class Square(val side: Double) : Shape()\n}"}
+{"pattern":"when_expression","native":"fun area(s: Shape): Double = when (s) {\n    is Shape.Circle -> 3.14159 * s.r * s.r\n    is Shape.Square -> s.side * s.side\n}"}
+{"pattern":"when_expression","native":"fun describe(n: Int): String = when {\n    n < 0 -> \"negative\"\n    n == 0 -> \"zero\"\n    n < 10 -> \"small\"\n    else -> \"big\"\n}"}
+{"pattern":"when_is","native":"fun label(x: Any): String = when (x) {\n    is String -> \"string\"\n    is Int -> \"int\"\n    else -> \"unknown\"\n}"}
+{"pattern":"suspend_fn","native":"suspend fun fetchUser(id: Int): String {\n    delay(100)\n    return \"user_$id\"\n}"}
+{"pattern":"suspend_fn","native":"suspend fun fetchAll(ids: List<Int>): List<String> = coroutineScope {\n    ids.map { async { fetchUser(it) } }.map { it.await() }\n}"}
+{"pattern":"lambda_it","native":"fun squared(xs: List<Int>): List<Int> {\n    return xs.map { it * it }\n}"}
+{"pattern":"lambda_it","native":"fun positives(xs: List<Int>): List<Int> {\n    return xs.filter { it > 0 }\n}"}
+{"pattern":"let_scope","native":"fun process(x: Int?): Int {\n    return x?.let { it * 2 } ?: 0\n}"}
+{"pattern":"listof","native":"fun makeList(): List<Int> {\n    return listOf(1, 2, 3, 4, 5)\n}"}
+{"pattern":"mapof","native":"fun makeMap(): Map<String, Int> {\n    return mapOf(\"a\" to 1, \"b\" to 2)\n}"}
+{"pattern":"null_safe_call","native":"fun length(s: String?): Int {\n    return s?.length ?: 0\n}"}
+{"pattern":"null_safe_call","native":"fun upper(s: String?): String? {\n    return s?.uppercase()\n}"}
+{"pattern":"enum_class","native":"enum class Direction {\n    NORTH, SOUTH, EAST, WEST\n}"}
+{"pattern":"interface_kotlin","native":"interface Speakable {\n    fun speak(): String\n}\nclass Dog(val name: String) : Speakable {\n    override fun speak(): String = \"$name barks\"\n}"}
+{"pattern":"try_expression","native":"fun safeDivide(a: Int, b: Int): Int? {\n    return try {\n        a / b\n    } catch (e: ArithmeticException) {\n        null\n    }\n}"}
+{"pattern":"generic_fn_kotlin","native":"fun <T, R> List<T>.mapIndexedTo(f: (Int, T) -> R): List<R> {\n    val out = mutableListOf<R>()\n    for ((i, v) in this.withIndex()) {\n        out.add(f(i, v))\n    }\n    return out\n}"}
+{"pattern":"higher_order","native":"fun <T> repeat(n: Int, f: () -> T): List<T> {\n    val out = mutableListOf<T>()\n    for (i in 0 until n) {\n        out.add(f())\n    }\n    return out\n}"}
+{"pattern":"range","native":"fun sum1toN(n: Int): Int {\n    var total = 0\n    for (i in 1..n) {\n        total += i\n    }\n    return total\n}"}
+{"pattern":"while_loop","native":"fun countdown(n: Int): Int {\n    var i = n\n    var steps = 0\n    while (i > 0) {\n        i--\n        steps++\n    }\n    return steps\n}"}
+{"pattern":"class_body","native":"class Animal(val name: String) {\n    fun speak(): String = \"$name makes a sound\"\n}"}
+{"pattern":"flow_builder","native":"fun counter(start: Int): Flow<Int> = flow {\n    var n = start\n    while (n < start + 5) {\n        emit(n)\n        n += 1\n    }\n}"}
+{"pattern":"object_declaration","native":"object Singleton {\n    var count: Int = 0\n    fun inc() {\n        count++\n    }\n}"}
+{"pattern":"property_getter","native":"class Temp(var celsius: Double) {\n    val fahrenheit: Double\n        get() = celsius * 9 / 5 + 32\n}"}
+{"pattern":"data_copy","native":"fun renamed(u: User, newName: String): User {\n    return u.copy(name = newName)\n}"}
+{"pattern":"string_methods","native":"fun normalize(s: String): String {\n    return s.trim().lowercase()\n}"}
+{"pattern":"list_ops","native":"fun sortedUnique(xs: List<Int>): List<Int> {\n    return xs.distinct().sorted()\n}"}
+{"pattern":"fold","native":"fun product(xs: List<Int>): Int {\n    return xs.fold(1) { acc, x -> acc * x }\n}"}
+{"pattern":"chained_calls","native":"fun vowelsCount(s: String): Int {\n    return s.lowercase().count { it in \"aeiou\" }\n}"}

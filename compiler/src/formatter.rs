@@ -550,15 +550,24 @@ impl NebFmt {
                 out
             }
 
-            Expr::TryCatch { try_block, error_binding, catch_block } => {
+            Expr::TryCatch { try_block, error_binding, catch_block, finally_block } => {
                 let mut out = format!("try {{\n");
                 self.indent += 1;
                 out.push_str(&self.fmt_block_body(try_block));
                 self.indent -= 1;
-                out.push_str(&format!("{}}} catch {} {{\n", self.ind(), error_binding));
-                self.indent += 1;
-                out.push_str(&self.fmt_block_body(catch_block));
-                self.indent -= 1;
+                let has_catch = !catch_block.statements.is_empty() || catch_block.expr.is_some() || error_binding != "_";
+                if has_catch {
+                    out.push_str(&format!("{}}} catch {} {{\n", self.ind(), error_binding));
+                    self.indent += 1;
+                    out.push_str(&self.fmt_block_body(catch_block));
+                    self.indent -= 1;
+                }
+                if let Some(fb) = finally_block {
+                    out.push_str(&format!("{}}} finally {{\n", self.ind()));
+                    self.indent += 1;
+                    out.push_str(&self.fmt_block_body(fb));
+                    self.indent -= 1;
+                }
                 out.push_str(&format!("{}}}", self.ind()));
                 out
             }

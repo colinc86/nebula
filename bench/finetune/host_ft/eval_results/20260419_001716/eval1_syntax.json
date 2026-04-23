@@ -1,0 +1,6 @@
+{
+  "eval": "eval1_syntax",
+  "dry_run": true,
+  "pass_bar": 0.95,
+  "held_out_available": 0
+}

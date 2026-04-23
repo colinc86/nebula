@@ -1,0 +1,7 @@
+{
+  "eval": "eval3_anchor",
+  "dry_run": true,
+  "pass_bar": 4.0,
+  "pool_available": 0,
+  "note": "Sonnet-as-judge (claude-sonnet-4-6). FT vs stock-mini."
+}

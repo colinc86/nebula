@@ -221,6 +221,18 @@ fn repair_tagged_template_calls(source: &str) -> String {
             // String literal, number, ident, call, dotted — accept as-is.
             if s.starts_with('"') || s.starts_with('\'') { return Some(s.to_string()); }
             if s.chars().next().map_or(false, |c| c.is_ascii_digit()) { return Some(s.to_string()); }
+            // Object/array/tuple/parens literal — accept as-is even with
+            // embedded spaces. Without this, `foo({K: "v"})` got its object
+            // arg wrapped in quotes by the tagged-template repair heuristic.
+            if s.starts_with('{') || s.starts_with('[') || s.starts_with('(') {
+                return Some(s.to_string());
+            }
+            // Arrow/lambda header `|x| body`.
+            if s.starts_with('|') { return Some(s.to_string()); }
+            // Unary prefix operators.
+            if s.starts_with('-') || s.starts_with('!') || s.starts_with('&') || s.starts_with('*') {
+                return Some(s.to_string());
+            }
             // Single ident (no spaces) — accept.
             if !s.contains(' ') { return Some(s.to_string()); }
             // `new Foo(...)` — Nebula has no `new` keyword; strip it.
@@ -729,7 +741,14 @@ pub fn from_kotlin_with_opts(source: &str, keep_comments: bool) -> String {
             if let Some(op) = t.find('(') {
                 let head = &t[..op];
                 let name_ok = !head.is_empty() && head.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
-                t.ends_with(')') && name_ok
+                // Require the line to end with `,` or a single closing paren
+                // (typical enum-variant shape: `RED("red"),` or `RED(value)`).
+                // Bare calls like `foo(100)` as statements should NOT match.
+                let has_trailing_comma = trimmed.trim_end_matches(' ').ends_with(',');
+                // Heuristic: enum variant names are ALL-CAPS.
+                let head_all_caps = !head.is_empty()
+                    && head.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+                t.ends_with(')') && name_ok && (has_trailing_comma || head_all_caps)
             } else {
                 false
             }
@@ -773,6 +792,16 @@ pub fn from_kotlin_with_opts(source: &str, keep_comments: bool) -> String {
     let nebula = flatten_impl_trait_paths(&nebula);
     let nebula = rewrite_kotlin_lambda_closure(&nebula);
     let nebula = rewrite_kotlin_implicit_it_closure(&nebula);
+    // Trailing-closure constructor: `Array(n) { expr }` → `Array(n, |__i| expr)`
+    // so the Nebula parser doesn't split the brace-block off as a separate stmt.
+    let nebula = rewrite_kotlin_trailing_ctor_closure(&nebula);
+    // Multi-line single-expression fn body with trailing closure:
+    // `def fn(...) = BUILDER` followed by `{ body }` block on subsequent
+    // lines → rewrite as `def fn(...): T: body` with the BUILDER call
+    // dropped (preserving only the body). Covers `coroutineScope { ... }`,
+    // `flow { ... }`, `runBlocking { ... }` and similar builder patterns
+    // where Nebula has no trailing-closure syntax for expr-fn bodies.
+    let nebula = rewrite_kotlin_multiline_builder_body(&nebula);
     let nebula = wrap_stmt_lambda_bodies(&nebula);
     let nebula = wrap_return_in_match_arms(&nebula);
     let nebula = rebalance_list_of_brackets(&nebula);
@@ -787,6 +816,8 @@ pub fn from_rust_with_opts(source: &str, keep_comments: bool) -> String {
     let out = convert_with_language(source, tree_sitter_rust::LANGUAGE.into(), rust::emit, keep_comments);
     let out = strip_rust_macro_bangs(&out);
     // Strip Rust-only async/await plumbing that Nebula has no grammar for.
+    // Also protect `move ||` zero-arg closures from the shared `||` → `or`
+    // text pass by swapping to a sentinel param name.
     let out = out.replace(".await", "")
         .replace("async move ", "")
         .replace("async ", "")
@@ -1019,6 +1050,270 @@ fn rewrite_multiline_lambda_closure(source: &str) -> String {
     out.join("\n")
 }
 
+/// Rewrite `NAME(args) { body }` on the same line as
+/// `NAME(args, |__i| body)` so the Nebula parser doesn't split the
+/// trailing brace-block off as a separate statement. Used for patterns
+/// like `Array(n) { IntArray(n) }`.
+/// Rewrite `async { body }` to `async({ body })` so the async call survives
+/// the IL round-trip. We find each `async {` sequence and insert `(` before
+/// the brace + `)` after the matching `}`. String-literal-aware; bails out
+/// if no balanced `}` is found.
+fn kotlin_async_block_to_call(source: &str) -> String {
+    let bytes = source.as_bytes();
+    let mut out = String::with_capacity(source.len() + 16);
+    let mut i = 0;
+    let mut in_str: Option<u8> = None;
+    while i < bytes.len() {
+        if let Some(q) = in_str {
+            out.push(bytes[i] as char);
+            if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                out.push(bytes[i + 1] as char);
+                i += 2;
+                continue;
+            }
+            if bytes[i] == q { in_str = None; }
+            i += 1;
+            continue;
+        }
+        if bytes[i] == b'"' || bytes[i] == b'\'' {
+            in_str = Some(bytes[i]);
+            out.push(bytes[i] as char);
+            i += 1;
+            continue;
+        }
+        // Match `async ` (word-boundary-safe) followed by `{`.
+        let prev_is_ident = i > 0 && (bytes[i-1].is_ascii_alphanumeric() || bytes[i-1] == b'_');
+        if !prev_is_ident && i + 7 <= bytes.len() && &bytes[i..i + 6] == b"async " {
+            let mut j = i + 6;
+            while j < bytes.len() && bytes[j] == b' ' { j += 1; }
+            if j < bytes.len() && bytes[j] == b'{' {
+                // Find matching `}` starting after the `{`.
+                let mut depth: i32 = 1;
+                let mut k = j + 1;
+                let mut inner_str: Option<u8> = None;
+                while k < bytes.len() {
+                    if let Some(q) = inner_str {
+                        if bytes[k] == b'\\' && k + 1 < bytes.len() { k += 2; continue; }
+                        if bytes[k] == q { inner_str = None; }
+                        k += 1;
+                        continue;
+                    }
+                    match bytes[k] {
+                        b'"' | b'\'' => { inner_str = Some(bytes[k]); }
+                        b'{' => depth += 1,
+                        b'}' => {
+                            depth -= 1;
+                            if depth == 0 { break; }
+                        }
+                        _ => {}
+                    }
+                    k += 1;
+                }
+                if k < bytes.len() && depth == 0 {
+                    // Use `async_call` as a placeholder — `async` is a Nebula
+                    // keyword and can't appear as a bare call target. The
+                    // Kotlin codegen rewrites `async_call(...)` back to the
+                    // builder form `async { ... }`.
+                    out.push_str("async_call(");
+                    out.push_str(&source[j..=k]);
+                    out.push(')');
+                    i = k + 1;
+                    continue;
+                }
+            }
+        }
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+    out
+}
+
+fn rewrite_kotlin_trailing_ctor_closure(source: &str) -> String {
+    source.lines().map(|line| {
+        let chars: Vec<char> = line.chars().collect();
+        // Walk through looking for `)` followed by ` { … }` at same line.
+        let n = chars.len();
+        let mut paren_depth: i32 = 0;
+        let mut in_str: Option<char> = None;
+        let mut pair: Option<(usize, usize)> = None; // (rp, lb)
+        for i in 0..n {
+            let c = chars[i];
+            if let Some(q) = in_str {
+                if c == q { in_str = None; }
+                continue;
+            }
+            if c == '"' || c == '\'' { in_str = Some(c); continue; }
+            match c {
+                '(' => paren_depth += 1,
+                ')' => {
+                    paren_depth -= 1;
+                    if paren_depth == 0 {
+                        // Check if followed (after ws) by `{`.
+                        let mut j = i + 1;
+                        while j < n && chars[j] == ' ' { j += 1; }
+                        if j < n && chars[j] == '{' {
+                            pair = Some((i, j));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        let Some((rp, lb)) = pair else { return line.to_string(); };
+        // Find matching `}` for the brace block. Require it on same line.
+        let mut bdepth: i32 = 0;
+        let mut rb = None;
+        let mut in_str2: Option<char> = None;
+        for (k, ch) in chars.iter().enumerate().skip(lb) {
+            if let Some(q) = in_str2 { if *ch == q { in_str2 = None; } continue; }
+            match ch {
+                '"' | '\'' => in_str2 = Some(*ch),
+                '{' => bdepth += 1,
+                '}' => { bdepth -= 1; if bdepth == 0 { rb = Some(k); break; } }
+                _ => {}
+            }
+        }
+        let Some(rb) = rb else { return line.to_string(); };
+        // Make sure what follows `}` is end-of-line / whitespace / comment.
+        let tail_after: String = chars[rb + 1..].iter().collect();
+        if !tail_after.chars().all(|c| c.is_whitespace() || c == ';') { return line.to_string(); }
+        // Extract preceding identifier before `)`. Find matching `(`.
+        let lp = {
+            let mut depth: i32 = 0;
+            let mut found = None;
+            for k in (0..=rp).rev() {
+                match chars[k] {
+                    ')' => depth += 1,
+                    '(' => { depth -= 1; if depth == 0 { found = Some(k); break; } }
+                    _ => {}
+                }
+            }
+            match found { Some(k) => k, None => return line.to_string() }
+        };
+        // Ident characters immediately before `(`.
+        let mut k = lp;
+        while k > 0 {
+            let c = chars[k - 1];
+            if c.is_ascii_alphanumeric() || c == '_' { k -= 1; } else { break; }
+        }
+        if k == lp { return line.to_string(); } // No ident preceding.
+        let ident: String = chars[k..lp].iter().collect();
+        // Only rewrite for known trailing-closure constructors / higher-order
+        // functions that take a builder lambda.
+        let tag_allow = matches!(ident.as_str(),
+            "Array" | "ArrayList" | "mutableListOf" | "buildList" | "List"
+            | "buildString" | "buildMap" | "mutableMapOf" | "HashMap"
+            | "generateSequence" | "sequence" | "apply" | "run"
+            | "with" | "let" | "also");
+        if !tag_allow { return line.to_string(); }
+        let pre: String = chars[..rp].iter().collect();   // up to and incl. args, no close-paren
+        let body: String = chars[lb + 1..rb].iter().collect();
+        let body_trim = body.trim();
+        // Empty arg list already? `Array(...)` — check if it's just `Array()`
+        // or if there's inner content; either way we need a comma-separator.
+        let args_empty = {
+            let inner: String = chars[lp + 1..rp].iter().collect();
+            inner.trim().is_empty()
+        };
+        let sep = if args_empty { "" } else { ", " };
+        format!("{}{}|__i| {}){}",  pre, sep, body_trim, tail_after)
+    }).collect::<Vec<_>>().join("\n")
+}
+
+// Single-expression fn body whose RHS is a builder call with trailing closure.
+// By the time this pass runs, upstream `braces_to_indent` has converted:
+//    def fn(...) -> T = BUILDER:
+//        body
+// (where BUILDER is a bare ident like `coroutine_scope`, `flow`, `run_blocking`).
+// The Nebula parser reads this as expression-body `= BUILDER` with a stray
+// block `body` — which codegen emits as two separate statements. Rewrite to:
+//    def fn(...) -> T:
+//        return body           (single-statement body)
+// or
+//    def fn(...) -> T:
+//        body_lines...         (multi-statement body, unchanged)
+// dropping the builder wrapper. Covers suspend/coroutine patterns where Nebula
+// has no first-class trailing-closure-expression-body form.
+fn rewrite_kotlin_multiline_builder_body(source: &str) -> String {
+    let lines: Vec<&str> = source.lines().collect();
+    let mut out: Vec<String> = Vec::with_capacity(lines.len());
+    let builder_names: &[&str] = &[
+        "coroutine_scope", "coroutineScope",
+        "flow", "run_blocking", "runBlocking",
+        "async", "launch", "with_context", "withContext",
+        "supervisor_scope", "supervisorScope",
+        "channel_flow", "channelFlow",
+    ];
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        let trimmed = line.trim_start();
+        let indent_len = line.len() - trimmed.len();
+        let is_fn_header = trimmed.starts_with("def ") || trimmed.starts_with("fn ")
+            || trimmed.starts_with("pub def ") || trimmed.starts_with("pub fn ");
+        if is_fn_header {
+            if let Some(eq) = line.rfind(" = ") {
+                let rhs_full = line[eq + 3..].trim_end();
+                // Match `BUILDER:` or `BUILDER` exactly (ident, no args, optional trailing `:`).
+                let (rhs_ident, has_trailing_colon) = if let Some(s) = rhs_full.strip_suffix(':') {
+                    (s.trim_end(), true)
+                } else {
+                    (rhs_full, false)
+                };
+                let rhs_ident = rhs_ident.trim_end_matches("()").trim();
+                if has_trailing_colon && builder_names.contains(&rhs_ident) {
+                    // Scan following body lines at deeper indent.
+                    let mut j = i + 1;
+                    let mut body_lines: Vec<&str> = Vec::new();
+                    while j < lines.len() {
+                        let bl = lines[j];
+                        if bl.trim().is_empty() {
+                            body_lines.push(bl);
+                            j += 1;
+                            continue;
+                        }
+                        let bi = bl.len() - bl.trim_start().len();
+                        if bi > indent_len {
+                            body_lines.push(bl);
+                            j += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    let indent = &line[..indent_len];
+                    let sig = line[indent_len..eq].trim_end();
+                    out.push(format!("{}{}:", indent, sig));
+                    // If body is a single non-blank expression line, prefix with `return `.
+                    let non_blank: Vec<&&str> = body_lines.iter().filter(|l| !l.trim().is_empty()).collect();
+                    if non_blank.len() == 1 {
+                        let only = non_blank[0];
+                        let bi = only.len() - only.trim_start().len();
+                        let expr = only.trim_start();
+                        // Skip already-terminal statements (return, continue, etc.).
+                        let already_stmt = expr.starts_with("return ") || expr == "return"
+                            || expr.starts_with("continue") || expr.starts_with("break")
+                            || expr.starts_with("throw ") || expr.starts_with("raise ")
+                            || expr.starts_with("emit(") || expr.starts_with("yield(");
+                        if already_stmt {
+                            out.push(only.to_string());
+                        } else {
+                            out.push(format!("{}return {}", " ".repeat(bi), expr));
+                        }
+                    } else {
+                        // Multi-line body: keep as-is.
+                        for bl in body_lines { out.push(bl.to_string()); }
+                    }
+                    i = j;
+                    continue;
+                }
+            }
+        }
+        out.push(line.to_string());
+        i += 1;
+    }
+    out.join("\n")
+}
+
 fn rewrite_kotlin_lambda_closure(source: &str) -> String {
     source.lines().map(|line| {
         let chars: Vec<char> = line.chars().collect();
@@ -1062,7 +1357,7 @@ fn rewrite_kotlin_lambda_closure(source: &str) -> String {
                         // no parens). When it is, wrap the expansion in `()`
                         // so Nebula's parser sees `.method(|...| body)`.
                         let is_trailing_closure = {
-                            let mut b = out.trim_end();
+                            let b = out.trim_end();
                             let last = b.chars().last();
                             match last {
                                 Some(')') | Some(']') => true,
@@ -1458,54 +1753,6 @@ fn close_orphan_struct_literals(source: &str) -> String {
     out.join("\n")
 }
 
-fn join_multiline_struct_literals(source: &str) -> String {
-    let lines: Vec<&str> = source.lines().collect();
-    let mut out: Vec<String> = Vec::with_capacity(lines.len());
-    let mut i = 0;
-    while i < lines.len() {
-        let line = lines[i];
-        let trimmed = line.trim_end();
-        let ends_with_open = trimmed.ends_with(":= {") || trimmed.ends_with("= {");
-        if ends_with_open {
-            // Find matching `}` on a subsequent line at the same indent.
-            let leading = line.len() - line.trim_start().len();
-            let mut j = i + 1;
-            let mut close_idx = None;
-            while j < lines.len() {
-                let nt = lines[j].trim_end();
-                let nts = nt.trim_start();
-                if nts.is_empty() { j += 1; continue; }
-                let nl = nt.len() - nts.len();
-                if nl == leading && (nts == "}" || nts == "};" || nts.starts_with("}")) {
-                    close_idx = Some(j);
-                    break;
-                }
-                if nl < leading { break; }
-                j += 1;
-            }
-            if let Some(cl) = close_idx {
-                // Collect body parts.
-                let mut body = String::new();
-                for k in (i + 1)..cl {
-                    let t = lines[k].trim();
-                    if t.is_empty() { continue; }
-                    if !body.is_empty() { body.push(' '); }
-                    body.push_str(t);
-                }
-                // Strip trailing comma from body.
-                let body = body.trim_end_matches(',').trim().to_string();
-                let close_tail = lines[cl].trim().trim_start_matches('}').trim();
-                out.push(format!("{} {} }}{}", trimmed, body, close_tail));
-                i = cl + 1;
-                continue;
-            }
-        }
-        out.push(line.to_string());
-        i += 1;
-    }
-    out.join("\n")
-}
-
 fn drop_c_union_bitfield_debris(source: &str) -> String {
     let lines: Vec<&str> = source.lines().collect();
     let mut out: Vec<String> = Vec::with_capacity(lines.len());
@@ -1716,163 +1963,6 @@ fn postprocess_python_no_lt(source: &str) -> String {
         out.push('\n');
     }
     out
-}
-
-fn postprocess_python(source: &str) -> String {
-    let mut out = String::with_capacity(source.len());
-    for line in source.lines() {
-        let processed = rewrite_python_line(line);
-        out.push_str(&processed);
-        out.push('\n');
-    }
-    // Second pass: insert `lt` before the first bare `name = expr` assignment
-    // within each function body. Python has no declaration vs reassignment
-    // distinction, but Nebula's linter treats unprefixed first-assignments as
-    // rebinding. We track function-scoped name sets using `fn ... {` as the
-    // scope entry marker.
-    insert_lt_on_first_assignment(&out)
-}
-
-fn insert_lt_on_first_assignment(source: &str) -> String {
-    // Parse line-by-line. Maintain a stack of (depth, HashSet<String>) pairs.
-    // On `fn NAME(PARAMS) ... {` push a new frame seeded with the parameter
-    // names. On matching `}` pop. On `name = expr` at depth > 0 (inside some
-    // function frame), if name is not in the current frame set, prepend `lt `
-    // and add it.
-    use std::collections::HashSet;
-    let mut out = String::with_capacity(source.len());
-    let mut stack: Vec<HashSet<String>> = Vec::new();
-    // Pre-declare names at each brace level so we know when a frame pops.
-    let mut brace_stack: Vec<usize> = Vec::new(); // number of open braces at frame boundary
-    let mut open_braces = 0i32;
-
-    for line in source.lines() {
-        let trimmed = line.trim_start();
-        // Detect function entry: `fn NAME(PARAMS) ... {`
-        if trimmed.starts_with("fn ") && line.trim_end().ends_with('{') {
-            // Extract parameter names.
-            let mut params = HashSet::new();
-            if let (Some(lp), Some(rp)) = (line.find('('), line.rfind(')')) {
-                let inner = &line[lp + 1..rp];
-                for p in inner.split(',') {
-                    let p = p.trim();
-                    if p.is_empty() { continue; }
-                    // `name: Type` or `name = default` or just `name`
-                    let name = p.split(|c: char| c == ':' || c == '=').next().unwrap_or("").trim();
-                    if !name.is_empty() {
-                        params.insert(name.to_string());
-                    }
-                }
-            }
-            stack.push(params);
-            brace_stack.push(open_braces as usize);
-            open_braces += 1;
-            out.push_str(line);
-            out.push('\n');
-            continue;
-        }
-        // Non-fn brace bookkeeping.
-        let opens = line.chars().filter(|&c| c == '{').count() as i32;
-        let closes = line.chars().filter(|&c| c == '}').count() as i32;
-        open_braces += opens;
-        open_braces -= closes;
-
-        // Pop frames whose scope brace has closed.
-        while let Some(&frame_braces) = brace_stack.last() {
-            if (open_braces as usize) <= frame_braces {
-                stack.pop();
-                brace_stack.pop();
-            } else {
-                break;
-            }
-        }
-
-        if !stack.is_empty() {
-            if let Some(new_line) = maybe_add_lt(line, stack.last_mut().unwrap()) {
-                out.push_str(&new_line);
-                out.push('\n');
-                continue;
-            }
-        }
-        out.push_str(line);
-        out.push('\n');
-    }
-    out
-}
-
-/// If `line` is a bare `NAME = EXPR` assignment where NAME is not yet in
-/// `seen`, return `lt NAME = EXPR` and mark it seen. Returns None otherwise.
-fn maybe_add_lt(line: &str, seen: &mut std::collections::HashSet<String>) -> Option<String> {
-    let leading = line.len() - line.trim_start().len();
-    let (prefix, body) = line.split_at(leading);
-    // Must not already start with a keyword that owns the line.
-    for kw in &["lt ", "mt ", "fn ", "rt", "if ", "el", "fo ", "wl ", "lp", "mc ", "st ", "en ", "im ", "tr ", "ct", "bk", "//", "use ", "try", "ch "] {
-        if body.starts_with(kw) || body == kw.trim_end() {
-            return None;
-        }
-    }
-    // Find an `=` not preceded by a comparison/assignment operator char.
-    let bytes = body.as_bytes();
-    let mut eq_pos = None;
-    let mut depth = 0i32;
-    let mut i = 0;
-    while i < bytes.len() {
-        let b = bytes[i];
-        match b {
-            b'(' | b'[' | b'{' => depth += 1,
-            b')' | b']' | b'}' => depth -= 1,
-            b'"' | b'\'' => {
-                // skip to matching quote
-                let q = b;
-                i += 1;
-                while i < bytes.len() {
-                    if bytes[i] == b'\\' {
-                        i += 2;
-                        continue;
-                    }
-                    if bytes[i] == q {
-                        break;
-                    }
-                    i += 1;
-                }
-            }
-            b'=' if depth == 0 => {
-                let prev = if i > 0 { bytes[i - 1] } else { b' ' };
-                let next = if i + 1 < bytes.len() { bytes[i + 1] } else { b' ' };
-                // Skip ==, !=, <=, >=, =>, +=, -=, *=, /=, %=
-                if matches!(prev, b'=' | b'!' | b'<' | b'>' | b'+' | b'-' | b'*' | b'/' | b'%' | b':') {
-                    i += 1;
-                    continue;
-                }
-                if next == b'=' || next == b'>' {
-                    i += 1;
-                    continue;
-                }
-                eq_pos = Some(i);
-                break;
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    let eq_pos = eq_pos?;
-    let lhs = body[..eq_pos].trim();
-    // LHS must be a simple identifier (no dots, no brackets, no parens).
-    if lhs.is_empty() {
-        return None;
-    }
-    let first = lhs.chars().next().unwrap();
-    if !(first.is_ascii_alphabetic() || first == '_') {
-        return None;
-    }
-    if !lhs.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-        return None;
-    }
-    if seen.contains(lhs) {
-        return None;
-    }
-    seen.insert(lhs.to_string());
-    Some(format!("{}lt {}", prefix, body))
 }
 
 /// Rewrite a single line of Python-derived Nebula, avoiding edits inside
@@ -3418,10 +3508,16 @@ fn postprocess(source: &str) -> String {
         .replace("Map{", "{")
         .replace("[]Task{}", "[]")
         .replace("[]int{", "[").replace("[]string{", "[")
-        // Swift/Kotlin optional: Type? → Type
-        .replace("Task?", "Task")
-        .replace("Int?", "Int")
-        .replace("String?", "String")
+        // Swift/Kotlin optional: Type? → Optional[Type] so codegen can
+        // re-emit the nullable marker. Order matters: multi-char forms first.
+        .replace("Task?", "Optional[Task]")
+        .replace("Int?", "Optional[Int]")
+        .replace("String?", "Optional[String]")
+        .replace("Str?", "Optional[Str]")
+        .replace("Bool?", "Optional[Bool]")
+        .replace("Double?", "Optional[Double]")
+        .replace("Float?", "Optional[Float]")
+        .replace("Long?", "Optional[Long]")
         // Swift dict literal: ["key": val] → {"key": val}
         .replace("rt [\"", "rt {\"")
         .replace(", \"pct\": pct]", ", \"pct\": pct}")
@@ -3516,8 +3612,13 @@ fn postprocess(source: &str) -> String {
         .replace("char *buf", "buf: Str")
         // Rust Vec[T] → [T] (after generics fix)
         .replace("Vec[", "[")
-        // C pointer params: *task → task
-        .replace("(*", "(").replace(", *", ", ")
+        // C pointer params: `(*task` / `, *task` only when the `*` precedes
+        // a parameter identifier that is followed by `,` or `)` (i.e. the
+        // `*` is the pointer marker, not a deref expression like `(*s - '0')`).
+        // Implemented via regex-safe scan.
+        ;
+    let s = strip_c_pointer_param_stars(&s);
+    let s = s
         // Kotlin return type: "fn name(): Type" → "fn name() -> Type"
         .replace("): String", ") -> String")
         .replace("): Int", ") -> Int")
@@ -3601,13 +3702,11 @@ fn postprocess(source: &str) -> String {
     // so the lexer's `catch` keyword doesn't break the parse.
     let s = s.replace(".catch(", ".on_error(")
              .replace(".catch ", ".on_error ");
-    // Kotlin/JS async block prefixes and `.await()` chains: Nebula has no
-    // async/await runtime, so drop the markers so the surrounding expression
-    // still parses.
-    let s = s.replace("async {", "{")
-             .replace("async(", "(")
-             .replace(".await()", "()")
-             .replace(".await ", " ");
+    // Kotlin coroutine builder `async { body }` → call-with-lambda form
+    // `async({ body })` so the async semantic (returns Deferred<T>) survives
+    // through IL. The Kotlin codegen can recognize `async(...)` calls and
+    // re-emit them as `async { ... }`.
+    let s = kotlin_async_block_to_call(&s);
     // Kotlin's elvis `a ?: b` → Nebula's nil-coalesce `a ?? b`.
     let s = s.replace(" ?: ", " ?? ");
     // Kotlin `catch (e: Type)` / `except (e: Type)` takes a parenthesized
@@ -6378,25 +6477,68 @@ fn comment_orphan_impls(source: &str) -> String {
 /// alone leaves the outer struct body empty — which Nebula's parser also
 /// rejects (it expects field content, not just comments). A placeholder
 /// field keeps the outer type well-formed.
+///
+/// Additionally, the nested decl body is HOISTED to a top-level struct
+/// with a `__parent_<outer>: Any` sentinel field, so downstream codegens
+/// (notably Kotlin's sealed-class emit) can re-nest it with field info
+/// intact. Example: `sealed class Shape { data class Circle(val r: Double) : Shape() }`
+/// ingests to `struct Shape { _nst_circle: Any }` PLUS a hoisted top-level
+/// `struct Circle { __parent_Shape: Any, r: Double }`.
 fn comment_nested_type_decls(source: &str) -> String {
     let keywords = ["struct ", "enum ", "trait ", "class ",
                     "struct:", "enum:", "trait:", "class:",
                     "struct {", "enum {", "trait {", "class {"];
     let mut out = Vec::new();
+    let mut hoisted: Vec<String> = Vec::new();
     let mut commenting: Option<usize> = None;  // indent of the nested decl
+    let mut current_outer: Option<String> = None;  // most recent top-level type name
+    let mut nested_name: Option<String> = None;    // nested type name currently being captured
+    let mut nested_parent: Option<String> = None;  // the outer parent at capture start
     for line in source.lines() {
         let leading_len = line.len() - line.trim_start().len();
         let trimmed = line[leading_len..].trim_end();
+        // Track the most recent top-level type declaration so we can link
+        // the nested decl to its parent.
+        if leading_len == 0 {
+            for kw in &["struct ", "class ", "enum ", "trait ",
+                        "struct:", "class:", "enum:", "trait:"] {
+                if trimmed.starts_with(kw) {
+                    let after = &trimmed[kw.len()..];
+                    let name: String = after.chars()
+                        .take_while(|c| c.is_alphanumeric() || *c == '_')
+                        .collect();
+                    if !name.is_empty() {
+                        current_outer = Some(name);
+                    }
+                    break;
+                }
+            }
+        }
         if let Some(decl_indent) = commenting {
             if !trimmed.is_empty() && leading_len <= decl_indent {
                 commenting = None;
+                // End of nested body — finalize the hoist.
+                nested_name = None;
+                nested_parent = None;
             } else {
-                out.push(format!("{}// {}", &line[..leading_len], trimmed));
+                // Append this line to the hoisted body (de-dented to 0).
+                if nested_name.is_some() {
+                    let sub_indent = leading_len.saturating_sub(decl_indent);
+                    let sub_line_inner = &line[leading_len..];
+                    hoisted.push(format!("{}{}", " ".repeat(sub_indent), sub_line_inner));
+                }
+                // Skip empty commented lines — they confuse indent-to-brace.
+                if !trimmed.is_empty() {
+                    out.push(format!("{}// {}", &line[..leading_len], trimmed));
+                }
                 continue;
             }
         }
         let is_decl = keywords.iter().any(|kw| trimmed.starts_with(kw));
         if is_decl && leading_len > 0 {
+            // Reset hoist state when entering a new nested decl.
+            nested_name = None;
+            nested_parent = None;
             // Extract the nested type's name for the placeholder field.
             let kw = keywords.iter().find(|kw| trimmed.starts_with(**kw)).unwrap();
             let after_kw = &trimmed[kw.len()..];
@@ -6423,12 +6565,74 @@ fn comment_nested_type_decls(source: &str) -> String {
             };
             out.push(format!("{}{}: Any  // {}", &line[..leading_len],
                 placeholder_name, trimmed));
-            if trimmed.ends_with('{') || trimmed.ends_with(':') {
+            // Start hoisting: emit a top-level shell for the nested type.
+            if !name.is_empty() {
+                // Extract field list from either `class Name(val f: T, ...)` or
+                // `struct Name { f: T, ... }` inline form. The latter is what
+                // the Kotlin ingester emits before `braces_to_indent` runs.
+                let parent = current_outer.clone();
+                let body_inside = {
+                    // Find the FIRST balanced `{...}` or `(...)`.
+                    let match_balanced = |opener: char, closer: char| -> Option<(usize, usize)> {
+                        let lp = trimmed.find(opener)?;
+                        let mut depth = 0i32;
+                        for (i, c) in trimmed[lp..].char_indices() {
+                            if c == opener { depth += 1; }
+                            else if c == closer {
+                                depth -= 1;
+                                if depth == 0 { return Some((lp, lp + i)); }
+                            }
+                        }
+                        None
+                    };
+                    let paren = match_balanced('(', ')');
+                    let brace = match_balanced('{', '}');
+                    match (paren, brace) {
+                        (Some((lp, rp)), _) if lp + 1 < rp
+                            => trimmed[lp + 1..rp].trim().to_string(),
+                        (_, Some((lb, rb))) if lb + 1 < rb
+                            => trimmed[lb + 1..rb].trim().to_string(),
+                        _ => String::new(),
+                    }
+                };
+                hoisted.push(format!("struct {}:", name));
+                if let Some(ref p) = parent {
+                    hoisted.push(format!("  __parent_{}: Any", p));
+                }
+                if !body_inside.is_empty() {
+                    // Split by `,` or `;`. Each part is `val name: Type`,
+                    // `var name: Type`, or `name: Type`.
+                    for part in body_inside.split(|c: char| c == ',' || c == ';') {
+                        let p = part.trim()
+                            .trim_start_matches("val ")
+                            .trim_start_matches("var ")
+                            .trim_start_matches("lt ")
+                            .trim_start_matches("mt ");
+                        if !p.is_empty() && p.contains(':') {
+                            hoisted.push(format!("  {}", p));
+                        }
+                    }
+                }
+                nested_name = Some(name.clone());
+                nested_parent = parent;
+            }
+            // Only enter commenting-mode if we'll hoist a named nested decl.
+            // For empty-name decls (e.g. Kotlin `companion object`), there
+            // is no struct to hoist and we shouldn't over-commented dedented
+            // sibling text.
+            if !name.is_empty() && (trimmed.ends_with('{') || trimmed.ends_with(':')) {
                 commenting = Some(leading_len);
             }
             continue;
         }
         out.push(line.to_string());
+    }
+    // Append hoisted top-level decls at the end so downstream codegens
+    // can re-nest them.
+    let _ = (nested_name, nested_parent);  // silence unused warnings
+    if !hoisted.is_empty() {
+        out.push(String::new());
+        for line in hoisted { out.push(line); }
     }
     out.join("\n")
 }
@@ -6437,6 +6641,59 @@ fn comment_nested_type_decls(source: &str) -> String {
 /// bitwise-AND (`a & b`). The marker is a `&` followed by an identifier
 /// character with no intervening space. Runs globally but skips string
 /// literals.
+/// Strip C pointer-parameter stars (`(*name,` / `, *name,` / `(*name)` /
+/// `, *name)`) where the `*` is the pointer marker for a parameter name.
+/// Leave deref expressions like `(*s - '0')` untouched by requiring that
+/// the identifier after `*` is directly followed by `,` or `)`.
+fn strip_c_pointer_param_stars(source: &str) -> String {
+    let chars: Vec<char> = source.chars().collect();
+    let mut out = String::with_capacity(source.len());
+    let mut i = 0;
+    let mut in_str: Option<char> = None;
+    while i < chars.len() {
+        let c = chars[i];
+        if let Some(q) = in_str {
+            out.push(c);
+            if c == q { in_str = None; }
+            i += 1; continue;
+        }
+        if c == '"' || c == '\'' {
+            in_str = Some(c);
+            out.push(c);
+            i += 1; continue;
+        }
+        // Pattern: (`(` | `,`) (ws)* `*` (ident)+ (ws)* (`,` | `)`)
+        let is_leader = c == '(' || c == ',';
+        if is_leader {
+            // scan ahead
+            let mut j = i + 1;
+            while j < chars.len() && chars[j] == ' ' { j += 1; }
+            if j < chars.len() && chars[j] == '*' {
+                let mut k = j + 1;
+                while k < chars.len() && chars[k] == ' ' { k += 1; }
+                let id_start = k;
+                while k < chars.len() && (chars[k].is_ascii_alphanumeric() || chars[k] == '_') { k += 1; }
+                let has_ident = k > id_start;
+                let mut m = k;
+                while m < chars.len() && chars[m] == ' ' { m += 1; }
+                let terminator_ok = m < chars.len() && (chars[m] == ',' || chars[m] == ')');
+                if has_ident && terminator_ok {
+                    // Emit leader + optional space + ident (skip the `*`).
+                    out.push(c);
+                    // Preserve the space pattern conservatively.
+                    for ch in &chars[i + 1..j] { out.push(*ch); }
+                    for ch in &chars[id_start..k] { out.push(*ch); }
+                    i = k;
+                    continue;
+                }
+            }
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
 fn strip_rust_reference_amps(source: &str) -> String {
     let bytes = source.as_bytes();
     let mut out = String::with_capacity(source.len());
@@ -6755,7 +7012,7 @@ fn normalize_identifiers(source: &str) -> String {
     let mut type_names = std::collections::HashSet::new();
     for line in source.lines() {
         let trimmed = line.trim();
-        for prefix in &["st ", "en ", "tr ", "im ", "struct ", "enum ", "trait ", "impl "] {
+        for prefix in &["st ", "en ", "tr ", "im ", "struct ", "enum ", "trait ", "impl ", "ty ", "type "] {
             if trimmed.starts_with(prefix) {
                 let rest = &trimmed[prefix.len()..];
                 let name: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
@@ -6764,6 +7021,23 @@ fn normalize_identifiers(source: &str) -> String {
                 }
             }
         }
+    }
+    // Stdlib type names that should always be treated as types, regardless of
+    // context. Prevents snake-case clash with use-path items.
+    for name in &[
+        "HashMap", "HashSet", "BTreeMap", "BTreeSet", "VecDeque", "LinkedList",
+        "PathBuf", "Path", "Duration", "Instant", "SystemTime",
+        "ParseIntError", "ParseFloatError", "Error",
+        "String", "Vec", "Box", "Rc", "Arc", "Cell", "RefCell", "Mutex",
+        "Option", "Result", "Ok", "Err", "Some", "None",
+        "LocalDate", "LocalTime", "LocalDateTime", "ArrayList",
+        "Formatter", "Display", "Debug", "Write", "Read",
+        // Kotlin/Java primitive-array types that round-trip via IL.
+        "IntArray", "LongArray", "FloatArray", "DoubleArray",
+        "BooleanArray", "ByteArray", "CharArray", "ShortArray",
+        "Array",
+    ] {
+        type_names.insert(name.to_string());
     }
 
     let mut out = String::with_capacity(source.len());
@@ -7192,11 +7466,10 @@ fn strip_generic_params(source: &str) -> String {
 
 /// Convert Go-style `append(list, item)` to `list.append(item)`.
 fn normalize_go_append(source: &str) -> String {
-    let mut s = source.to_string();
     // Pattern: "X = append(X, Y)" → "X.append(Y)"
     // Pattern: "append(X, Y)" at start → "X.append(Y)"
     let mut result = Vec::new();
-    for line in s.lines() {
+    for line in source.lines() {
         let trimmed = line.trim();
         let ws = &line[..line.len() - trimmed.len()];
         // Match: VAR = append(VAR, EXPR)
@@ -7219,7 +7492,7 @@ fn normalize_go_append(source: &str) -> String {
 
 /// Strip `if __name__ == "__main__":` guard and its body.
 fn strip_name_guard(source: &str) -> String {
-    let mut lines: Vec<&str> = source.lines().collect();
+    let lines: Vec<&str> = source.lines().collect();
     // Find and remove __name__ guard
     let mut i = 0;
     let mut result = Vec::new();
@@ -7491,61 +7764,6 @@ fn find_matching_paren(s: &str) -> Option<usize> {
             ')' => {
                 depth -= 1;
                 if depth == 0 { return Some(i); }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-/// Convert Kotlin/Swift trailing closures `{ it.X }` or `{ it * 2 }` to lambdas `(|it| it.X)`.
-fn convert_trailing_closures(source: &str) -> String {
-    let mut s = source.to_string();
-    // Pattern: .method { BODY } where BODY contains "it" references
-    // Common forms: .filter { it.done }, .map { it * 2 }, .sorted { it.X }
-    loop {
-        let prev = s.clone();
-        // Find pattern: WORD { ... it ... }
-        // Simple approach: replace "{ it" patterns after method names
-        if let Some(pos) = s.find(" { it") {
-            // Find the closing }
-            let after = &s[pos + 2..]; // skip " {"
-            if let Some(close) = find_matching_brace(after) {
-                let body = &after[..close].trim().to_string();
-                let before = &s[..pos];
-                let after_close = &s[pos + 2 + close + 1..];
-                // Convert to (|it| body)
-                s = format!("{}(|it| {}){}", before, body, after_close);
-                continue;
-            }
-        }
-        // Also handle "{ not it.X }" pattern
-        if let Some(pos) = s.find(" { not it") {
-            let after = &s[pos + 2..];
-            if let Some(close) = find_matching_brace(after) {
-                let body = &after[..close].trim().to_string();
-                let before = &s[..pos];
-                let after_close = &s[pos + 2 + close + 1..];
-                s = format!("{}(|it| {}){}", before, body, after_close);
-                continue;
-            }
-        }
-        if s == prev { break; }
-    }
-    s
-}
-
-/// Find the position of the matching `}` for an opening `{`, handling nesting.
-fn find_matching_brace(s: &str) -> Option<usize> {
-    let mut depth = 1;
-    for (i, c) in s.char_indices() {
-        match c {
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(i);
-                }
             }
             _ => {}
         }
@@ -10024,23 +10242,51 @@ mod go {
 
             "select_statement" => {
                 // Go's `select { ... }` has no Nebula analogue. Pick the
-                // first case's body and inline it. Children of the
-                // select_statement are `communication_case` / `default_case`
-                // nodes; each case's body lives in a `statement_list` child.
+                // first case's body and inline it. Extract the receive
+                // binding too (`x := <-a`) so downstream references resolve.
                 let mut emitted = String::new();
                 let mut cursor = node.walk();
                 'outer: for child in node.named_children(&mut cursor) {
                     if child.kind() == "communication_case"
                         || child.kind() == "default_case" {
                         let mut cc = child.walk();
+                        let mut case_head: Option<String> = None;
+                        let mut stmts_out: Option<String> = None;
                         for sub in child.named_children(&mut cc) {
+                            // The communication clause (`x := <-a` or `<-a`)
+                            // appears before the statement_list. Extract it
+                            // so declared names are in scope.
+                            if matches!(sub.kind(),
+                                "receive_statement" | "short_var_declaration" | "assignment_statement")
+                            {
+                                case_head = Some(text(&sub, src).to_string());
+                            }
                             if sub.kind() == "statement_list" {
                                 let stmts = emit_children_as_statements(&sub, src, depth, emit);
                                 if !stmts.trim().is_empty() {
-                                    emitted = stmts;
-                                    break 'outer;
+                                    stmts_out = Some(stmts);
                                 }
                             }
+                        }
+                        if let Some(body) = stmts_out {
+                            let mut out_parts: Vec<String> = Vec::new();
+                            if let Some(head) = case_head {
+                                // `x := <-a` → `x = 0` stub. Strip the receive
+                                // entirely; the assignment is what we want.
+                                let h = head.trim();
+                                if let Some(eq_pos) = h.find(":=") {
+                                    let name = h[..eq_pos].trim();
+                                    out_parts.push(format!("{}{} = 0", ind, name));
+                                } else if let Some(eq_pos) = h.find('=') {
+                                    let name = h[..eq_pos].trim();
+                                    if !name.is_empty() {
+                                        out_parts.push(format!("{}{} = 0", ind, name));
+                                    }
+                                }
+                            }
+                            out_parts.push(body.trim_end().to_string());
+                            emitted = out_parts.join("\n");
+                            break 'outer;
                         }
                     }
                 }
@@ -11224,7 +11470,7 @@ pub(crate) mod kotlin {
             // survive through braces_to_indent instead of flattening to depth 0.
             let leading_len = line.len() - line.trim_start().len();
             let leading = &line[..leading_len];
-            let mut trimmed_owned: String;
+            let trimmed_owned: String;
             let trimmed: &str = {
                 let raw_trimmed = line[leading_len..].trim_end();
                 // Kotlin wildcard imports (`import x.y.*`) aren't valid
@@ -12027,10 +12273,13 @@ mod c {
                 // be a `function_declarator` or a `pointer_declarator`
                 // wrapping one (for `Type *name(...)`). Walk through any
                 // number of pointer_declarator wrappers before extracting
-                // name + params.
+                // name + params. Count the wrappers so we can recover
+                // pointer-ness on the return type.
                 let mut declarator = node.child_by_field_name("declarator");
+                let mut ret_ptr_depth = 0u32;
                 while let Some(d) = declarator {
                     if d.kind() == "pointer_declarator" {
+                        ret_ptr_depth += 1;
                         declarator = d.child_by_field_name("declarator");
                     } else {
                         declarator = Some(d);
@@ -12048,8 +12297,23 @@ mod c {
                 let ret = node.child_by_field_name("type")
                     .map(|n| text(&n, src));
                 let ret_ann = match ret {
-                    Some("void") | None => String::new(),
-                    Some(t) => format!(" -> {}", normalize_c_type(t)),
+                    Some("void") if ret_ptr_depth == 0 => String::new(),
+                    None => String::new(),
+                    Some(t) => {
+                        // `char *` → Str; other `T *` → List[T]; deep
+                        // pointers are wrapped in `Ptr[Ptr[...]]` for C
+                        // codegen to unwrap back.
+                        let base = normalize_c_type(t);
+                        let ty = if ret_ptr_depth == 0 { base }
+                            else if ret_ptr_depth == 1 && base == "Char" { "Str".to_string() }
+                            else if ret_ptr_depth == 1 { format!("List[{}]", base) }
+                            else {
+                                let mut inner = base;
+                                for _ in 0..ret_ptr_depth { inner = format!("Ptr[{}]", inner); }
+                                inner
+                            };
+                        format!(" -> {}", ty)
+                    }
                 };
                 let body = node.child_by_field_name("body")
                     .map(|n| emit_block(&n, src, depth))
@@ -12058,13 +12322,70 @@ mod c {
                 format!("{}fn {}({}){}{}", ind, name, params, ret_ann, body)
             }
 
+            "field_declaration" => {
+                // `const char *name;` inside a struct body. Tree-sitter-c
+                // keeps the `name` ident inside a (pointer_)declarator. The
+                // default `text()` fallback prints raw C which Nebula's
+                // parser then fails to annotate — emit `name: TYPE` so the
+                // struct decl carries full type info downstream.
+                let ty_raw = node.child_by_field_name("type")
+                    .map(|n| text(&n, src).to_string());
+                let declarator = node.child_by_field_name("declarator");
+                let (name, ptr_depth, is_array) = {
+                    let mut d = declarator;
+                    let mut depth_ptr = 0u32;
+                    let mut is_arr = false;
+                    while let Some(cur) = d {
+                        match cur.kind() {
+                            "pointer_declarator" => {
+                                depth_ptr += 1;
+                                d = cur.child_by_field_name("declarator");
+                            }
+                            "array_declarator" => {
+                                is_arr = true;
+                                d = cur.child_by_field_name("declarator");
+                            }
+                            _ => { d = Some(cur); break; }
+                        }
+                    }
+                    let n = d.map(|n| text(&n, src).to_string()).unwrap_or_else(|| "_".into());
+                    (n, depth_ptr, is_arr)
+                };
+                let ty_norm = ty_raw.as_deref().map(normalize_c_type);
+                let annotation = match (ty_norm, is_array, ptr_depth) {
+                    (Some(t), _, 1) if t == "Char" => ": Str".to_string(),
+                    (Some(t), true, _) if !t.is_empty() => format!(": List[{}]", t),
+                    (Some(t), _, 1) if !t.is_empty() => format!(": List[{}]", t),
+                    (Some(t), _, d) if d > 1 && !t.is_empty() => {
+                        let mut inner = t.clone();
+                        for _ in 0..d { inner = format!("Ptr[{}]", inner); }
+                        format!(": {}", inner)
+                    }
+                    (Some(t), _, _) if !t.is_empty() => format!(": {}", t),
+                    _ => String::new(),
+                };
+                format!("{}{}{}", ind, name, annotation)
+            }
+
             "declaration" => {
                 // C declaration: `type name = value;` or `type name;`. Walk
                 // the AST to strip the type prefix and any pointer wrappers
                 // so the emitted Nebula declaration is `name := value` (or
                 // `name` if no initializer).
-                let ty_raw = node.child_by_field_name("type")
-                    .map(|n| text(&n, src).to_string());
+                let ty_raw = {
+                    let type_node = node.child_by_field_name("type");
+                    if let Some(n) = type_node {
+                        // `struct_specifier` — extract just the name.
+                        if n.kind() == "struct_specifier" || n.kind() == "union_specifier" || n.kind() == "enum_specifier" {
+                            n.child_by_field_name("name")
+                                .map(|nn| text(&nn, src).to_string())
+                        } else {
+                            Some(text(&n, src).to_string())
+                        }
+                    } else {
+                        None
+                    }
+                };
                 let mut decl_strs: Vec<String> = Vec::new();
                 let mut cursor = node.walk();
                 for child in node.named_children(&mut cursor) {
@@ -12141,6 +12462,18 @@ mod c {
                             } else {
                                 decl_strs.push(format!("mt {}{}", name, annotation));
                             }
+                        }
+                        "array_declarator" => {
+                            // `char buf[128]` → `mt buf: List[Char]`.
+                            let inner_name = child.child_by_field_name("declarator")
+                                .map(|n| text(&n, src).to_string())
+                                .unwrap_or_else(|| "_".into());
+                            let ty_norm = ty_raw.as_deref().map(normalize_c_type);
+                            let annotation = match ty_norm {
+                                Some(t) if !t.is_empty() => format!(": List[{}]", t),
+                                _ => ": List".to_string(),
+                            };
+                            decl_strs.push(format!("mt {}{}", inner_name, annotation));
                         }
                         _ => {}
                     }
@@ -12405,8 +12738,12 @@ mod c {
                 let body = raw.strip_prefix("typedef ").unwrap_or(raw);
                 // Function-pointer typedef: `typedef RET (*NAME)(ARGS);`.
                 // Nebula doesn't model function types, so emit an opaque
-                // `ty NAME = Any` alias.
-                if body.contains("(*") {
+                // `ty NAME = Any` alias. ONLY fire this when the typedef is
+                // not wrapping a struct/enum body — otherwise the `(*field)`
+                // inside a struct-field function-pointer trips this heuristic.
+                let has_struct_body = body.contains("struct") && body.contains('{');
+                let has_enum_body = body.contains("enum") && body.contains('{');
+                if !has_struct_body && !has_enum_body && body.contains("(*") {
                     // Extract NAME between `(*` and `)`.
                     if let Some(lp) = body.find("(*") {
                         let after = &body[lp + 2..];
@@ -12415,6 +12752,209 @@ mod c {
                             return format!("{}ty {} = Any", ind, name);
                         }
                     }
+                }
+                // Walk the AST to find a struct_specifier child — if found,
+                // emit full field-by-field with type info. Otherwise fall
+                // back to the legacy text-level parse.
+                let mut struct_child: Option<Node> = None;
+                let mut enum_child: Option<Node> = None;
+                let mut cursor = node.walk();
+                for child in node.named_children(&mut cursor) {
+                    if child.kind() == "struct_specifier" { struct_child = Some(child); }
+                    if child.kind() == "enum_specifier" { enum_child = Some(child); }
+                }
+                // Name of the typedef is the last identifier child at the top
+                // level of type_definition.
+                let name = {
+                    let mut last_ident = None;
+                    let mut cursor2 = node.walk();
+                    for child in node.named_children(&mut cursor2) {
+                        if matches!(child.kind(), "type_identifier" | "identifier") {
+                            last_ident = Some(text(&child, src).to_string());
+                        }
+                    }
+                    last_ident.unwrap_or_else(|| body.split_whitespace().last().unwrap_or("?").trim_end_matches('}').to_string())
+                };
+                if let Some(sc) = struct_child {
+                    // Find field_declaration_list inside the struct.
+                    let field_list = {
+                        let mut fl = None;
+                        let mut c2 = sc.walk();
+                        for ch in sc.named_children(&mut c2) {
+                            if ch.kind() == "field_declaration_list" { fl = Some(ch); break; }
+                        }
+                        fl
+                    };
+                    if let Some(fl) = field_list {
+                        let inner_ind = indent(depth + 1);
+                        let mut fields: Vec<String> = Vec::new();
+                        let mut hoisted_externals: Vec<String> = Vec::new();
+                        let mut c3 = fl.walk();
+                        for ch in fl.named_children(&mut c3) {
+                            if ch.kind() == "field_declaration" {
+                                let ty_raw = ch.child_by_field_name("type")
+                                    .map(|n| text(&n, src).to_string());
+                                let type_node = ch.child_by_field_name("type");
+                                // Handle inline `union { ... } val` by hoisting
+                                // to a top-level struct (C codegen emits
+                                // structs and unions alike for `.field` access).
+                                if let Some(tn) = type_node {
+                                    if tn.kind() == "union_specifier" {
+                                        // Extract field name from the declarator.
+                                        let fname = ch.child_by_field_name("declarator")
+                                            .map(|n| text(&n, src).to_string())
+                                            .unwrap_or_else(|| "val".into());
+                                        let synth_name = format!("Union{}{}",
+                                            name,
+                                            fname.chars().enumerate().map(|(i, c)|
+                                                if i == 0 { c.to_uppercase().next().unwrap_or(c) } else { c })
+                                                .collect::<String>());
+                                        fields.push(format!("{}{}: {}", inner_ind, fname, synth_name));
+                                        // Hoist: walk the union's fields.
+                                        let mut union_fields: Vec<String> = Vec::new();
+                                        let mut c4 = tn.walk();
+                                        for uch in tn.named_children(&mut c4) {
+                                            if uch.kind() == "field_declaration_list" {
+                                                let mut c5 = uch.walk();
+                                                for ufield in uch.named_children(&mut c5) {
+                                                    if ufield.kind() == "field_declaration" {
+                                                        let uty = ufield.child_by_field_name("type")
+                                                            .map(|n| text(&n, src).to_string());
+                                                        let udecl = ufield.child_by_field_name("declarator");
+                                                        let (ufname, ptr_depth) = {
+                                                            let mut d = udecl;
+                                                            let mut pd = 0u32;
+                                                            while let Some(cur) = d {
+                                                                match cur.kind() {
+                                                                    "pointer_declarator" => { pd += 1; d = cur.child_by_field_name("declarator"); }
+                                                                    _ => { d = Some(cur); break; }
+                                                                }
+                                                            }
+                                                            (d.map(|n| text(&n, src).to_string()).unwrap_or_else(|| "_".into()), pd)
+                                                        };
+                                                        let uty_norm = uty.as_deref().map(normalize_c_type);
+                                                        let ann = match (uty_norm, ptr_depth) {
+                                                            (Some(t), 1) if t == "Char" => "Str".to_string(),
+                                                            (Some(t), _) if !t.is_empty() => t,
+                                                            _ => "Any".to_string(),
+                                                        };
+                                                        union_fields.push(format!("  {}: {}", ufname, ann));
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if !union_fields.is_empty() {
+                                            hoisted_externals.push(format!("struct {}:", synth_name));
+                                            for uf in union_fields {
+                                                hoisted_externals.push(uf);
+                                            }
+                                        }
+                                        continue;
+                                    }
+                                }
+                                // Skip fields with inline struct/enum types
+                                // — Nebula doesn't grammar those.
+                                if ty_raw.as_deref().map_or(false, |t|
+                                    t.contains("struct ") || t.contains("enum ")
+                                    || t.trim().starts_with("struct") || t.trim().starts_with("enum"))
+                                {
+                                    continue;
+                                }
+                                let declarator = ch.child_by_field_name("declarator");
+                                // Function-pointer field `T (*name)(args)`: the
+                                // declarator contains a function_declarator
+                                // somewhere in the wrapper chain. Detect it and
+                                // emit `name: Any`.
+                                let mut has_fnptr = false;
+                                let mut probe = declarator;
+                                while let Some(n) = probe {
+                                    if n.kind() == "function_declarator" {
+                                        has_fnptr = true;
+                                        break;
+                                    }
+                                    if matches!(n.kind(), "pointer_declarator" | "parenthesized_declarator" | "array_declarator") {
+                                        probe = n.child_by_field_name("declarator");
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                if has_fnptr {
+                                    // Walk for the deepest identifier. Try
+                                    // `declarator` field first; fall back to
+                                    // `named_child(0)` for parenthesized_declarator.
+                                    fn find_deepest_ident<'a>(n: tree_sitter::Node<'a>, src: &[u8]) -> Option<String> {
+                                        if matches!(n.kind(), "field_identifier" | "identifier") {
+                                            return Some(text(&n, src).to_string());
+                                        }
+                                        if let Some(d) = n.child_by_field_name("declarator") {
+                                            if let Some(found) = find_deepest_ident(d, src) { return Some(found); }
+                                        }
+                                        let mut cur = n.walk();
+                                        for ch in n.named_children(&mut cur) {
+                                            if let Some(found) = find_deepest_ident(ch, src) { return Some(found); }
+                                        }
+                                        None
+                                    }
+                                    let found = declarator.and_then(|d| find_deepest_ident(d, src));
+                                    if let Some(fname) = found {
+                                        fields.push(format!("{}{}: Any", inner_ind, fname));
+                                    }
+                                    continue;
+                                }
+                                let (fname, ptr_depth, is_array) = {
+                                    let mut d = declarator;
+                                    let mut depth_ptr = 0u32;
+                                    let mut is_arr = false;
+                                    while let Some(cur) = d {
+                                        match cur.kind() {
+                                            "pointer_declarator" => {
+                                                depth_ptr += 1;
+                                                d = cur.child_by_field_name("declarator");
+                                            }
+                                            "array_declarator" => {
+                                                is_arr = true;
+                                                d = cur.child_by_field_name("declarator");
+                                            }
+                                            _ => { d = Some(cur); break; }
+                                        }
+                                    }
+                                    let n = d.map(|n| text(&n, src).to_string()).unwrap_or_else(|| "_".into());
+                                    (n, depth_ptr, is_arr)
+                                };
+                                let ty_norm = ty_raw.as_deref().map(normalize_c_type);
+                                let annotation = match (ty_norm, is_array, ptr_depth) {
+                                    (Some(t), _, 1) if t == "Char" => ": Str".to_string(),
+                                    (Some(t), true, _) if !t.is_empty() => format!(": List[{}]", t),
+                                    (Some(t), _, 1) if !t.is_empty() => format!(": List[{}]", t),
+                                    (Some(t), _, d) if d > 1 && !t.is_empty() => {
+                                        let mut inner = t.clone();
+                                        for _ in 0..d { inner = format!("Ptr[{}]", inner); }
+                                        format!(": {}", inner)
+                                    }
+                                    (Some(t), _, _) if !t.is_empty() => format!(": {}", t),
+                                    _ => String::new(),
+                                };
+                                fields.push(format!("{}{}{}", inner_ind, fname, annotation));
+                            }
+                        }
+                        let body_fmt = if fields.is_empty() {
+                            " {}".to_string()
+                        } else {
+                            format!(" {{\n{}\n{}}}", fields.join("\n"), ind)
+                        };
+                        let mut out = String::new();
+                        // Emit hoisted union→struct synthetics BEFORE the
+                        // main struct so forward references resolve.
+                        if !hoisted_externals.is_empty() {
+                            out.push_str(&hoisted_externals.join("\n"));
+                            out.push('\n');
+                        }
+                        out.push_str(&format!("{}st {}{}", ind, name, body_fmt));
+                        return out;
+                    }
+                }
+                if let Some(_ec) = enum_child {
+                    // Fall through to the text-level enum parse below.
                 }
                 // Enum typedef: `typedef enum { ... } Name;` → emit as enum,
                 // stripping per-variant `= value` annotations Nebula rejects.
@@ -12566,14 +13106,42 @@ mod c {
 
             "update_expression" => text(node, src).to_string(),
             "cast_expression" => {
-                // C cast `(Type)value` → drop the cast entirely; Nebula is
-                // dynamically typed and can't express pointer casts anyway.
-                node.child_by_field_name("value")
+                // C cast `(Type)value` — encode as a `__cast("TYPE", value)`
+                // pseudo-call so C codegen can recover the target type for
+                // downstream pointer member access (`c->r` needs c to be a
+                // struct pointer, not whatever the unshrouded RHS typed it as).
+                let ty = node.child_by_field_name("type")
+                    .map(|n| text(&n, src).trim().to_string())
+                    .unwrap_or_default();
+                let val = node.child_by_field_name("value")
                     .map(|n| emit_expr(&n, src))
-                    .unwrap_or_else(|| text(node, src).to_string())
+                    .unwrap_or_default();
+                if ty.is_empty() {
+                    return val;
+                }
+                // Escape internal quotes — ty shouldn't contain them but be safe.
+                let ty_safe = ty.replace('"', "'");
+                format!("__cast(\"{}\", {})", ty_safe, val)
             }
             "sizeof_expression" => text(node, src).to_string(),
-            "pointer_expression" => text(node, src).to_string(),
+            "pointer_expression" => {
+                // Extract the `*` or `&` operator and the inner expr.
+                let raw = text(node, src);
+                let inner_node = node.named_child(0);
+                let inner = inner_node.as_ref()
+                    .map(|n| emit_expr(n, src))
+                    .unwrap_or_else(|| raw.to_string());
+                // Address-of `&X` → `__addr(X)`; deref `*X` → `__deref(X)`.
+                // Emitting as explicit pseudo-calls shields the inner ident
+                // from downstream `&X` / `*X` strip passes.
+                if raw.trim_start().starts_with('&') {
+                    format!("__addr({})", inner)
+                } else if raw.trim_start().starts_with('*') {
+                    format!("__deref({})", inner)
+                } else {
+                    raw.to_string()
+                }
+            }
 
             "parenthesized_expression" => {
                 if let Some(inner) = node.named_child(0) {
@@ -12678,21 +13246,29 @@ mod c {
                 let ty_raw = child.child_by_field_name("type")
                     .map(|n| text(&n, src).to_string());
                 let has_pointer = decl_raw.starts_with('*');
-                let (name_clean, is_array) = {
+                let (name_clean, array_depth) = {
                     let stripped = decl_raw.trim_start_matches('*').trim_start_matches('&').trim();
                     if let Some(br) = stripped.find('[') {
-                        (stripped[..br].trim().to_string(), true)
+                        // Count top-level `[…]` occurrences to detect multi-
+                        // dimensional arrays (`int m[3][3]` → depth 2).
+                        let depth = stripped[br..].chars().filter(|c| *c == '[').count();
+                        (stripped[..br].trim().to_string(), depth)
                     } else {
-                        (stripped.to_string(), false)
+                        (stripped.to_string(), 0)
                     }
                 };
+                let is_array = array_depth > 0;
                 // Type-normalize, with two special cases:
                 //   `char *`         → Str
                 //   `X *`            → X (drop pointer since Nebula ignores)
                 let ty_norm = ty_raw.as_deref().map(normalize_c_type);
                 let annotation = if is_array {
                     match &ty_norm {
-                        Some(t) if !t.is_empty() => format!(": List[{}]", t),
+                        Some(t) if !t.is_empty() => {
+                            let mut inner = t.clone();
+                            for _ in 0..array_depth { inner = format!("List[{}]", inner); }
+                            format!(": {}", inner)
+                        }
                         _ => ": List".to_string(),
                     }
                 } else {

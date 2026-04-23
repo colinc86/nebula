@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "nebula": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/nebula",
+      "args": ["mcp"],
+      "env": {
+        "NEBULA_MCP_TOOLS": "read_code,read_native,write_code,patch_code,search_code,translate_code,check_nebula,preview_translation"
+      }
+    }
+  }
+}

@@ -1,5 +1,9 @@
 package foo
 
+import "sync"
+
+func doWorkCh() { _ = 0 }
+
 // goroutine + channel
 func Pipeline(in <-chan int, out chan<- int) {
 	go func() {
@@ -24,5 +28,5 @@ func Multiplex(a, b <-chan int) int {
 func Safe(lock sync.Mutex) {
 	lock.Lock()
 	defer lock.Unlock()
-	doWork()
+	doWorkCh()
 }

@@ -2,6 +2,7 @@
 mod ast;
 mod codegen;
 mod compactor;
+mod corrector;
 mod formatter;
 mod ingest;
 mod interpreter;
@@ -12,6 +13,12 @@ mod mcp;
 mod mcp_delegate;
 mod neural;
 mod parser;
+
+#[cfg(test)]
+mod roundtrip_tests;
+
+#[cfg(test)]
+mod mcp_tests;
 
 use std::env;
 use std::fs;

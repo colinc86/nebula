@@ -1,0 +1,6 @@
+{
+  "eval": "eval2_semantic",
+  "dry_run": true,
+  "pass_bar": 0.7,
+  "note": "Needs 50 HumanEval problems held out at slice-2 build time."
+}

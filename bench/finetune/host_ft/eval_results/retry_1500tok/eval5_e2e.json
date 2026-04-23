@@ -1,0 +1,6 @@
+{
+  "eval": "eval5_e2e",
+  "deferred": true,
+  "pass_bar": 0.7,
+  "note": "Fixture repos for end-to-end plugin test not wired. See plan \u00a78 for the scope this deferred work."
+}

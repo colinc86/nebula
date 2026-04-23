@@ -1,0 +1,19 @@
+{
+  "job_id": "ftjob-SuMFSVkcEYgkaJKp0ENetvFp",
+  "base_model": "gpt-4.1-mini-2025-04-14",
+  "fine_tuned_model": null,
+  "n_train": 1909,
+  "n_val": 210,
+  "status": "failed",
+  "hyperparameters": {
+    "n_epochs": "auto",
+    "batch_size": "auto",
+    "learning_rate_multiplier": "auto"
+  },
+  "trained_tokens": null,
+  "created_at": 1776578612,
+  "finished_at": null,
+  "train_sha256": "7ac9cb12dff42982d068398b0331980a4290967b2ce66b66b67fa8d673d92df0",
+  "val_sha256": "66e57e8c446d33d9a6a7896b425680e499a6dd4d9b669867579d348a772d315f",
+  "started_wall": "2026-04-19 01:04:33"
+}

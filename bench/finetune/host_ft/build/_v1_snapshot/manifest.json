@@ -1,0 +1,26 @@
+{
+  "slices": {
+    "translation": 767,
+    "instruction": 1337,
+    "toolcall": 211,
+    "anchor": 0
+  },
+  "qc": {
+    "anchor": {
+      "accepted": 0,
+      "rejected": 0,
+      "rate": null
+    }
+  },
+  "splits": {
+    "train": 1906,
+    "val": 209,
+    "held_out": 200
+  },
+  "file_hashes": {
+    "train": "488d8363a8603713899c16a50a011e0b2085abbf52c91bb8058a74698e7415f8",
+    "val": "d4c221b790ee7d36c0ebe4ca13e00c7c6d3f891d67001f3c775435b4875ef9d4",
+    "held_out": "28aa57cffad637b8ddb8341c5b0859cc5717e9d783510b63d39314137e92260b"
+  },
+  "generator_commit": "63a8ac4a3e1c9ce7e15903ee5049c37b9dc2cecf"
+}

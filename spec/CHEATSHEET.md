@@ -1,111 +1,148 @@
+[← Back to README](../README.md) · [Full spec →](LANGUAGE.md)
+
 # Nebula Cheat Sheet
 
-Nebula uses short keywords for maximum LLM context density.
+One-page reference for Nebula 1.0. Every keyword is one `cl100k_base` token; both short and long forms are accepted aliases.
 
-## Keywords
-```
-lt = let    mt = mut    cn = const   fn = fn     rt = return
-if = if     el = else   mc = match   fo = for    wl = while
-lp = loop   bk = break  ct = continue st = struct en = enum
-tr = trait   im = impl   pb = pub    sf = self   Sf = Self
-ty = type   ac = async  aw = await   sp = spawn  ch = catch
-tt = true   ff = false  nil and or not in as use try
-```
+## Bindings
 
-## Syntax
 ```nebula
-lt x = 42                    // immutable binding
-mt y = 0                     // mutable binding
-fn add(a, b) = a + b         // short-form function
-fn greet(name, msg = "Hi") { // block function with default param
+x := 42                  // immutable (walrus, 1 tok vs `let x = 42` = 3 tok)
+count = 0                // mutable (bare assignment)
+count = count + 1
+
+name: String := "Nebula" // with type annotation
+a, b = 0, 1              // tuple assignment
+a, b = b, a + b          // tuple swap
+
+// Long forms also accepted (all 1 token):
+let x = 42               // same as x := 42
+mut count = 0            // same as count = 0
+const MAX = 1024         // same as MAX := 1024 (with conventional caps)
+```
+
+## Primitives
+
+| Type | Literals |
+|---|---|
+| `Int` | `42`, `-7`, `1_000_000` |
+| `Float` | `3.14`, `1.0e10` |
+| `Bool` | `True`, `False` |
+| `String` | `"hello"`, `"hi {name}"` (interpolation) |
+| `Char` | `'a'`, `'\n'` |
+| `Nil` | `None` |
+
+## Functions
+
+```nebula
+fn add(a, b) = a + b         // short form (expression body)
+def add(a, b): return a + b  // long form (same tokens)
+
+fn greet(name, msg = "Hi"):  // indent block, default arg
     prt("{msg}, {name}")
-}
-|x| x * 2                   // lambda
-|a, b| a + b                // multi-param lambda
-lt (a, b) = (1, 2)          // destructuring
+
+|x| x * 2                    // lambda
+|a, b| a + b                 // multi-arg lambda
+xs.map { it * 2 }            // trailing closure (implicit `it`)
 ```
 
-## Control Flow
+## Control flow
+
 ```nebula
-if x > 0 { "pos" } el { "neg" }    // if expression
-mc val {                             // match
+if x > 0: "pos" else: "neg"    // if expression (also `elif`)
+if x > 0 { "pos" } else { "neg" }  // brace blocks also valid
+
+match val:                      // exhaustive match
     0 => "zero"
     1..=9 => "small"
     n if n > 100 => "big: {n}"
     _ => "other"
-}
-fo x in items { prt(x) }            // for loop
-fo i, x in items { prt("{i}: {x}") } // with index
-fo k, v in map { prt("{k}={v}") }    // map iteration
-wl cond { ... }                      // while
-lp { if done { bk } }               // loop
-try { risky() } ch e { prt(e) }     // try/catch
+
+for x in items: prt(x)          // for loop
+for i, x in items.enumerate(): prt("{i}: {x}")
+for k, v in map: prt("{k}={v}")
+
+while cond: ...                 // while
+loop:                           // infinite loop
+    if done: break
+
+try: risky()                    // try / catch (also `except`)
+except e: prt(e)
+finally: cleanup()              // optional; runs on all paths
 ```
 
 ## Types
+
 ```nebula
-st Point { x: Float, y: Float }     // struct
-im Point {                           // impl block
+class Point:                    // class sugar (struct + impl combined)
+    x: Float
+    y: Float
     fn new(x, y) = Point { x, y }
-    fn dist(sf) = sqrt(sf.x**2 + sf.y**2)
-}
-en Shape { Circle(r: Float), Rect(w: Float, h: Float), Dot }
-tr Drawable { fn draw(sf) }
-im Drawable fo Shape { fn draw(sf) { ... } }
+    fn dist(self) = (self.x**2 + self.y**2).sqrt()
+
+struct Point { x: Float, y: Float }  // plain struct (no methods)
+impl Point:
+    fn new(x, y) = Point { x, y }
+
+enum Shape:
+    Circle(r: Float)
+    Rect(w: Float, h: Float)
+    Dot
+
+trait Drawable:
+    fn draw(self)
+
+impl Drawable for Shape:
+    fn draw(self): ...
 ```
 
-## Collections
+## Collections & ranges
+
 ```nebula
-[1, 2, 3]                // list
-{"a": 1, "b": 2}         // map
-(1, "hello")              // tuple
-0..10                     // range (exclusive)
-0..=10                    // range (inclusive)
+[1, 2, 3]                   // list
+{"a": 1, "b": 2}            // map
+(1, "hello")                // tuple
+0..10                       // range (exclusive)
+0..=10                      // range (inclusive)
 ```
 
 ## Operators
-```
-+ - * / % **             // arithmetic
-== \!= < > <= >=          // comparison
-and or not               // logical (short-circuit)
-& | ^ ~ << >>           // bitwise
-|> ?? ?                  // pipe, nil-coalesce, try
-```
 
-## Built-in Functions (with short aliases)
-```
-print/prt  len/ln  type_of/typ  to_string/tsr  to_int/toi
-to_float/tof  range/rng (1 or 2 args)  abs  sqrt  min  max
-floor  ceil  round  assert  assert_eq  assert_ne  read_line
-enumerate  zip
-```
+| Group | Operators |
+|---|---|
+| Arithmetic | `+ - * / % **` |
+| Comparison | `== != < > <= >=` |
+| Logical (short-circuit) | `and or not` |
+| Bitwise | `& \| ^ ~ << >>` |
+| Pipe · nil-coalesce · try | `\|>` · `??` · `?` |
 
-## List Methods (with short aliases)
-```
-.map/mp  .filter/fl  .fold/fd  .reduce/rd  .sort/srt  .reverse/rv
-.unique/unq  .count/cnt  .join/jn  .push/psh  .contains/con
-.first  .last  .take  .skip  .sum  .min  .max  .flatten
-.flat_map  .each  .zip  .enumerate  .len/ln  .is_empty
-```
+## Indexing & slicing
 
-## String Methods
-```
-.len  .contains  .split  .trim  .to_upper  .to_lower  .replace
-.starts_with  .ends_with  .index_of  .substring  .chars  .rev
-.repeat  .is_empty
-```
-
-## Map Methods
-```
-.keys  .values  .entries  .contains_key/ck  .get  .len  .is_empty
-```
-
-## Indexing & Slicing
 ```nebula
 list[0]         // index (0-based)
 list[-1]        // last element
-list[1..3]      // slice [1,2]
-list[1..=3]     // slice [1,2,3]
+list[1..3]      // slice [1, 2]
+list[1..=3]     // slice [1, 2, 3]
 str[0..3]       // string slice
-list[i] = val   // index assignment (mt only)
+list[i] = val   // mutable index assignment
 ```
+
+## Common built-ins
+
+```
+print  len  type_of  to_string  to_int  to_float  range
+abs  sqrt  min  max  floor  ceil  round  assert  assert_eq
+read_line  enumerate  zip
+```
+
+## Common collection methods
+
+List: `.map .filter .fold .reduce .sort .reverse .unique .count .join .push .contains .first .last .take .skip .sum .min .max .flatten .flat_map .each .zip .enumerate .len .is_empty`
+
+String: `.len .contains .split .trim .to_upper .to_lower .replace .starts_with .ends_with .index_of .substring .chars .rev .repeat .is_empty`
+
+Map: `.keys .values .entries .contains_key .get .len .is_empty`
+
+---
+
+Anything non-obvious is in the [full specification](LANGUAGE.md).

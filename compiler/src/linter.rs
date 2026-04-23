@@ -409,7 +409,7 @@ impl LintContext {
                     }
                 }
             }
-            Expr::TryCatch { try_block, error_binding, catch_block } => {
+            Expr::TryCatch { try_block, error_binding, catch_block, finally_block } => {
                 self.push_scope();
                 self.check_block(try_block, warnings);
                 self.pop_scope(warnings);
@@ -417,6 +417,11 @@ impl LintContext {
                 self.declare(error_binding, false);
                 self.check_block(catch_block, warnings);
                 self.pop_scope(warnings);
+                if let Some(fb) = finally_block {
+                    self.push_scope();
+                    self.check_block(fb, warnings);
+                    self.pop_scope(warnings);
+                }
             }
             // Literals — nothing to lint
             Expr::IntLit(_)

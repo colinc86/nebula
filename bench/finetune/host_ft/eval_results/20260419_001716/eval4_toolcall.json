@@ -1,0 +1,6 @@
+{
+  "eval": "eval4_toolcall",
+  "dry_run": true,
+  "pass_bar": 0.9,
+  "pool_available": 0
+}

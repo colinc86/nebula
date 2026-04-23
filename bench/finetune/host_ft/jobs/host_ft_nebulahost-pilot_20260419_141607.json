@@ -1,0 +1,19 @@
+{
+  "job_id": "ftjob-5UtQhmV4C73Ca9miiFNcJvM4",
+  "base_model": "gpt-4o-mini-2024-07-18",
+  "fine_tuned_model": "ft:gpt-4o-mini-2024-07-18:personal:nebulahost-pilot:DWRivcmL",
+  "n_train": 1906,
+  "n_val": 209,
+  "status": "succeeded",
+  "hyperparameters": {
+    "n_epochs": 3,
+    "batch_size": 3,
+    "learning_rate_multiplier": 1.8
+  },
+  "trained_tokens": 2736462,
+  "created_at": 1776621700,
+  "finished_at": 1776625435,
+  "train_sha256": "488d8363a8603713899c16a50a011e0b2085abbf52c91bb8058a74698e7415f8",
+  "val_sha256": "d4c221b790ee7d36c0ebe4ca13e00c7c6d3f891d67001f3c775435b4875ef9d4",
+  "started_wall": "2026-04-19 14:16:07"
+}

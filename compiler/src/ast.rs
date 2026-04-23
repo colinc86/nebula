@@ -244,6 +244,7 @@ pub enum Expr {
         try_block: Block,
         error_binding: String,
         catch_block: Block,
+        finally_block: Option<Block>,
     },
 }
 

@@ -1,8 +1,10 @@
 # Nebula
 
-**An MCP server that cuts host-model code-editing cost by ~50% on Claude Sonnet — without fine-tuning, without changing your workflow, without losing correctness.**
+**An MCP server that cuts host-model code-editing cost by a weighted −51.2% on a matched-pair benchmark — Claude Sonnet host, local Qwen3-Coder-30B worker, no fine-tuning required, 24/24 tasks pass.**
 
-Drop one tool (`code_task`) into your Claude Code config. The host stops making twenty Read/Edit/Bash calls per task and starts making one. A local Qwen3-Coder-30B on Ollama does the actual work. You keep the smart host. You just stop paying it to shuffle bytes.
+Drop one tool (`code_task`) into your Claude Code config. On shapes that fit the delegate regime — implement, refactor, bugfix, extract, port, docstring, spec-write — the host stops driving twenty Read/Edit/Bash calls per task and starts making one. A local Qwen3-Coder-30B on Ollama does the typing. You keep the frontier host. You stop paying it to shuffle bytes.
+
+> **Scope.** The −51% headline is the 8-shape matched-pair benchmark ([paper §4](bench/paper.md#4-8-shape-matched-pair-benchmark--sonnet-host)). On *real-world* multi-step tasks — e.g. a 13-file refactor of an arbitrary OSS package — builtins still beat the delegate today; the limit is inner-model reliability vs. Sonnet's one-shot generation, and the fix is host-side fine-tuning on Nebula (currently gated by frontier-API fine-tune surfaces). Honest details in [paper §8 Limitations + §8.1 Future work](bench/paper.md#8-limitations).
 
 ```mermaid
 ---
@@ -84,7 +86,7 @@ One binary, six tools, two modes that compose freely in one session.
 
 | Tool | Mode | What it does |
 |---|---|---|
-| **`code_task`** | Delegate | Hand off a natural-language task + a `verify` command. Inner agent reads/edits files, runs verify, auto-retries up to 3 times on failure, returns one JSON summary with `verify_passed`. One host turn, one host billing event. |
+| **`code_task`** | Delegate | Hand off a natural-language task + a `verify` command. Inner agent reads/edits files, runs verify, auto-retries up to 8 times on failure (configurable), returns one JSON summary with `verify_passed`. One host turn, one host billing event. |
 | `read_code` | Compression | Read any source file. Returns it in Nebula IL (≤40-line files pass through as-is). Works on 8 languages. |
 | `write_code` | Compression | Write Nebula code. Auto-translates to the file's native language by extension. |
 | `patch_code` | Compression | Byte-level `old_str → new_str` edit on native source. Single-file or bulk glob (one call replaces across a whole package). |
@@ -93,9 +95,14 @@ One binary, six tools, two modes that compose freely in one session.
 
 ### When to use which
 
-- **`code_task`** — multi-turn work: refactors, bug fixes, feature additions, anything the host would otherwise drive for more than ~3–4 tool calls. The break-even is ≈3.4 host turns ([cost model §3](bench/cost_model.md#3-break-even-point)).
-- **Compression tools** — read-heavy exploration, single-shot edits, or sessions where you want to stay in direct control of the outer agent. No Ollama needed.
-- **Both at once** (default). They are orthogonal; the host picks per call. Hide the tool surface on the hard stuff, stay direct on the easy stuff.
+The MCP primer ships with a routing heuristic the host reads at session start; these rules of thumb match it.
+
+- **`code_task` — delegate when** the task is *benchmark-shaped*: single verb, scoped to 1 file or a tight 2–3-file cluster, a clear acceptance criterion, and would otherwise cost you ≥ ~4 native tool calls. Examples: "add `Bandpass(v, lo, hi)` to filter.go + a TestBandpass", "rename KVCache → SnapCache across pkg/cache/*.go", "port lru_cache.py to lru_cache.go". The delegate break-even sits at **≈3.4 host turns** ([cost model §3](bench/cost_model.md#3-break-even-point)) — above that, every shape in the benchmark wins.
+- **`code_task` — skip when** a single Read + Edit handles the whole change. Delegation adds one 30B round-trip of fixed overhead; for a one-line fix or a two-line rename, native tools are cheaper and faster. The primer's rule of thumb: ≤ 2 native turns → native, ≥ 10 → delegate, judgment call in between.
+- **Compression tools** — read-heavy exploration, single-shot edits, or sessions where you want to stay in direct control. No Ollama needed.
+- **Translation (`port X to Y`)** always delegates via the compiler-assisted fast-path: source + target API signatures → one model call → verify → done. ~5 s end-to-end vs. ~52 s through the agent loop.
+
+For large, vague, multi-file asks ("remove type X and update all callers"), the host should still plan the decomposition *itself* and fire `code_task` per benchmark-shaped chunk rather than delegating the whole ask in one call — that pattern blows the inner agent's turn budget.
 
 ### How `code_task` works
 
@@ -116,15 +123,33 @@ The host sees one tool call and one JSON response. Everything inside the dashed 
 
 ### Configuration
 
-Environment variables (all optional):
+Environment variables (all optional). Sensible defaults work out of the box; most users never touch these.
+
+**Tool surface:**
 
 | Variable | Default | Effect |
 |---|---|---|
 | `NEBULA_MCP_TOOLS` | unset = all six | Comma allow-list. Set to `code_task` for delegate-only, or `read_code,patch_code,search_code` for compression-only. |
 | `NEBULA_DISABLE_IL` | unset | `1` forces `read_code` to return raw source (bypasses IL compression). |
+
+**Delegate worker (`code_task`):**
+
+| Variable | Default | Effect |
+|---|---|---|
 | `NEBULA_DELEGATE_MODEL` | `qwen3-coder:30b` | Inner-agent Ollama model. |
 | `NEBULA_DELEGATE_OLLAMA_URL` | `http://localhost:11434` | Inner-agent endpoint. |
-| `NEBULA_OLLAMA_MODEL` | `nebula-8lang-14b-q4` | Neural translation backend for `translate_code`. |
+| `NEBULA_DELEGATE_NUM_CTX` | `8192` | Ollama context window. Bump to `32768` for large-file sessions. |
+| `NEBULA_DELEGATE_MAX_TURNS` | `60` | Hard cap on inner-agent turns per `code_task` call. |
+| `NEBULA_DELEGATE_MAX_WALL_S` | `300` | Per-call wall-clock cap (seconds). Past this, the call returns `stopped_reason=wall_clock_cap` and the host falls back. |
+| `NEBULA_DELEGATE_MAX_VERIFY_RETRIES` | `8` | Verify-retry budget when the inner agent lands code that doesn't pass verify. |
+| `NEBULA_DELEGATE_VERBOSE_RESULT` | unset | `1` includes per-turn telemetry + full verify tail in the tool result. Off by default to keep the cached context small. |
+| `NEBULA_DELEGATE_ENABLE_STALL_DETECT` | unset | `1` re-enables the iter-9 "same-stall-prefix-twice" guard. Off by default (false-positived on the fine-tuned 30B). |
+
+**Neural translator (`translate_code`):**
+
+| Variable | Default | Effect |
+|---|---|---|
+| `NEBULA_OLLAMA_MODEL` | `nebula-8lang-14b-q4` | Neural translation backend. |
 | `NEBULA_OLLAMA_URL` | `http://localhost:11434` | Neural translation endpoint. |
 
 If Ollama is unreachable, `code_task` returns a structured error. The compression tools keep working — they have no Ollama dependency.
@@ -175,6 +200,7 @@ We collapse the code-editing tool surface to a single natural-language MCP tool 
 | End-to-end correctness | GAIA subset (13 code-editing tasks, N=1) | accuracy-invariant: 10/13 correct under both configs, identical failures | [`bench/gaia/`](bench/gaia/) |
 | Host routing | Opus 4.6 on 15 small-shape trials | Opus delegated 1/15 → savings collapse to noise on small tasks | [`bench/cost_model.md §4.5`](bench/cost_model.md#45-host-model-behavior-opus-check) |
 | Translation fast-path | port_language (Python→Go, N=3) | **1 turn, 5.4 s mean** vs 3 turns / 52.4 s baseline (−90% wall-clock). Translation-shaped tasks bypass the agent loop entirely. | [`bench/paper.md §5.8`](bench/paper.md#58-translation-fast-path-iter-22) |
+| Real-world transfer | 4 gdsp asks (add/bugfix/spec/refactor), Sonnet, N=1 | delegate is **+6% to +149%** vs builtins; 30B loses at holistic generation to frontier host. Benchmark wins don't carry over to free-form multi-step asks. | [`bench/paper.md §8`](bench/paper.md#8-limitations) |
 
 ### What we claim (and what we don't)
 
@@ -192,7 +218,7 @@ The novel contribution is the framing and the measurement: **collapse the tool s
 **Full writeups:**
 - [Paper draft →](bench/paper.md) — abstract, methodology, all tables, related work
 - [Cost model →](bench/cost_model.md) — notation, fit, break-even, held-out MAPE, host-routing analysis
-- [Iteration log →](bench/loop_notes.md) — every decision and dead-end from iterations 1–18
+- [Iteration log →](bench/loop_notes.md) — every decision and dead-end from iterations 1–23
 - [Raw benchmark runs →](bench/mcp_manual_test/RESULTS.md) — per-shape numbers and variance
 - [GAIA comparison →](bench/gaia/) — head-to-head vs. CodeAgents on code-editing-shaped level-1 tasks
 

@@ -1,0 +1,94 @@
+{"idx": 0, "errors": ["from-python failed on field 'new_str'"]}
+{"idx": 9, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 10, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 13, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 14, "errors": ["from-go failed on field 'new_str'"]}
+{"idx": 15, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 17, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 22, "errors": ["nebula check failed on translated 'code'"]}
+{"idx": 24, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 26, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 28, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 32, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 37, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 41, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 42, "errors": ["nebula check failed on translated 'code'"]}
+{"idx": 46, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 48, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 50, "errors": ["from-go failed on field 'new_str'"]}
+{"idx": 51, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 54, "errors": ["from-go failed on field 'new_str'"]}
+{"idx": 59, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 61, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 62, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 63, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 64, "errors": ["nebula check failed on translated 'code'"]}
+{"idx": 66, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 68, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 75, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 84, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 85, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 89, "errors": ["from-python failed on field 'new_str'"]}
+{"idx": 99, "errors": ["from-go failed on field 'new_str'"]}
+{"idx": 101, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 116, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 117, "errors": ["from-go failed on field 'new_str'"]}
+{"idx": 121, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 129, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 130, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 132, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 134, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 136, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 140, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 143, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 147, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 150, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 152, "errors": ["nebula check failed on translated 'code'"]}
+{"idx": 155, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 157, "errors": ["from-python failed on field 'new_str'"]}
+{"idx": 159, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 163, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 165, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 168, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 171, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 172, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 176, "errors": ["from-go failed on field 'new_str'"]}
+{"idx": 180, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 184, "errors": ["nebula check failed on translated 'code'"]}
+{"idx": 185, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 186, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 187, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 191, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 195, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 196, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 209, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 210, "errors": ["from-go failed on field 'new_str'"]}
+{"idx": 215, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 218, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 221, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 222, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 225, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 232, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 233, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 234, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 241, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 250, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 252, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 253, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 254, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 256, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 257, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 264, "errors": ["nebula check failed on translated 'code'"]}
+{"idx": 266, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 267, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 271, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 276, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 278, "errors": ["from-python failed on field 'new_str'"]}
+{"idx": 283, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 285, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 287, "errors": ["from-go failed on field 'new_str'"]}
+{"idx": 289, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 290, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 291, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 300, "errors": ["nebula check failed on translated 'new_str'"]}
+{"idx": 307, "errors": ["nebula check failed on translated 'new_str'"]}

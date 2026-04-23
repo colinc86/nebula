@@ -1,0 +1,38 @@
+{
+  "pilot_verdict": "pending",
+  "evals": [
+    {
+      "eval": "eval1_syntax",
+      "dry_run": true,
+      "pass_bar": 0.95,
+      "held_out_available": 0
+    },
+    {
+      "eval": "eval2_semantic",
+      "dry_run": true,
+      "pass_bar": 0.7,
+      "note": "Needs 50 HumanEval problems held out at slice-2 build time."
+    },
+    {
+      "eval": "eval3_anchor",
+      "dry_run": true,
+      "pass_bar": 4.0,
+      "pool_available": 0,
+      "note": "Sonnet-as-judge (claude-sonnet-4-6). FT vs stock-mini."
+    },
+    {
+      "eval": "eval4_toolcall",
+      "dry_run": true,
+      "pass_bar": 0.9,
+      "pool_available": 0
+    },
+    {
+      "eval": "eval5_e2e",
+      "dry_run": true,
+      "pass_bar": 0.7,
+      "pool_available": 0,
+      "note": "Requires fixture repos under eval_results/e2e_fixtures/ with expected-outcome test scripts."
+    }
+  ],
+  "note": "Dry-run only \u2014 no inference calls made. Re-run without --dry-run to commit."
+}

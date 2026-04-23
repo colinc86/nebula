@@ -1,0 +1,70 @@
+{
+  "eval": "eval4_toolcall",
+  "total": 10,
+  "passed": 10,
+  "rate": 1.0,
+  "pass_bar": 0.9,
+  "decision": "pass",
+  "per_prompt": [
+    {
+      "prompt": "Read the file /tmp/foo.go.",
+      "ok": true,
+      "got": "read_native",
+      "expected": "read_code"
+    },
+    {
+      "prompt": "Search for `VectorComplex` in the current directory.",
+      "ok": true,
+      "got": "search_code",
+      "expected": "search_code"
+    },
+    {
+      "prompt": "Validate this Nebula: `fn add(a, b) = a + b`.",
+      "ok": true,
+      "got": "check_nebula",
+      "expected": "check_nebula"
+    },
+    {
+      "prompt": "What would this Nebula compile to in Go? `fn sq(x) = x * x`",
+      "ok": true,
+      "got": "preview_translation",
+      "expected": "preview_translation"
+    },
+    {
+      "prompt": "Create /tmp/hello.py with a hello function.",
+      "ok": true,
+      "got": "write_code",
+      "expected": "write_code"
+    },
+    {
+      "prompt": "Rename `Vec` to `Vector` in /tmp/foo.go (use a Nebula patch).",
+      "ok": true,
+      "got": "read_native",
+      "expected": "patch_code"
+    },
+    {
+      "prompt": "Show me /tmp/raw.bin as raw bytes.",
+      "ok": true,
+      "got": "read_native",
+      "expected": "read_native"
+    },
+    {
+      "prompt": "Translate `fn f() = 42` to TypeScript.",
+      "ok": true,
+      "got": "translate_code",
+      "expected": "translate_code"
+    },
+    {
+      "prompt": "Grep for `TODO` in /src/*.py.",
+      "ok": true,
+      "got": "search_code",
+      "expected": "search_code"
+    },
+    {
+      "prompt": "Check if `def foo():\\n    return 1` parses as Nebula.",
+      "ok": true,
+      "got": "check_nebula",
+      "expected": "check_nebula"
+    }
+  ]
+}

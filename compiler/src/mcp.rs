@@ -13,6 +13,7 @@ use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 use std::time::SystemTime;
 
+use crate::corrector;
 use crate::lang_detect;
 use crate::mcp_delegate;
 use crate::neural;
@@ -79,96 +80,18 @@ fn invalidate_cache(path: &str) {
     }
 }
 
+// Short server-info stub for MCP `initialize.instructions`. The full primer
+// now lives in the plugin's SessionStart hook (plugin/hooks/session_start.sh),
+// which is the only path real plugin users see. This constant still matters
+// for non-plugin clients (tests, direct MCP integrations) — keep it honest
+// and terse.
 const NEBULA_PRIMER: &str = "\
-This server reads files in Nebula (a compact canonical form spanning Python, JS, \
-TS, Go, Swift, Kotlin, Rust, C). Small files (≤100 lines) come back as raw source. \
-Larger files come back as Nebula with a 5-line native preview header showing real \
-syntax — that preview is enough to anchor your edits, no need to Bash-cat the file.\n\
-\n\
-`code_task` is a PIECEWISE delegate, not a whole-task autopilot. The inner \
-model is a 30B local coder that excels at small, focused, benchmark-shaped \
-chunks (single verb, scoped to 1 file or a small cluster, ~5 minute task, \
-clear acceptance) but flounders on open-ended multi-file work. For real-world \
-tasks you plan the decomposition at the host layer, then delegate each chunk \
-in a separate `code_task` call.\n\
-\n\
-WHEN TO DELEGATE vs. WHEN TO DO IT NATIVELY. Delegation has a fixed per-call \
-overhead (~300–500 cache tokens in, one 30B round-trip of ~5–30 s). It only \
-pays off when the chunk would have cost you MORE than that in native work. \
-Rule of thumb by task size:\n\
-  • ≤ 2 native turns (one Read + one Edit is enough): DO NOT DELEGATE. Use \
-read_code + patch_code/write_code directly. A one-line bugfix, a known-location \
-typo, a trivial rename in one file — all of these are faster and cheaper native. \
-The delegate will lose to native by 50–100% on host cost for tasks this small.\n\
-  • 3–8 native turns (add a small function + one test, rename across 2–3 files, \
-fix a bug that takes a few tries): delegate is roughly break-even. Do whichever \
-feels cleaner; default to delegate when the generated code volume is ≥ ~30 LoC.\n\
-  • ≥ 10 native turns (implement a new module from spec, port a file, \
-package-wide refactor with many consumers, a feature you'd otherwise spend \
-dozens of Edits on): DELEGATE — savings compound with generated-code volume.\n\
-Translation tasks (`port X.py to X.go`) always delegate: the compiler-assisted \
-translation fast-path makes them a 1-turn 5-second win.\n\
-\n\
-WHAT A GOOD CHUNK LOOKS LIKE (pattern after the validated benchmark shapes):\n\
-  • implement_one: \"add func BandpassFilter(v Vector, low, high float64) Vector \
-to filter.go\" + verify=\"go test ./... -run TestBandpass\"\n\
-  • refactor_one:  \"rename KVCache → SnapCache across pkg/cache/*.go\" + verify=\"go test ./pkg/cache/...\"\n\
-  • extract_one:   \"extract the tapered-window loop in Hamming/Hanning in window.go \
-into a shared helper\" + verify=\"go test ./... -run TestWindow\"\n\
-  • bugfix_one:    \"Mean() in stat.go returns NaN on empty input — make it return \
-0 and add a test\" + verify=\"go test ./... -run TestMean\"\n\
-  • port_one_file: \"port lru_cache.py to lru_cache.go, matching signatures in \
-cache.go\" + verify=\"go test ./...\"\n\
-  • docstring_one: \"add godoc comments to all exported funcs in interpolation.go\"\n\
-\n\
-WHAT A BAD CHUNK LOOKS LIKE (these blow the 60-turn budget):\n\
-  • \"Remove the Vector type and update everything\" (13 files, implicit scope)\n\
-  • \"Refactor the cache layer to be thread-safe\" (no acceptance criterion)\n\
-  • \"Make the code more idiomatic\" (no scope, no verify)\n\
-\n\
-HOW TO DECOMPOSE A REAL-WORLD ASK. Before the first `code_task` call, take one \
-minute to plan. Use `search_code` + `read_code` to survey the blast radius, then \
-spell out an ordered chunk list. Example — user says \"remove the Vector type, keep \
-VectorComplex\":\n\
-  1. Inventory: `search_code` for Vector uses → list files.\n\
-  2. code_task: \"remove Vector-only functions from vector.go; keep the file \
-compiling\" + verify=\"go build ./...\"\n\
-  3. code_task (per consumer file, or a tight cluster): \"update filter.go \
-to use VectorComplex instead of Vector\" + verify=\"go build ./filter.go\"\n\
-  4. code_task: \"delete the `type Vector []float64` line and its tests in \
-vector.go/vector_test.go\" + verify=\"go test ./...\"\n\
-Each chunk is 1 file (or a tight 2–3-file cluster), 1 verb, ≤10 inner-agent turns.\n\
-\n\
-PICK `verify` CAREFULLY — run the tests, not just the build. If the project \
-has tests (any `*_test.go`, `*.test.ts`, `test_*.py`, etc.), `verify` MUST invoke \
-them. `go build ./...` or `tsc --noEmit` alone is insufficient: the delegate will \
-happily report `verify_passed: true` for compile-clean code whose tests crash at \
-runtime. Prefer `go test ./...`, `pytest`, `npm test`, `cargo test`. Response \
-includes `tests_run` and a `warnings` array that flags this. For intermediate \
-chunks where tests will legitimately fail until the whole sequence is done, a \
-narrower verify (`go build ./...` or a `-run TestSpecific` filter) is fine — \
-just make the final chunk run the full suite.\n\
-\n\
-HOW TO USE THE RESULT. `verify_passed: true` + no `tests_not_run` warning = chunk \
-done, move on to the next. `verify_passed: false` with a non-empty `final_message` \
-and `files_touched` = chunk partially done; look at what changed, decide whether \
-to narrow the instruction and re-call, or finish by hand. Same instruction twice \
-in a row is an oscillation signal — switch to low-level tools.\n\
-\n\
-LOW-LEVEL WORKFLOW: read_code to view, patch_code to edit, write_code only for \
-new files or full rewrites. patch_code is byte-level on the raw source bytes, \
-so old_str / new_str must be in the file's NATIVE language (Go, Python, etc.) \
-— NOT Nebula. Use replace_all=true for repetitive substitutions within one file. \
-For package-wide renames across many files, use patch_code BULK mode in a SINGLE \
-call: pass `path` as the directory and `glob` like '*.go'. It walks the directory \
-and applies the replacement to every matching file — one tool call, not one per \
-file, and you get a structured per-file report back.\n\
-\n\
-Nebula syntax (only needed for low-level workflow): `fn name(a: Int) -> Int:` \
-indent body / `rt x` / `fo i in 0..n:` / `x := 5` immutable, `x = 5` mutable / \
-`\"hi {name}\"` interpolation / `|x| x+1` lambdas / `xs.map { it.v }` trailing \
-closures / `and or not ??  |>` / `True False None`. Both short (`fn rt fo`) and \
-long (`def return for`) keyword forms are 1 token.\
+Nebula MCP server. Source-file tools (read_code / write_code / patch_code / \
+search_code / translate_code) use the Nebula IL to compress across Python, JS, \
+TS, Go, Swift, Kotlin, Rust, C. Validate Nebula before writing with \
+check_nebula / preview_translation. Use read_native for raw-byte work. \
+code_task delegates to a local Ollama 30B when available; disable via \
+NEBULA_MCP_TOOLS filter if you only want the file ops.\
 ";
 
 /// Entry point: run the MCP server on stdin/stdout.
@@ -313,6 +236,10 @@ fn handle_request(request: &Value) -> Option<Value> {
                                 "glob": {
                                     "type": "string",
                                     "description": "Bulk mode: file pattern like '*.go' or '*.py'. When set, `path` must be a directory; the patch is applied to every matching file that contains `old_str`. One call covers the whole package."
+                                },
+                                "nebula": {
+                                    "type": "boolean",
+                                    "description": "When true, `old_str` and `new_str` are Nebula snippets; the plugin translates each to the file's native language before the byte-level match/replace. Use when you prefer authoring the patch in Nebula rather than hand-crafting exact native bytes. Default false (native match). Useful after validating your snippet with check_nebula / preview_translation."
                                 }
                             },
                             "required": ["path", "old_str", "new_str"]
@@ -338,6 +265,60 @@ fn handle_request(request: &Value) -> Option<Value> {
                                 }
                             },
                             "required": ["code", "source_language", "target_language"]
+                        }
+                    },
+                    {
+                        "name": "check_nebula",
+                        "description": "Validate that a Nebula snippet parses cleanly. Pure syntactic check — no file I/O, no translation, no AST semantics. Returns `{ok: true}` on success or `{ok: false, kind: \"lex\"|\"parse\", line, col, message}` on error. Use this before `write_code` / `patch_code(nebula=true)` when you're unsure the Nebula you're about to emit is valid. Cheap; call liberally.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "code": {
+                                    "type": "string",
+                                    "description": "Nebula source to validate"
+                                }
+                            },
+                            "required": ["code"]
+                        }
+                    },
+                    {
+                        "name": "preview_translation",
+                        "description": "Dry-run Nebula → native translation WITHOUT writing to disk. Returns what `write_code` would produce for the given snippet. Use to eyeball the native form before committing, or to verify the rule-based translator handles your Nebula correctly. No neural fallback; this is the deterministic compiler path only.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "code": {
+                                    "type": "string",
+                                    "description": "Nebula source"
+                                },
+                                "target_language": {
+                                    "type": "string",
+                                    "description": "Target: python, javascript, typescript, go, swift, kotlin, rust, c"
+                                }
+                            },
+                            "required": ["code", "target_language"]
+                        }
+                    },
+                    {
+                        "name": "read_native",
+                        "description": "Read raw file bytes WITHOUT Nebula IL conversion. Escape hatch for non-source files (configs, fixtures, binary inspection) or when you need exact native text to construct a byte-level patch_code call. Prefer read_code for source files — it compresses to Nebula.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "path": {
+                                    "type": "string",
+                                    "description": "Absolute path to the file"
+                                },
+                                "offset": {
+                                    "type": "integer",
+                                    "description": "Start line number (1-indexed); 0 or omitted = from beginning"
+                                },
+                                "limit": {
+                                    "type": "integer",
+                                    "description": "Max number of lines to return"
+                                }
+                            },
+                            "required": ["path"]
                         }
                     },
                     {
@@ -416,6 +397,9 @@ fn handle_request(request: &Value) -> Option<Value> {
                 "patch_code" => tool_patch_code(&args),
                 "search_code" => tool_search_code(&args),
                 "translate_code" => tool_translate_code(&args),
+                "check_nebula" => tool_check_nebula(&args),
+                "preview_translation" => tool_preview_translation(&args),
+                "read_native" => tool_read_native(&args),
                 "code_task" => tool_code_task(&args),
                 _ => Err(format!("Unknown tool: {tool_name}")),
             };
@@ -504,7 +488,7 @@ fn tool_read_code(args: &Value) -> Result<String, String> {
     }
 }
 
-fn tool_write_code(args: &Value) -> Result<String, String> {
+pub(crate) fn tool_write_code(args: &Value) -> Result<String, String> {
     let path = args.get("path")
         .and_then(|v| v.as_str())
         .ok_or("Missing required parameter: path")?;
@@ -515,26 +499,38 @@ fn tool_write_code(args: &Value) -> Result<String, String> {
     let lang = lang_detect::detect(path);
     let lang_name = lang.name();
 
-    // Try neural translation first (produces more idiomatic output)
-    let output = if neural::is_available() {
-        match neural::generate(code, lang_name, None) {
-            Ok(ref neural_output) if neural::validate_output(neural_output, lang_name, code) => {
-                neural_output.clone()
-            }
-            _ => lang_detect::from_nebula_lenient(code, lang)?,
-        }
-    } else {
-        lang_detect::from_nebula_lenient(code, lang)?
-    };
+    // v0.3: translate via corrector — runs the deterministic translator first,
+    // validates the output with the native syntax checker (gofmt, python -c ast,
+    // node --check, gcc -fsyntax-only, swift -frontend -parse), and on failure
+    // asks the Nebula-fluent fine-tuned model to rewrite the Nebula. For Go,
+    // the translator is path-aware (iter-24 Bug A). Set NEBULA_CORRECTOR_DISABLE=1
+    // to bypass and fall back to the v0.2 one-shot translator.
+    let corrected = corrector::translate_with_correction(code, lang, Some(path))
+        .map_err(|e| format!(
+            "write_code: could not translate Nebula to {}: {}. \
+             Validate the input with check_nebula(code=...) and/or inspect the \
+             intended output with preview_translation(code=..., target_language=\"{}\") \
+             before retrying.",
+            lang_name, e, lang_name,
+        ))?;
+    let output = corrected.native;
 
     fs::write(path, &output)
         .map_err(|e| format!("Failed to write '{}': {}", path, e))?;
     invalidate_cache(path);
 
-    Ok(format!("Wrote {} bytes to {} ({})", output.len(), path, lang_name))
+    let correction_note = if corrected.iterations > 0 {
+        format!(" [corrected in {} round(s)]", corrected.iterations)
+    } else {
+        String::new()
+    };
+    Ok(format!(
+        "Wrote {} bytes to {} ({}){}",
+        output.len(), path, lang_name, correction_note,
+    ))
 }
 
-fn tool_patch_code(args: &Value) -> Result<String, String> {
+pub(crate) fn tool_patch_code(args: &Value) -> Result<String, String> {
     let path = args.get("path")
         .and_then(|v| v.as_str())
         .ok_or("Missing required parameter: path")?;
@@ -548,19 +544,42 @@ fn tool_patch_code(args: &Value) -> Result<String, String> {
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     let glob = args.get("glob").and_then(|v| v.as_str());
+    let nebula_mode = args.get("nebula").and_then(|v| v.as_bool()).unwrap_or(false);
 
     if old_str_arg.is_empty() {
         return Err("old_str must not be empty".to_string());
     }
 
     if let Some(glob_pattern) = glob {
-        return tool_patch_code_bulk(path, glob_pattern, old_str_arg, new_str_arg);
+        return tool_patch_code_bulk(path, glob_pattern, old_str_arg, new_str_arg, nebula_mode);
     }
 
     let (source, _nebula) = read_source_cached(path)?;
     let lang = lang_detect::detect(path);
     let lang_name = lang.name();
-    let (old_str, new_str) = (old_str_arg, new_str_arg);
+
+    // Plugin v0.2 nebula=true flag: translate both Nebula snippets to the
+    // file's native language before matching. Buffer storage sits outside
+    // the `if` so the &str bindings stay alive through the rest of the fn.
+    let old_owned;
+    let new_owned;
+    let (old_str, new_str): (&str, &str) = if nebula_mode {
+        old_owned = lang_detect::from_nebula_lenient(old_str_arg, lang)
+            .map_err(|e| format!(
+                "patch_code (nebula=true): failed to translate old_str to {}: {}. \
+                 Validate with check_nebula(code=old_str) before retrying.",
+                lang_name, e,
+            ))?;
+        new_owned = lang_detect::from_nebula_lenient(new_str_arg, lang)
+            .map_err(|e| format!(
+                "patch_code (nebula=true): failed to translate new_str to {}: {}. \
+                 Validate with check_nebula(code=new_str) before retrying.",
+                lang_name, e,
+            ))?;
+        (old_owned.as_str(), new_owned.as_str())
+    } else {
+        (old_str_arg, new_str_arg)
+    };
 
     let occurrences = source.matches(old_str).count();
     if occurrences == 0 {
@@ -604,6 +623,7 @@ fn tool_patch_code_bulk(
     glob_pattern: &str,
     old_str: &str,
     new_str: &str,
+    nebula_mode: bool,
 ) -> Result<String, String> {
     let dir = Path::new(dir_path);
     if !dir.is_dir() {
@@ -617,6 +637,7 @@ fn tool_patch_code_bulk(
     let mut skipped_binary: usize = 0;
     let mut scanned: usize = 0;
     let mut write_errors: Vec<(String, String)> = Vec::new();
+    let mut translation_skips: Vec<(String, String)> = Vec::new();
 
     walk_dir(dir, &mut |file_path| {
         let file_name = match file_path.file_name() {
@@ -640,12 +661,44 @@ fn tool_patch_code_bulk(
             return;
         }
 
-        let occurrences = source.matches(old_str).count();
+        // Plugin v0.2 nebula=true: translate old/new per-file so the match
+        // runs in the file's native syntax (Go/Python/etc.). Storage of the
+        // translated strings is local to each walk iteration.
+        let file_lang = lang_detect::detect(&file_path.to_string_lossy());
+        let old_owned;
+        let new_owned;
+        let (old_use, new_use): (&str, &str) = if nebula_mode {
+            old_owned = match lang_detect::from_nebula_lenient(old_str, file_lang) {
+                Ok(s) => s,
+                Err(e) => {
+                    translation_skips.push((
+                        file_path.to_string_lossy().into_owned(),
+                        format!("old_str: {}", e),
+                    ));
+                    return;
+                }
+            };
+            new_owned = match lang_detect::from_nebula_lenient(new_str, file_lang) {
+                Ok(s) => s,
+                Err(e) => {
+                    translation_skips.push((
+                        file_path.to_string_lossy().into_owned(),
+                        format!("new_str: {}", e),
+                    ));
+                    return;
+                }
+            };
+            (old_owned.as_str(), new_owned.as_str())
+        } else {
+            (old_str, new_str)
+        };
+
+        let occurrences = source.matches(old_use).count();
         if occurrences == 0 {
             return;
         }
 
-        let output = source.replace(old_str, new_str);
+        let output = source.replace(old_use, new_use);
         let path_str = file_path.to_string_lossy().into_owned();
         match fs::write(file_path, &output) {
             Ok(()) => {
@@ -673,6 +726,15 @@ fn tool_patch_code_bulk(
     ));
     if skipped_binary > 0 {
         report.push_str(&format!("Skipped {} binary/unreadable file(s).\n", skipped_binary));
+    }
+    if !translation_skips.is_empty() {
+        report.push_str(&format!(
+            "Skipped {} file(s) due to Nebula → native translation errors:\n",
+            translation_skips.len()
+        ));
+        for (p, e) in &translation_skips {
+            report.push_str(&format!("  {}: {}\n", p, e));
+        }
     }
     for (p, n) in &changed {
         report.push_str(&format!("  {} ({} replaced)\n", p, n));
@@ -821,6 +883,122 @@ fn tool_translate_code(args: &Value) -> Result<String, String> {
     // Fall back to lenient rule-based codegen
     let tgt_lang = lang_detect::detect(&format!("file.{}", lang_ext(target_language)));
     lang_detect::from_nebula_lenient(&nebula, tgt_lang)
+}
+
+/// `check_nebula` — pure syntactic check on a Nebula snippet. Runs the same
+/// pipeline as `from_nebula` (compactor expand → indent_to_braces → lex →
+/// parse) but stops after parse and returns a structured JSON result. Added
+/// in plugin v0.2 as a self-validation tool for Nebula-emitting hosts.
+pub(crate) fn tool_check_nebula(args: &Value) -> Result<String, String> {
+    let code = args
+        .get("code")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: code")?;
+
+    // Use the public lenient entry as a fast "does this compile?" proxy:
+    // from_nebula_lenient returns Ok(...) on success OR on text-level
+    // fallback success. For a strict syntactic check we want the strict
+    // variant — `from_nebula` — which returns a Lex/Parse error on failure.
+    match lang_detect::from_nebula(code, lang_detect::Language::Python) {
+        Ok(_) => Ok(json!({"ok": true}).to_string()),
+        Err(msg) => {
+            // Parse the "<Kind> error at L:C: <message>" shape that from_nebula
+            // returns so we can hand back structured fields. Fall through to
+            // a message-only result if the shape doesn't match.
+            let kind = if msg.starts_with("Lex error") {
+                "lex"
+            } else if msg.starts_with("Parse error") {
+                "parse"
+            } else {
+                "unknown"
+            };
+            let (line, col, message) = parse_compiler_error(&msg);
+            Ok(json!({
+                "ok": false,
+                "kind": kind,
+                "line": line,
+                "col": col,
+                "message": message,
+            })
+            .to_string())
+        }
+    }
+}
+
+/// Helper: parse "<Kind> error at L:C: <rest>" into (line, col, message).
+/// Returns (0, 0, whole_string) when the shape doesn't match.
+fn parse_compiler_error(msg: &str) -> (u32, u32, String) {
+    // Look for "at L:C: " pattern.
+    if let Some(at_idx) = msg.find(" at ") {
+        let after = &msg[at_idx + 4..];
+        if let Some(colon_pair_idx) = after.find(": ") {
+            let loc = &after[..colon_pair_idx];
+            let rest = &after[colon_pair_idx + 2..];
+            let mut parts = loc.splitn(2, ':');
+            let l = parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+            let c = parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+            return (l, c, rest.to_string());
+        }
+    }
+    (0, 0, msg.to_string())
+}
+
+/// `preview_translation` — dry-run Nebula → native translation WITHOUT
+/// writing to disk. Uses only the deterministic rule-based pipeline (no
+/// neural fallback) so hosts can inspect exactly what `write_code` would
+/// emit, then fix the Nebula if the output doesn't match expectations.
+pub(crate) fn tool_preview_translation(args: &Value) -> Result<String, String> {
+    let code = args
+        .get("code")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: code")?;
+    let target = args
+        .get("target_language")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: target_language")?;
+
+    let lang = lang_detect::detect(&format!("file.{}", lang_ext(target)));
+    if matches!(lang, lang_detect::Language::Unknown | lang_detect::Language::Nebula) {
+        return Err(format!(
+            "preview_translation: unknown target_language '{}'. Expected one of: \
+             python, javascript, typescript, go, swift, kotlin, rust, c.",
+            target
+        ));
+    }
+    lang_detect::from_nebula_lenient(code, lang)
+}
+
+/// `read_native` — raw file read, no Nebula IL conversion. Escape hatch for
+/// non-source files or byte-exact native-patch construction. Supports the
+/// same `offset`/`limit` 1-indexed line slicing as `read_code`.
+pub(crate) fn tool_read_native(args: &Value) -> Result<String, String> {
+    let path = args
+        .get("path")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: path")?;
+
+    let raw = fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read '{}': {}", path, e))?;
+
+    let offset = args
+        .get("offset")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+    let limit = args.get("limit").and_then(|v| v.as_u64());
+
+    let lines: Vec<&str> = raw.lines().collect();
+    let total = lines.len();
+    let start = if offset > 0 { offset.saturating_sub(1) } else { 0 };
+    let end = match limit {
+        Some(l) => (start + l as usize).min(total),
+        None => total,
+    };
+    let numbered: Vec<String> = lines[start.min(total)..end.min(total)]
+        .iter()
+        .enumerate()
+        .map(|(i, line)| format!("{}\t{}", start + i + 1, line))
+        .collect();
+    Ok(numbered.join("\n"))
 }
 
 // ── Translation fast-path ──
@@ -1145,7 +1323,7 @@ fn tool_code_task(args: &Value) -> Result<String, String> {
     static CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
     static LAST_INSTRUCTIONS: Mutex<Vec<String>> = Mutex::new(Vec::new());
     let this_call = CALL_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
-    let mut preamble = String::new();
+    let preamble = String::new();
     if this_call >= 20 {
         return Err(format!(
             "code_task: refusing call #{} in this MCP session. 20+ delegate \
@@ -1289,6 +1467,9 @@ fn tool_code_task(args: &Value) -> Result<String, String> {
             "patch_code" => tool_patch_code(&resolved),
             "search_code" => tool_search_code(&resolved),
             "translate_code" => tool_translate_code(&resolved),
+            "check_nebula" => tool_check_nebula(&resolved),
+            "preview_translation" => tool_preview_translation(&resolved),
+            "read_native" => tool_read_native(&resolved),
             other => Err(format!("Unknown tool in delegate loop: {}", other)),
         }
     };

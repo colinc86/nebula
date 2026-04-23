@@ -481,8 +481,21 @@ def compile_native(lang: str, code: str) -> str:
                     return "skip: kotlinc not found"
                 f = tdp / "probe.kt"
                 f.write_text(code)
-                rc, _, err = run([KOTLINC, "-nowarn", "-d", str(tdp / "out"), str(f)],
-                                 timeout=90)
+                # kotlinc needs kotlinx-coroutines-core on the classpath for
+                # probes that use the coroutines/flow builders. It ships bundled
+                # with the homebrew kotlinc distribution.
+                cp_jars = []
+                kotlinc_lib = Path(KOTLINC).resolve().parent.parent / "libexec" / "lib"
+                if kotlinc_lib.is_dir():
+                    for jar in ("kotlinx-coroutines-core-jvm.jar",):
+                        p = kotlinc_lib / jar
+                        if p.exists():
+                            cp_jars.append(str(p))
+                cmd = [KOTLINC, "-nowarn", "-d", str(tdp / "out")]
+                if cp_jars:
+                    cmd += ["-cp", ":".join(cp_jars)]
+                cmd.append(str(f))
+                rc, _, err = run(cmd, timeout=90)
                 return "ok" if rc == 0 else f"err: {trunc(err, 240)}"
 
             if lang == "c":

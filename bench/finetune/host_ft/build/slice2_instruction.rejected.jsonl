@@ -1,0 +1,20 @@
+{"idx": 16, "source": "curated_pairs.DRILLS", "reason": "len 17 out of bounds"}
+{"idx": 17, "source": "curated_pairs.DRILLS", "reason": "len 17 out of bounds"}
+{"idx": 18, "source": "curated_pairs.DRILLS", "reason": "len 14 out of bounds"}
+{"idx": 39, "source": "curated_pairs.DRILLS", "reason": "nebula check failed", "nebula": "fn drop(xs, n) = xs[n..]"}
+{"idx": 57, "source": "curated_pairs.DRILLS", "reason": "nebula check failed", "nebula": "fn merge(a, b) = b.entries().fold(a, |acc, (k, v)| { acc[k] = v; acc })"}
+{"idx": 69, "source": "curated_pairs.DRILLS", "reason": "nebula check failed", "nebula": "fn primes(n) = (2..).filter(is_prime).take(n).collect()"}
+{"idx": 78, "source": "curated_pairs.SHORTEST_PROMPTS", "reason": "nebula check failed", "nebula": "fn fizzbuzz(n) = mc (n % 3, n % 5) { (0, 0) => \"FizzBuzz\"; (0, _) => \"Fizz\"; (_, 0) => \"Buzz\"; _ => \"{n}\" }"}
+{"idx": 86, "source": "curated_pairs.SHORTEST_PROMPTS", "reason": "nebula check failed", "nebula": "fn most_common(xs) = xs.fold({}, |acc, x| { acc[x] = (acc[x] ?? 0) + 1; acc }).entries().fold(xs[0], |a, (k, v)| if v > "}
+{"idx": 89, "source": "curated_pairs_extra.CONCURRENCY_DRILLS", "reason": "nebula check failed", "nebula": "fn send_once(value) {\n  lt ch = Channel.new()\n  sp ch.send(value)\n}"}
+{"idx": 90, "source": "curated_pairs_extra.CONCURRENCY_DRILLS", "reason": "nebula check failed", "nebula": "ac fn fetch(url) -> Result<String, Error> {\n  lt resp = aw http.get(url)?\n  Ok(resp.body)\n}"}
+{"idx": 91, "source": "curated_pairs_extra.CONCURRENCY_DRILLS", "reason": "nebula check failed", "nebula": "ac fn both(url1, url2) {\n  lt a = sp fetch(url1)\n  lt b = sp fetch(url2)\n  (aw a, aw b)\n}"}
+{"idx": 92, "source": "curated_pairs_extra.CONCURRENCY_DRILLS", "reason": "nebula check failed", "nebula": "fn consume(ch) { wl ch.has_more() { lt msg = ch.recv(); prt(msg) } }"}
+{"idx": 101, "source": "curated_pairs_extra.MATCH_DRILLS", "reason": "nebula check failed", "nebula": "fn both(a, b) = mc (a, b) {\n  (tt, tt) => \"both\"\n  (tt, ff) => \"first\"\n  (ff, tt) => \"second\"\n  (ff, ff) => \"neither\"\n}"}
+{"idx": 106, "source": "curated_pairs_extra.MATCH_DRILLS", "reason": "nebula check failed", "nebula": "fn sum_pair(p) = mc p {\n  (a, b) => a + b\n}"}
+{"idx": 113, "source": "curated_pairs_extra.STRUCT_DRILLS", "reason": "nebula check failed", "nebula": "st Stack<T> { items: [T] }\n\nim Stack<T> {\n  fn push(mt sf, x: T) { sf.items = psh(sf.items, x) }\n  fn pop(mt sf) -> T? ="}
+{"idx": 118, "source": "curated_pairs_extra.STRUCT_DRILLS", "reason": "nebula check failed", "nebula": "en Option<T> {\n  Some(T)\n  None\n}"}
+{"idx": 121, "source": "curated_pairs_extra.STRUCT_DRILLS", "reason": "nebula check failed", "nebula": "tr Eq {\n  fn equals(sf, other: Sf) -> Bool\n}"}
+{"idx": 122, "source": "curated_pairs_extra.STRUCT_DRILLS", "reason": "nebula check failed", "nebula": "tr Ord {\n  fn compare(sf, other: Sf) -> Int\n}"}
+{"idx": 124, "source": "curated_pairs_extra.STRUCT_DRILLS", "reason": "nebula check failed", "nebula": "st Node<T> {\n  value: T\n  next: Node<T>?\n}"}
+{"idx": 125, "source": "curated_pairs_extra.STRUCT_DRILLS", "reason": "nebula check failed", "nebula": "st Tree<T> {\n  value: T\n  children: [Tree<T>]\n}"}

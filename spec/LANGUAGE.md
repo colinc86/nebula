@@ -420,13 +420,15 @@ fn double_parse(s: String) -> Result<Int, String> {
     Ok(n * 2)
 }
 
-// Try/catch for ergonomic error handling
+// Try/catch for ergonomic error handling; optional `finally` runs on both paths.
 try {
     lt file = open("data.txt")?
     lt data = file.read_all()?
     process(data)
 } ch e {
     print("Error: {e}")
+} finally {
+    cleanup()
 }
 
 // Guard clause with `el`
@@ -564,5 +566,5 @@ pipe_expr      = or_expr ("|>" or_expr)* ;
 ```
 lt mt cn fn rt if el mc fo wl lp bk ct
 st en tr im use md pb sf Sf ty ac aw
-sp try ch tt ff nil and or not in as
+sp try ch finally tt ff nil and or not in as
 ```

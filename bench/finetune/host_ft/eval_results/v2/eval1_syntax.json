@@ -1,0 +1,195 @@
+{
+  "eval": "eval1_syntax",
+  "total": 30,
+  "passed": 26,
+  "rate": 0.8666666666666667,
+  "natural_total": 29,
+  "natural_passed": 26,
+  "natural_rate": 0.896551724137931,
+  "truncated": 1,
+  "pass_bar": 0.95,
+  "decision": "fail",
+  "note": "Decision uses natural_rate (responses that finished without hitting max_tokens). rate (includes truncation) is reported for visibility.",
+  "per_prompt": [
+    {
+      "prompt": "Write a Nebula function that returns the sum of a list of numbers.",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\nfn sum(xs) = xs.fold(0, |a, b| a + b)\n```"
+    },
+    {
+      "prompt": "Write a function equivalent to Kotlin's `putFloatExtra(key: String, value: Float",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\n  def put_float_extra(key: Str, value: Float) -> Intent:\n    return put_extra(key, value)\n```"
+    },
+    {
+      "prompt": "Write a function equivalent to Rust's `type_info()`. Respond in Nebula IL.",
+      "ok": false,
+      "finish_reason": "stop",
+      "response": "```nebula\npub fn type_info() -> TypeInfo:\n  type_info.for_type::<u16>()\n```"
+    },
+    {
+      "prompt": "Write a function equivalent to Go's `AddFileRoutes(serverRouter *mux.Router, sh ",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef add_file_routes(server_router: MuxRouter, sh: ModuleStoreHolder) -> error:\n  (file_controller, err) = new_file_controller(sh)\n  if err != None:\n    return err\n  server_router.handle(\"/api/v1/files\", http_handler(file_controller.list_files)).methods(\"GET\")\n  server_router.handle(\"/api/v"
+    },
+    {
+      "prompt": "Write a function equivalent to Go's `BenchmarkAzureServiceBusPubSub(b *testing.B",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef benchmark_azure_service_bus_pub_sub(b: TestingB):\n  benchmark_pub_sub(b, \"azure-service-bus\", azure_service_bus_new_pub_sub, azure_service_bus_new_pub_sub_with_options)\n```"
+    },
+    {
+      "prompt": "Write a function equivalent to Kotlin's `prepare()`. Respond in Nebula IL.",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\n  def prepare():\n    if (prepared.compare_and_set(False, True)):\n      on_prepare()\n```"
+    },
+    {
+      "prompt": "Write a function equivalent to TypeScript's `capitalize(s: string)`. Respond in ",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef capitalize(s: Str):\n  return s.char_at(0).to_upper_case() + s.substring(1)\n```"
+    },
+    {
+      "prompt": "Write a function equivalent to C's `sub_help_menu_pt(void)`. Respond in Nebula I",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef sub_help_menu_pt(_):\n  print(\"sub help menu pt\")\n```"
+    },
+    {
+      "prompt": "Write a function `find_max` that Write a function that accepts a list of strings",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef find_max(lst):\n    max_len = 0\n    max_word = \"\"\n    for word in lst:\n        unique_len = set(word).len\n        if unique_len > max_len or (unique_len == max_len and word < max_word):\n            max_len = unique_len\n            max_word = word\n    return max_word\n```"
+    },
+    {
+      "prompt": "Write a function equivalent to C's `mp_hal_pin_config(mp_hal_pin_obj_t pin_obj, ",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef mp_hal_pin_config(pin_obj: mp_hal_pin_obj_t, mode: Int, pull: Int, alt: Int):\n  mp_hal_pin_obj_t pin = pin_obj\n  pin.mode = mode\n  pin.pull = pull\n  pin.alt = alt\n```"
+    },
+    {
+      "prompt": "Write a function equivalent to Kotlin's `whenSha1HashCalledOnStringThenResultIsC",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\n  def when_sha1_hash_called_on_string_then_result_is_correct():\n    assert.equal(\"b1b3773c3c2c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3\", \"hello\".sha1_hash())\n```"
+    },
+    {
+      "prompt": "Write a function equivalent to Swift's `addChallenge()`. Respond in Nebula IL.",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\n  def add_challenge():\n    challenge += 1\n```"
+    },
+    {
+      "prompt": "Write a function equivalent to Go's `TestMetrics(t *testing.T)`. Respond in Nebu",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef test_metrics(t: TestingT):\n  test_util.test_all(t, \"metrics\")\n```"
+    },
+    {
+      "prompt": "Write a function equivalent to Kotlin's `encrypts_and_decrypts_with_keys_in_memo",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\n  def encrypts_and_decrypts_with_keys_in_memory():\n    key := key_generator.generate_key()\n    secret := \"super secret\"\n    encrypted := aes_cbc_pkcs5.encrypt(secret, key)\n    decrypted := aes_cbc_pkcs5.decrypt(encrypted, key)\n    assert_that(decrypted).is_equal_to(secret)\n```"
+    },
+    {
+      "prompt": "Write a function equivalent to Python's `_disable_linecache()`. Respond in Nebul",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef _disable_linecache():\n    import dis\n    dis._disable_linecache()\n```"
+    },
+    {
+      "prompt": "Write a function equivalent to C's `video_free()`. Respond in Nebula IL.",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef video_free():\n  if video_buf:\n    free(video_buf)\n  video_buf = None\n```"
+    },
+    {
+      "prompt": "Write a function equivalent to Python's `getDATA()`. Respond in Nebula IL.",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef get_data():\n    return data\n```"
+    },
+    {
+      "prompt": "Write a function equivalent to Go's `TestGetBuild(t *testing.T)`. Respond in Neb",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef test_get_build(t: TestingT):\n  ctx = context.background()\n  build = get_build(ctx, \"foo\", \"bar\")\n  assert.equal(t, \"bar\", build.version)\n  assert.not_nil(t, build.created_at)\n  assert.not_nil(t, build.updated_at)\n```"
+    },
+    {
+      "prompt": "Write a function equivalent to Python's `__init__(self, json, width, height, sca",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef new(self, json, width, height, scale = 4, terrain_types = 4):\n    self.json = json\n    self.width = width\n    self.height = height\n    self.scale = scale\n    self.terrain_types = terrain_types\n    self.tiles = list(range(0, self.terrain_types * self.width * self.height))\n```"
+    },
+    {
+      "prompt": "Write a function equivalent to Swift's `stringUnicode()`. Respond in Nebula IL.",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\n  def string_unicode() -> Str:\n    return self.unicode_scalar_code_units.map({ \"\\\\u{0}\" }).joined()\n```"
+    },
+    {
+      "prompt": "Write a function equivalent to TypeScript's `createKarmaConfigurationContext(hos",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef create_karma_configuration_context(host: Tree, options: Schema):\n  return {host: host, options: options}\n```"
+    },
+    {
+      "prompt": "Write a Nebula function that lowercases a string.",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\nfn lower(s) = s.chars().map(|c| c.to_lower()).join(\"\")\n```"
+    },
+    {
+      "prompt": "Write a function equivalent to JavaScript's `fail()`. Respond in Nebula IL.",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef fail():\n  throw new error(\"fail\")\n```"
+    },
+    {
+      "prompt": "Write a function equivalent to Go's `New(c *Config)`. Respond in Nebula IL.",
+      "ok": false,
+      "finish_reason": "length",
+      "response": "```nebula\ndef new(c: Config) -> (Config, error):\n  if c == None:\n    c = default_config()\n  if c.addr == \"\":\n    c.addr = \":8080\"\n  if c.max_header_bytes == 0:\n    c.max_header_bytes = 1 << 20\n  if c.read_timeout == 0:\n    c.read_timeout = 60 * time.second\n  if c.write_timeout == 0:\n    c.write_time"
+    },
+    {
+      "prompt": "Write a function equivalent to Rust's `mk_slave_eid(i: u32)`. Respond in Nebula ",
+      "ok": false,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef mk_slave_eid(i: u32) -> EID:\n  EID(i << 3 | 0x00000003)\n```"
+    },
+    {
+      "prompt": "Write a function `vowels_count` that Add more test cases.. Respond in Nebula IL.",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef vowels_count(s: Str):\n    return sum(s.lower().filter(|c| \"aeiou\".contains(c)).map(|_| 1))\n```"
+    },
+    {
+      "prompt": "Write a function equivalent to Swift's `set(rootTreeItem :TreeItem)`. Respond in",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\n  def set(root_tree_item :TreeItem):\n    self.root_tree_item = root_tree_item\n```"
+    },
+    {
+      "prompt": "Write a function equivalent to Go's `Decode(b *bin.Buffer)`. Respond in Nebula I",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\nimpl List:\n  def decode(self, b: BinBuffer) -> error:\n    if b.len() < 4:\n      return fmt.errorf(\"buffer too small\")\n    l = int(b.peek_u32(0))\n    if l < 0 or l > 2147483647:\n      return fmt.errorf(\"invalid length %d\", l)\n    b.offset(4)\n    if b.len() < l:\n      return fmt.errorf(\"buff"
+    },
+    {
+      "prompt": "Write a function equivalent to C's `tb_king_attacks(unsigned sq)`. Respond in Ne",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef tb_king_attacks(sq: Int) -> Int:\n  return tb_king_attacks_0(sq) | tb_king_attacks_1(sq)\n```"
+    },
+    {
+      "prompt": "Write a function equivalent to Go's `FindFile(tarFile io.Reader, filename string",
+      "ok": false,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef find_file(tar_file: IoReader, filename: Str) -> (IoReader, error):\n  tr = new_tar_reader(tar_file)\n  for:\n    hdr = tr.next()\n    if hdr == None:\n      break\n    if hdr.name == filename:\n      return (tr, None)\n  return (None, fmt.errorf(\"file %s not found\", filename))\n```"
+    }
+  ]
+}

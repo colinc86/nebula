@@ -1,0 +1,7 @@
+{
+  "eval": "eval5_e2e",
+  "dry_run": true,
+  "pass_bar": 0.7,
+  "pool_available": 0,
+  "note": "Requires fixture repos under eval_results/e2e_fixtures/ with expected-outcome test scripts."
+}

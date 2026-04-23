@@ -1,0 +1,13 @@
+{
+  "name": "nebula",
+  "version": "0.2.0",
+  "description": "Universal code IL for LLM coding agents. Eight MCP tools for Nebula-form read/write/edit/search/translate + syntax validation + dry-run translation + native-bytes escape hatch. Rule-based Nebula ↔ native pipeline (no Ollama dependency). Designed for Nebula-fluent hosts; degrades gracefully on stock Sonnet / GPT-4.1.",
+  "author": {
+    "name": "Colin Campbell",
+    "email": "colinc86@gmail.com"
+  },
+  "homepage": "https://github.com/colinc86/nebula",
+  "license": "see LICENSE.txt in repo root",
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": "./.mcp.json"
+}

@@ -1,0 +1,6 @@
+{
+  "eval": "eval2_semantic",
+  "deferred": true,
+  "pass_bar": 0.7,
+  "note": "HumanEval pytest runner not wired for this iteration. If evals 1/3/4 pass, ship the full fine-tune and add this eval pre-production."
+}

@@ -120,7 +120,7 @@ pub fn to_javascript(program: &Program) -> String {
 }
 
 pub fn to_go(program: &Program) -> String {
-    let mut gen = GoGen { indent: 0, package_name: None, scopes: vec![std::collections::HashSet::new()], slice_names: std::collections::HashSet::new(), struct_generics: std::collections::HashMap::new() };
+    let mut gen = GoGen { indent: 0, package_name: None, scopes: vec![std::collections::HashSet::new()], slice_names: std::collections::HashSet::new(), struct_generics: std::collections::HashMap::new(), current_lambda_ret: None, value_typed_idents: std::collections::HashSet::new() };
     gen.gen_program(program)
 }
 
@@ -137,6 +137,8 @@ pub fn to_go_with_package(program: &Program, package_name: Option<&str>) -> Stri
         scopes: vec![std::collections::HashSet::new()],
         slice_names: std::collections::HashSet::new(),
         struct_generics: std::collections::HashMap::new(),
+        current_lambda_ret: None,
+        value_typed_idents: std::collections::HashSet::new(),
     };
     gen.gen_program(program)
 }
@@ -147,7 +149,7 @@ pub fn to_swift(program: &Program) -> String {
 }
 
 pub fn to_kotlin(program: &Program) -> String {
-    let mut gen = KotlinGen { indent: 0, scopes: vec![std::collections::HashSet::new()], current_fn_returns_nullable: true, current_fn_return_type: None, structs_with_fields: std::collections::HashSet::new() };
+    let mut gen = KotlinGen { indent: 0, scopes: vec![std::collections::HashSet::new()], current_fn_returns_nullable: true, current_fn_return_type: None, structs_with_fields: std::collections::HashSet::new(), trait_methods: std::collections::HashMap::new(), abstract_emitted: std::collections::HashSet::new(), inferred_field_types: std::collections::HashMap::new(), structs_with_inferred_generic: std::collections::HashSet::new(), nested_variants: std::collections::HashMap::new(), hoisted_variant_names: std::collections::HashSet::new(), known_fn_names: std::collections::HashSet::new() };
     gen.gen_program(program)
 }
 
@@ -157,12 +159,21 @@ pub fn to_typescript(program: &Program) -> String {
 }
 
 pub fn to_rust_lang(program: &Program) -> String {
-    let mut gen = RustGen { indent: 0, scopes: vec![std::collections::HashSet::new()], enum_struct_variants: std::collections::HashMap::new(), all_enum_variants: std::collections::HashSet::new(), trait_names: std::collections::HashSet::new(), current_fn_returns_string: false, current_fn_returns_vec: false, current_fn_result_ok_type: None, string_params: std::collections::HashSet::new() };
+    let mut gen = RustGen { indent: 0, scopes: vec![std::collections::HashSet::new()], enum_struct_variants: std::collections::HashMap::new(), all_enum_variants: std::collections::HashSet::new(), trait_names: std::collections::HashSet::new(), current_fn_returns_string: false, current_fn_returns_vec: false, current_fn_collect_target: None, current_fn_result_ok_type: None, string_params: std::collections::HashSet::new() };
     gen.gen_program(program)
 }
 
 pub fn to_c(program: &Program) -> String {
-    let mut gen = CGen { indent: 0, scopes: vec![std::collections::HashSet::new()] };
+    let mut gen = CGen {
+        indent: 0,
+        scopes: vec![std::collections::HashSet::new()],
+        user_types: std::collections::HashSet::new(),
+        current_fn_ret_ptr: None,
+        current_fn_ret_raw: None,
+        ptr_idents: std::collections::HashSet::new(),
+        structs_by_arity: std::collections::HashMap::new(),
+        struct_fields: std::collections::HashMap::new(),
+    };
     gen.gen_program(program)
 }
 
@@ -425,7 +436,6 @@ impl PythonGen {
                     .unwrap_or(false);
                 !(then_is_value && else_is_value)
             }
-            Expr::Match { .. } => true,
             _ => false,
         }
     }
@@ -838,15 +848,24 @@ impl PythonGen {
 
             Expr::Try(inner) => self.gen_expr(inner),
 
-            Expr::TryCatch { try_block, error_binding, catch_block } => {
+            Expr::TryCatch { try_block, error_binding, catch_block, finally_block } => {
                 let mut out = format!("{}try:\n", self.ind());
                 self.indent += 1;
                 out.push_str(&self.gen_block_body(try_block));
                 self.indent -= 1;
-                out.push_str(&format!("{}except Exception as {}:\n", self.ind(), error_binding));
-                self.indent += 1;
-                out.push_str(&self.gen_block_body(catch_block));
-                self.indent -= 1;
+                let has_catch = !catch_block.statements.is_empty() || catch_block.expr.is_some();
+                if has_catch {
+                    out.push_str(&format!("{}except Exception as {}:\n", self.ind(), error_binding));
+                    self.indent += 1;
+                    out.push_str(&self.gen_block_body(catch_block));
+                    self.indent -= 1;
+                }
+                if let Some(fb) = finally_block {
+                    out.push_str(&format!("{}finally:\n", self.ind()));
+                    self.indent += 1;
+                    out.push_str(&self.gen_block_body(fb));
+                    self.indent -= 1;
+                }
                 out
             }
 
@@ -1621,11 +1640,28 @@ impl JsGen {
 
             Expr::Try(inner) => self.gen_expr(inner),
 
-            Expr::TryCatch { try_block, error_binding, catch_block } => {
+            Expr::TryCatch { try_block, error_binding, catch_block, finally_block } => {
                 let mut out = format!("{}try {{\n", self.ind());
                 self.indent += 1; out.push_str(&self.gen_block_body(try_block)); self.indent -= 1;
-                out.push_str(&format!("{}}} catch ({}) {{\n", self.ind(), error_binding));
-                self.indent += 1; out.push_str(&self.gen_block_body(catch_block)); self.indent -= 1;
+                let has_catch = !catch_block.statements.is_empty() || catch_block.expr.is_some() || error_binding != "_";
+                if has_catch {
+                    out.push_str(&format!("{}}} catch ({}) {{\n", self.ind(), error_binding));
+                    self.indent += 1; out.push_str(&self.gen_block_body(catch_block)); self.indent -= 1;
+                }
+                if let Some(fb) = finally_block {
+                    out.push_str(&format!("{}}} finally {{\n", self.ind()));
+                    self.indent += 1;
+                    // Finally has no meaningful return value — render its trailing
+                    // expression as a bare statement, not `return expr;`.
+                    for stmt in &fb.statements {
+                        out.push_str(&self.gen_statement(stmt));
+                        out.push('\n');
+                    }
+                    if let Some(e) = &fb.expr {
+                        out.push_str(&format!("{}{};\n", self.ind(), self.gen_expr(e)));
+                    }
+                    self.indent -= 1;
+                }
                 out.push_str(&format!("{}}}", self.ind()));
                 out
             }
@@ -1686,6 +1722,14 @@ struct GoGen {
     /// gen_program entry from StructDecls; used by ImplBlock to emit
     /// `func (sf Target[T]) method(...)` for generic receivers.
     struct_generics: std::collections::HashMap<String, Vec<String>>,
+    /// When the current fn has return type `Fn(args) -> R`, this holds
+    /// the rendered R. Used by Lambda codegen to pick the right return
+    /// type for a directly-returned lambda.
+    current_lambda_ret: Option<String>,
+    /// Ident names whose type is a non-nullable value type (int, float,
+    /// bool, string). Used to rewrite `x == nil` comparisons that survived
+    /// from pointer-lossy Go source as `false`.
+    value_typed_idents: std::collections::HashSet<String>,
 }
 
 impl GoGen {
@@ -1706,6 +1750,86 @@ impl GoGen {
     ) {
         for s in stmts { Self::scan_ordered_stmt(s, out); }
         if let Some(t) = trailing { Self::scan_ordered_expr(t, out); }
+    }
+
+    /// Return a set of identifier names referenced in `stmts` (anywhere on
+    /// the RHS of expressions, or as targets of mutating ops).
+    fn collect_refd_idents(stmts: &[Statement]) -> std::collections::HashSet<String> {
+        fn walk_e(e: &Expr, out: &mut std::collections::HashSet<String>) {
+            match e {
+                Expr::Ident(n) => { out.insert(n.clone()); }
+                Expr::BinaryOp { left, right, .. } => { walk_e(left, out); walk_e(right, out); }
+                Expr::UnaryOp { operand, .. } => walk_e(operand, out),
+                Expr::Call { callee, args } => { walk_e(callee, out); for a in args { walk_e(&a.value, out); } }
+                Expr::MethodCall { object, args, .. } => { walk_e(object, out); for a in args { walk_e(&a.value, out); } }
+                Expr::FieldAccess { object, .. } => walk_e(object, out),
+                Expr::Index { object, index } => { walk_e(object, out); walk_e(index, out); }
+                Expr::Slice { object, start, end } => { walk_e(object, out); if let Some(s)=start{walk_e(s,out);} if let Some(e)=end{walk_e(e,out);} }
+                Expr::If { condition, then_block, else_block } => { walk_e(condition, out); walk_b(then_block, out); if let Some(b)=else_block{walk_b(b,out);} }
+                Expr::Match { subject, arms } => { walk_e(subject, out); for a in arms { walk_e(&a.body, out); if let Some(g)=&a.guard{walk_e(g,out);} } }
+                Expr::Block(b) => walk_b(b, out),
+                Expr::List(xs) | Expr::Tuple(xs) => { for x in xs { walk_e(x, out); } }
+                Expr::Map(pairs) => { for (k, v) in pairs { walk_e(k, out); walk_e(v, out); } }
+                Expr::StructLit { fields, spread, .. } => { for (_, v) in fields { walk_e(v, out); } if let Some(s)=spread{walk_e(s,out);} }
+                Expr::Range { start, end, .. } => { walk_e(start, out); walk_e(end, out); }
+                Expr::Pipe { left, right } => { walk_e(left, out); walk_e(right, out); }
+                Expr::Try(e) => walk_e(e, out),
+                Expr::NilCoalesce { left, right } => { walk_e(left, out); walk_e(right, out); }
+                Expr::For { iterable, body, .. } => { walk_e(iterable, out); walk_b(body, out); }
+                Expr::While { condition, body } => { walk_e(condition, out); walk_b(body, out); }
+                Expr::Loop { body } => walk_b(body, out),
+                Expr::Lambda { body, .. } => walk_e(body, out),
+                Expr::TryCatch { try_block, catch_block, finally_block, .. } => {
+                    walk_b(try_block, out); walk_b(catch_block, out);
+                    if let Some(fb) = finally_block { walk_b(fb, out); }
+                }
+                _ => {}
+            }
+        }
+        fn walk_b(b: &Block, out: &mut std::collections::HashSet<String>) {
+            for s in &b.statements { walk_s(s, out); }
+            if let Some(e) = &b.expr { walk_e(e, out); }
+        }
+        fn walk_s(s: &Statement, out: &mut std::collections::HashSet<String>) {
+            match s {
+                Statement::Expr(e) | Statement::Return(Some(e)) | Statement::Break(Some(e)) | Statement::Throw(Some(e)) => walk_e(e, out),
+                Statement::Let { value, .. } | Statement::Const { value, .. } | Statement::Mut { value, .. } => walk_e(value, out),
+                Statement::Assignment { target, value, .. } => { walk_e(target, out); walk_e(value, out); }
+                Statement::LetDestructure { value, .. } => walk_e(value, out),
+                _ => {}
+            }
+        }
+        let mut out = std::collections::HashSet::new();
+        for s in stmts { walk_s(s, &mut out); }
+        out
+    }
+
+    /// Heuristic: reconstruct named returns from a function body that lost
+    /// them during ingest. Match when the body begins with N leading bare
+    /// assignments `X = nil` to fresh names, AND ends with a bare `return`
+    /// (no args), AND the function's return type is a tuple with arity N.
+    /// Returns the (name, type) pairs to emit as the named return slot.
+    fn try_named_returns_go(body: &Block, return_type: &Option<TypeExpr>) -> Option<Vec<(String, String)>> {
+        let rt_tuple = match return_type {
+            Some(TypeExpr::Tuple(items)) if items.len() >= 2 => items,
+            _ => return None,
+        };
+        let mut leading_assigns: Vec<String> = Vec::new();
+        for s in &body.statements {
+            match s {
+                Statement::Assignment { target: Expr::Ident(n), op: AssignOp::Assign, value: Expr::Nil }
+                    => leading_assigns.push(n.clone()),
+                _ => break,
+            }
+        }
+        if leading_assigns.len() != rt_tuple.len() { return None; }
+        // Last statement must be bare `return`.
+        let last = body.statements.last()?;
+        if !matches!(last, Statement::Return(None)) { return None; }
+        // Build name/type pairs.
+        let gen = GoGen { indent: 0, package_name: None, scopes: vec![std::collections::HashSet::new()], slice_names: std::collections::HashSet::new(), struct_generics: std::collections::HashMap::new(), current_lambda_ret: None, value_typed_idents: std::collections::HashSet::new() };
+        let types: Vec<String> = rt_tuple.iter().map(|t| gen.gen_type(t)).collect();
+        Some(leading_assigns.into_iter().zip(types.into_iter()).collect())
     }
 
     fn scan_ordered_stmt(s: &Statement, out: &mut std::collections::BTreeSet<String>) {
@@ -1775,6 +1899,8 @@ impl GoGen {
             | "skip" | "skipf" | "skip_now" | "skipped" | "failed" | "fail"
             | "fail_now" | "name" | "helper" | "parallel" | "cleanup"
             | "deadline" | "setenv" | "tempdir" | "tempfile" | "context"
+            // sync.Mutex / sync.RWMutex methods (distinctive enough).
+            | "lock" | "unlock" | "r_lock" | "r_unlock" | "try_lock"
         )
     }
 
@@ -1897,7 +2023,14 @@ impl GoGen {
             }
             TypeExpr::Function(params, ret) => {
                 let ps: Vec<String> = params.iter().map(|t| self.gen_type(t)).collect();
-                format!("func({}) {}", ps.join(", "), self.gen_type(ret))
+                // `Fn() -> Any` commonly comes from Go `func()` (no return)
+                // that ingest lossily normalized to Any. Emit as plain
+                // `func()` so callers passing void closures type-check.
+                let ret_s = match ret.as_ref() {
+                    TypeExpr::Named(n) if n == "Any" || n == "Nil" => String::new(),
+                    _ => format!(" {}", self.gen_type(ret)),
+                };
+                format!("func({}){}", ps.join(", "), ret_s)
             }
             TypeExpr::Tuple(types) => {
                 let t: Vec<String> = types.iter().map(|t| self.gen_type(t)).collect();
@@ -2084,9 +2217,19 @@ impl GoGen {
                     .filter(|p| p.name != "sf")
                     .map(|p| format!("{} {}", p.name, self.gen_param_type(p)))
                     .collect();
-                let ret = return_type.as_ref()
-                    .map(|t| format!(" {}", self.gen_type(t)))
-                    .unwrap_or_default();
+                // Detect "named return" reconstruction: if body begins with
+                // N leading `X = nil` assignments to fresh names AND ends
+                // with a bare `return`, AND the function's return type is a
+                // tuple with matching arity, rewrite the signature to use
+                // named returns and strip the nil-assign prologue.
+                let named_returns = Self::try_named_returns_go(body, return_type);
+                let ret = if let Some(ref named) = named_returns {
+                    format!(" ({})", named.iter().map(|(n, t)| format!("{} {}", n, t)).collect::<Vec<_>>().join(", "))
+                } else {
+                    return_type.as_ref()
+                        .map(|t| format!(" {}", self.gen_type(t)))
+                        .unwrap_or_default()
+                };
                 let mut gen_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
                 for p in params.iter().filter(|p| p.name != "sf") {
                     if let Some(t) = &p.type_ann { Self::collect_generics_go(t, &mut gen_set); }
@@ -2114,6 +2257,29 @@ impl GoGen {
                     };
                 self.scopes.push(std::collections::HashSet::new());
                 for p in params { self.declare(&p.name); }
+                // If return type is `Fn(args) -> R`, record R so a Lambda
+                // emitted in the body (directly returned) inherits it.
+                let saved_lambda_ret = self.current_lambda_ret.clone();
+                self.current_lambda_ret = match return_type {
+                    Some(TypeExpr::Function(_, ret)) => Some(self.gen_type(ret)),
+                    _ => None,
+                };
+                // Track non-nullable value-typed params so `x == nil`
+                // comparisons can be short-circuited to `false` (they
+                // survived from pointer-lossy Go source).
+                let saved_value_idents = self.value_typed_idents.clone();
+                for p in params.iter().filter(|p| p.name != "sf") {
+                    if let Some(TypeExpr::Named(tn)) = &p.type_ann {
+                        if matches!(tn.as_str(),
+                            "Int" | "Float" | "Bool" | "Char" | "int" | "float" | "bool"
+                            | "int8" | "int16" | "int32" | "int64"
+                            | "uint8" | "uint16" | "uint32" | "uint64"
+                            | "float32" | "float64")
+                        {
+                            self.value_typed_idents.insert(p.name.clone());
+                        }
+                    }
+                }
                 // Track slice-typed params/locals so `append(out, xs)` can
                 // spread slice args (`xs...`) when they flow back into append.
                 let saved_slices = self.slice_names.clone();
@@ -2126,10 +2292,56 @@ impl GoGen {
                 }
                 let mut out = format!("{}func {}{}({}){} {{\n", self.ind(), name, gen_str, ps.join(", "), ret);
                 self.indent += 1;
-                out.push_str(&self.gen_block(body));
+                if let Some(ref named) = named_returns {
+                    // Pre-declare the named returns as known so subsequent
+                    // assignments don't re-declare with `:=`.
+                    for (n, _) in named { self.declare(n); }
+                    // Skip the first N statements (the stripped nil prologue).
+                    let trimmed = Block {
+                        statements: body.statements.iter().skip(named.len()).cloned().collect(),
+                        expr: body.expr.clone(),
+                    };
+                    out.push_str(&self.gen_block(&trimmed));
+                } else {
+                    // Drop leading `X = nil` assignments where X is not
+                    // referenced anywhere else in the body. These are leftover
+                    // orphans from ingest-time losses (e.g. a defer/recover
+                    // block that was stripped).
+                    let mut skip = 0;
+                    for s in &body.statements {
+                        if let Statement::Assignment { target: Expr::Ident(n), op: AssignOp::Assign, value: Expr::Nil } = s {
+                            let tail: Vec<Statement> = body.statements.iter().skip(skip + 1).cloned().collect();
+                            let tail_refs = Self::collect_refd_idents(&tail);
+                            let expr_refs: std::collections::HashSet<String> = body.expr.as_ref()
+                                .map(|e| {
+                                    let mut out = std::collections::HashSet::new();
+                                    Self::collect_refd_idents(&[Statement::Expr((**e).clone())])
+                                        .into_iter().for_each(|n| { out.insert(n); });
+                                    out
+                                })
+                                .unwrap_or_default();
+                            if !tail_refs.contains(n) && !expr_refs.contains(n) {
+                                skip += 1;
+                                continue;
+                            }
+                        }
+                        break;
+                    }
+                    if skip > 0 {
+                        let trimmed = Block {
+                            statements: body.statements.iter().skip(skip).cloned().collect(),
+                            expr: body.expr.clone(),
+                        };
+                        out.push_str(&self.gen_block(&trimmed));
+                    } else {
+                        out.push_str(&self.gen_block(body));
+                    }
+                }
                 self.indent -= 1;
                 self.scopes.pop();
                 self.slice_names = saved_slices;
+                self.value_typed_idents = saved_value_idents;
+                self.current_lambda_ret = saved_lambda_ret;
                 out.push_str(&format!("{}}}\n", self.ind()));
                 out
             }
@@ -2264,6 +2476,12 @@ impl GoGen {
                         if !self.is_declared(name) {
                             let v = self.gen_expr(value);
                             self.declare(name);
+                            // `x = nil` can't use `:=` (untyped nil). Emit
+                            // `var x interface{}` so the declaration is valid
+                            // and subsequent assignments overwrite the type.
+                            if v == "nil" {
+                                return format!("{}var {} interface{{}}", self.ind(), name);
+                            }
                             // `:=` is only valid inside a function body.
                             if self.indent == 0 {
                                 return format!("var {} = {}", name, v);
@@ -2300,7 +2518,6 @@ impl GoGen {
                 // fix via package_name), not as a statement.
                 String::new()
             }
-            _ => format!("{}// TODO: {:?}", self.ind(), std::mem::discriminant(stmt)),
         }
     }
 
@@ -2357,6 +2574,24 @@ impl GoGen {
             Expr::Nil => "nil".into(),
             Expr::Ident(n) => n.clone(),
             Expr::BinaryOp { left, op, right } => {
+                // Short-circuit `x == nil` / `x != nil` to `false`/`true` when
+                // `x` is known to be a non-nullable value type. Recovers Go
+                // probes that lost pointer-ness in IL (`*int` → `int`).
+                if matches!(op, BinOp::Eq | BinOp::NotEq) {
+                    let (value_ident_lhs, value_ident_rhs) = (
+                        matches!(left.as_ref(), Expr::Ident(n) if self.value_typed_idents.contains(n))
+                            && matches!(right.as_ref(), Expr::Nil),
+                        matches!(right.as_ref(), Expr::Ident(n) if self.value_typed_idents.contains(n))
+                            && matches!(left.as_ref(), Expr::Nil),
+                    );
+                    if value_ident_lhs || value_ident_rhs {
+                        return match op {
+                            BinOp::Eq => "false".into(),
+                            BinOp::NotEq => "true".into(),
+                            _ => unreachable!(),
+                        };
+                    }
+                }
                 let o = match op {
                     BinOp::Add => "+", BinOp::Sub => "-", BinOp::Mul => "*", BinOp::Div => "/",
                     BinOp::Mod => "%", BinOp::Eq => "==", BinOp::NotEq => "!=",
@@ -2489,7 +2724,12 @@ impl GoGen {
                                         | BinOp::GreaterEq | BinOp::Eq | BinOp::NotEq))
                             } else { false }
                         });
-                        let ret = if has_bool_return { " bool" } else { "" };
+                        let has_returning_stmt = block.expr.is_some()
+                            || block.statements.iter().any(|s| matches!(s, Statement::Return(Some(_))));
+                        let ret = if has_bool_return { " bool".to_string() }
+                            else if let Some(r) = &self.current_lambda_ret {
+                                if has_returning_stmt { format!(" {}", r) } else { String::new() }
+                            } else { String::new() };
                         let mut out = format!("func({}){} {{\n", ps.join(", "), ret);
                         self.indent += 1;
                         out.push_str(&self.gen_block(block));
@@ -2498,7 +2738,22 @@ impl GoGen {
                         out
                     }
                     _ => {
-                        format!("func({}) interface{{}} {{ return {} }}", ps.join(", "), self.gen_expr(body))
+                        // Non-block body is a single expression. If the
+                        // enclosing fn's return is `Fn(..) -> R`, use R; else
+                        // omit the return type (the lambda is likely used as
+                        // a stmt-like callback whose return value is discarded).
+                        let ret = match &self.current_lambda_ret {
+                            Some(r) => format!(" {}", r),
+                            None => String::new(),
+                        };
+                        let body_str = self.gen_expr(body);
+                        if ret.is_empty() {
+                            // No known return type — assume void; emit body as
+                            // a statement. This matches Go callback idiom.
+                            format!("func({}) {{ {} }}", ps.join(", "), body_str)
+                        } else {
+                            format!("func({}){} {{ return {} }}", ps.join(", "), ret, body_str)
+                        }
                     }
                 }
             }
@@ -2917,9 +3172,17 @@ impl SwiftGen {
                     .collect();
                 format!("[{}]", pairs.join(", "))
             }
-            Expr::TryCatch { try_block, error_binding, catch_block } => {
+            Expr::TryCatch { try_block, error_binding, catch_block, finally_block } => {
                 let mut out = String::from("{ () -> Any in\n");
                 self.indent += 1;
+                if let Some(fb) = finally_block {
+                    // Swift's equivalent of `finally` is `defer`.
+                    out.push_str(&format!("{}defer {{\n", self.ind()));
+                    self.indent += 1;
+                    out.push_str(&self.gen_block(fb));
+                    self.indent -= 1;
+                    out.push_str(&format!("{}}}\n", self.ind()));
+                }
                 out.push_str(&format!("{}do {{\n", self.ind()));
                 self.indent += 1;
                 out.push_str(&self.gen_block(try_block));
@@ -3031,6 +3294,33 @@ struct KotlinGen {
     /// methods become extension functions on that struct even when no
     /// explicit `self` param is present, so `return "$name"` can bind.
     structs_with_fields: std::collections::HashSet<String>,
+    /// Map of trait name → method names declared in it. Used at impl-block
+    /// time to detect unexplicit `impl Target` that actually satisfies some
+    /// known trait, so we can emit `class Target : Trait { override ... }`.
+    trait_methods: std::collections::HashMap<String, Vec<String>>,
+    /// Struct names already rendered as abstract classes (emitted inline
+    /// by their impl block). Skip any subsequent struct decl for these.
+    abstract_emitted: std::collections::HashSet<String>,
+    /// Map of (struct_name, field_name) → rewritten field type. Populated
+    /// by pre-scanning impl blocks for mutable-collection method calls on
+    /// `items: Any` style fields that lost their type in IL.
+    inferred_field_types: std::collections::HashMap<(String, String), String>,
+    /// Struct names that needed a `<T>` generic added because field
+    /// inference detected element-type-parameterized method calls.
+    structs_with_inferred_generic: std::collections::HashSet<String>,
+    /// Map of parent type name → list of (variant name, variant field
+    /// (name, rendered type) pairs). Populated from hoisted top-level
+    /// structs that carry a `__parent_X: Any` sentinel field. Used to
+    /// re-nest sealed class variants with their fields.
+    nested_variants: std::collections::HashMap<String, Vec<(String, Vec<(String, String)>)>>,
+    /// Names of hoisted variant structs — skipped when emitting top-level
+    /// struct decls because they're already emitted inside the sealed class.
+    hoisted_variant_names: std::collections::HashSet<String>,
+    /// Top-level fn names — populated in gen_program Pass 1. Used to suppress
+    /// the snake_case → PascalCase rewrite for known function calls inside
+    /// lambda bodies (so `fetch_user(it)` stays `fetch_user(it)`, not
+    /// `FetchUser(it)`).
+    known_fn_names: std::collections::HashSet<String>,
 }
 
 impl KotlinGen {
@@ -3100,18 +3390,577 @@ impl KotlinGen {
     }
 
     fn gen_program(&mut self, program: &Program) -> String {
+        // Pass 1: collect facts across the whole program.
+        let mut fieldless_structs: std::collections::HashSet<String> = std::collections::HashSet::new();
+        // Collect nested-class variants: structs with a `__parent_X: Any` field
+        // marker are sealed-class variants. Store by (parent, variant_name) →
+        // list of (field_name, type_rendered).
         for s in &program.statements {
             if let Statement::StructDecl { name, fields, .. } = s {
                 let has_real_fields = fields.iter().any(|f|
                     !(f.name == "_empty" && matches!(&f.type_ann,
                         crate::ast::TypeExpr::Named(n) if n == "Any"))
                 );
-                if has_real_fields { self.structs_with_fields.insert(name.clone()); }
+                if has_real_fields {
+                    self.structs_with_fields.insert(name.clone());
+                } else {
+                    fieldless_structs.insert(name.clone());
+                }
+                // Track nested-class marker.
+                for f in fields {
+                    if let Some(parent) = f.name.strip_prefix("__parent_") {
+                        let rem: Vec<(String, String)> = fields.iter()
+                            .filter(|ff| !ff.name.starts_with("__parent_"))
+                            .map(|ff| (ff.name.clone(), self.neb_type(&ff.type_ann)))
+                            .collect();
+                        self.nested_variants.entry(parent.to_string()).or_default()
+                            .push((name.clone(), rem));
+                        self.hoisted_variant_names.insert(name.clone());
+                        break;
+                    }
+                }
+            }
+            if let Statement::TraitDecl { name, methods, .. } = s {
+                let names: Vec<String> = methods.iter().map(|m| m.name.clone()).collect();
+                self.trait_methods.insert(name.clone(), names);
+            }
+            if let Statement::FnDecl { name, .. } = s {
+                self.known_fn_names.insert(name.clone());
+            }
+            if let Statement::ImplBlock { methods, .. } = s {
+                for m in methods {
+                    if let Statement::FnDecl { name, .. } = m {
+                        self.known_fn_names.insert(name.clone());
+                    }
+                }
+            }
+        }
+        // Detect abstract-class pattern: fieldless struct + impl block that
+        // contains at least one empty-body method. The struct is skipped;
+        // the impl block is rendered as `abstract class X { ... }`.
+        // Also mark structs that will be emitted as `class X : Trait { ... }`
+        // by the trait-link heuristic below.
+        for s in &program.statements {
+            if let Statement::ImplBlock { target, methods, .. } = s {
+                if !fieldless_structs.contains(target) { continue; }
+                let any_empty = methods.iter().any(|m| {
+                    if let Statement::FnDecl { body, .. } = m {
+                        body.statements.is_empty() && body.expr.is_none()
+                    } else { false }
+                });
+                if any_empty {
+                    self.abstract_emitted.insert(target.clone());
+                    continue;
+                }
+                // Trait-match: pre-mark this target as "abstract_emitted" so
+                // the StructDecl is skipped and the ImplBlock prints the
+                // merged `class Target : Trait`.
+                if self.find_matching_trait(methods).is_some() {
+                    self.abstract_emitted.insert(target.clone());
+                }
+            }
+        }
+        // Infer field types for structs where the IL lost them. If the
+        // struct has a field `x: Any` and the impl block calls known
+        // MutableList methods on `x`, upgrade to `MutableList<T>` (where
+        // T comes from a typed method-param that was passed into `.add(...)`).
+        for s in &program.statements {
+            if let Statement::StructDecl { name: sname, fields, .. } = s {
+                for f in fields {
+                    if !matches!(&f.type_ann, TypeExpr::Named(n) if n == "Any") { continue; }
+                    // Find impl block with this target.
+                    for s2 in &program.statements {
+                        if let Statement::ImplBlock { target, methods, .. } = s2 {
+                            if target != sname { continue; }
+                            // Scan methods for calls like `field.add(...)`,
+                            // `field.push(...)`, etc.
+                            let mut mutating_calls: Vec<(&str, Option<&Param>)> = Vec::new();
+                            for m in methods {
+                                if let Statement::FnDecl { params: mparams, body, .. } = m {
+                                    Self::collect_field_mutating_calls(&f.name, body, mparams, &mut mutating_calls);
+                                }
+                            }
+                            if mutating_calls.iter().any(|(call, _)| matches!(*call,
+                                "add" | "push" | "remove_last" | "remove_at" | "insert"
+                                | "clear" | "is_not_empty" | "is_empty" | "size" | "get")) {
+                                // Try to find element type from a .add(x) arg typed.
+                                let elem_type = mutating_calls.iter().find_map(|(_, p)| {
+                                    p.and_then(|p| p.type_ann.as_ref())
+                                }).map(|t| match t {
+                                    TypeExpr::Named(n) => n.clone(),
+                                    _ => "Any".into(),
+                                }).unwrap_or_else(|| "Any".into());
+                                self.inferred_field_types.insert(
+                                    (sname.clone(), f.name.clone()),
+                                    format!("MutableList<{}>", elem_type),
+                                );
+                                // Track if elem_type is a generic (single uppercase letter).
+                                if elem_type.len() == 1 && elem_type.chars().next().map_or(false, |c| c.is_ascii_uppercase()) {
+                                    self.structs_with_inferred_generic.insert(sname.clone());
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
         let mut out = String::new();
         for stmt in &program.statements { out.push_str(&self.gen_stmt(stmt)); out.push('\n'); }
         out
+    }
+
+    /// Does this fn's body call the given builder-ident (e.g. `async_call`,
+    /// `launch_call`) anywhere? Used to decide whether to wrap the body in
+    /// `coroutineScope { }` so the builder resolves.
+    fn body_calls_builder(body: &Block, target: &str) -> bool {
+        fn walk_e(e: &Expr, target: &str) -> bool {
+            match e {
+                Expr::Call { callee, args } => {
+                    if let Expr::Ident(n) = callee.as_ref() {
+                        if n == target { return true; }
+                    }
+                    args.iter().any(|a| walk_e(&a.value, target)) || walk_e(callee, target)
+                }
+                Expr::MethodCall { object, args, .. } => {
+                    walk_e(object, target) || args.iter().any(|a| walk_e(&a.value, target))
+                }
+                Expr::If { condition, then_block, else_block } =>
+                    walk_e(condition, target) || walk_b(then_block, target)
+                        || else_block.as_ref().map(|b| walk_b(b, target)).unwrap_or(false),
+                Expr::Match { subject, arms } =>
+                    walk_e(subject, target) || arms.iter().any(|a| walk_e(&a.body, target)),
+                Expr::For { iterable, body, .. } => walk_e(iterable, target) || walk_b(body, target),
+                Expr::While { condition, body } => walk_e(condition, target) || walk_b(body, target),
+                Expr::Loop { body } => walk_b(body, target),
+                Expr::Lambda { body, .. } => walk_e(body, target),
+                Expr::Block(b) => walk_b(b, target),
+                Expr::TryCatch { try_block, catch_block, finally_block, .. } =>
+                    walk_b(try_block, target) || walk_b(catch_block, target)
+                        || finally_block.as_ref().map(|b| walk_b(b, target)).unwrap_or(false),
+                _ => false,
+            }
+        }
+        fn walk_b(b: &Block, target: &str) -> bool {
+            for s in &b.statements {
+                if walk_s(s, target) { return true; }
+            }
+            b.expr.as_ref().map(|e| walk_e(e, target)).unwrap_or(false)
+        }
+        fn walk_s(s: &Statement, target: &str) -> bool {
+            match s {
+                Statement::Expr(e) => walk_e(e, target),
+                Statement::Let { value, .. } => walk_e(value, target),
+                Statement::Mut { value, .. } => walk_e(value, target),
+                Statement::Const { value, .. } => walk_e(value, target),
+                Statement::Assignment { value, .. } => walk_e(value, target),
+                Statement::Return(Some(e)) => walk_e(e, target),
+                _ => false,
+            }
+        }
+        walk_b(body, target)
+    }
+
+    /// Does this fn's body call `emit(...)` at top level? Signals a Kotlin
+    /// Flow builder usage: the body must be wrapped in `flow { ... }` so
+    /// `emit` resolves on the FlowCollector receiver.
+    fn body_calls_emit(body: &Block) -> bool {
+        fn walk_e(e: &Expr) -> bool {
+            match e {
+                Expr::Call { callee, args } => {
+                    if let Expr::Ident(n) = callee.as_ref() {
+                        if n == "emit" { return true; }
+                    }
+                    args.iter().any(|a| walk_e(&a.value)) || walk_e(callee)
+                }
+                Expr::If { condition, then_block, else_block } =>
+                    walk_e(condition) || walk_b(then_block)
+                        || else_block.as_ref().map(walk_b).unwrap_or(false),
+                Expr::Match { subject, arms } =>
+                    walk_e(subject) || arms.iter().any(|a| walk_e(&a.body)),
+                Expr::For { iterable, body, .. } => walk_e(iterable) || walk_b(body),
+                Expr::While { condition, body } => walk_e(condition) || walk_b(body),
+                Expr::Loop { body } => walk_b(body),
+                Expr::Block(b) => walk_b(b),
+                Expr::TryCatch { try_block, catch_block, finally_block, .. } => {
+                    walk_b(try_block) || walk_b(catch_block)
+                        || finally_block.as_ref().map(walk_b).unwrap_or(false)
+                }
+                _ => false,
+            }
+        }
+        fn walk_b(b: &Block) -> bool {
+            for s in &b.statements {
+                if walk_s(s) { return true; }
+            }
+            b.expr.as_ref().map(|e| walk_e(e)).unwrap_or(false)
+        }
+        fn walk_s(s: &Statement) -> bool {
+            match s {
+                Statement::Expr(e) => walk_e(e),
+                Statement::Let { value, .. } => walk_e(value),
+                Statement::Mut { value, .. } => walk_e(value),
+                Statement::Const { value, .. } => walk_e(value),
+                Statement::Assignment { value, .. } => walk_e(value),
+                Statement::Return(Some(e)) => walk_e(e),
+                _ => false,
+            }
+        }
+        walk_b(body)
+    }
+
+    /// Heuristic: a Kotlin fn whose body calls any suspend-requiring stdlib
+    /// function (delay, emit, yield, withContext, etc.) or directly awaits
+    /// a Deferred must itself be marked `suspend`. Covers the common case
+    /// where ingest strips the explicit `suspend` modifier but the body
+    /// still contains the calls that require it.
+    fn fn_body_needs_suspend(body: &Block) -> bool {
+        fn walk_e(e: &Expr) -> bool {
+            match e {
+                Expr::Call { callee, args } => {
+                    if let Expr::Ident(n) = callee.as_ref() {
+                        if matches!(n.as_str(),
+                            "delay" | "emit" | "yield_all" | "yieldAll"
+                            | "await_all" | "awaitAll" | "with_context" | "withContext"
+                            | "coroutine_scope" | "coroutineScope" | "supervisor_scope" | "supervisorScope"
+                            | "run_blocking" | "runBlocking" | "channel_flow" | "channelFlow"
+                        ) { return true; }
+                    }
+                    args.iter().any(|a| walk_e(&a.value)) || walk_e(callee)
+                }
+                Expr::MethodCall { object, method, args } => {
+                    if matches!(method.as_str(), "await" | "awaitAll" | "await_all" | "collect" | "emit") {
+                        return true;
+                    }
+                    walk_e(object) || args.iter().any(|a| walk_e(&a.value))
+                }
+                Expr::BinaryOp { left, right, .. } => walk_e(left) || walk_e(right),
+                Expr::UnaryOp { operand, .. } => walk_e(operand),
+                Expr::FieldAccess { object, .. } => walk_e(object),
+                Expr::Index { object, index } => walk_e(object) || walk_e(index),
+                Expr::If { condition, then_block, else_block } => {
+                    walk_e(condition) || walk_b(then_block)
+                        || else_block.as_ref().map(|b| walk_b(b)).unwrap_or(false)
+                }
+                Expr::Match { subject, arms } => {
+                    walk_e(subject) || arms.iter().any(|a| walk_e(&a.body))
+                }
+                Expr::For { iterable, body, .. } => walk_e(iterable) || walk_b(body),
+                Expr::While { condition, body } => walk_e(condition) || walk_b(body),
+                Expr::Loop { body } => walk_b(body),
+                Expr::Lambda { body, .. } => walk_e(body),
+                Expr::Block(b) => walk_b(b),
+                Expr::TryCatch { try_block, catch_block, finally_block, .. } => {
+                    walk_b(try_block) || walk_b(catch_block)
+                        || finally_block.as_ref().map(walk_b).unwrap_or(false)
+                }
+                Expr::List(items) => items.iter().any(walk_e),
+                Expr::Tuple(items) => items.iter().any(walk_e),
+                Expr::Map(es) => es.iter().any(|(k, v)| walk_e(k) || walk_e(v)),
+                Expr::Pipe { left, right } => walk_e(left) || walk_e(right),
+                Expr::NilCoalesce { left, right } => walk_e(left) || walk_e(right),
+                Expr::Range { start, end, .. } => walk_e(start) || walk_e(end),
+                Expr::Try(e) => walk_e(e),
+                _ => false,
+            }
+        }
+        fn walk_b(b: &Block) -> bool {
+            for s in &b.statements {
+                if walk_s(s) { return true; }
+            }
+            b.expr.as_ref().map(|e| walk_e(e)).unwrap_or(false)
+        }
+        fn walk_s(s: &Statement) -> bool {
+            match s {
+                Statement::Expr(e) => walk_e(e),
+                Statement::Let { value, .. } => walk_e(value),
+                Statement::Mut { value, .. } => walk_e(value),
+                Statement::Const { value, .. } => walk_e(value),
+                Statement::Assignment { value, .. } => walk_e(value),
+                Statement::Return(Some(e)) => walk_e(e),
+                _ => false,
+            }
+        }
+        walk_b(body)
+    }
+
+    /// Collect param names that appear as arguments to higher-order
+    /// Kotlin methods (`map`, `filter`, `forEach`, `apply`, `let`, `fold`),
+    /// so their `Any` type can be upgraded to a function type.
+    fn collect_callable_kotlin_params(body: &Block, out: &mut std::collections::HashSet<String>) {
+        fn walk_e(e: &Expr, out: &mut std::collections::HashSet<String>) {
+            if let Expr::MethodCall { object, method, args } = e {
+                if matches!(method.as_str(),
+                    "map" | "filter" | "for_each" | "apply" | "let" | "fold"
+                    | "reduce" | "any" | "all" | "find" | "flat_map" | "also")
+                {
+                    for a in args {
+                        if let Expr::Ident(n) = &a.value { out.insert(n.clone()); }
+                    }
+                }
+                walk_e(object, out);
+                for a in args { walk_e(&a.value, out); }
+            }
+            if let Expr::Call { callee, args } = e {
+                // `f(x)` → f is callable
+                if let Expr::Ident(n) = callee.as_ref() { out.insert(n.clone()); }
+                walk_e(callee, out);
+                for a in args { walk_e(&a.value, out); }
+            }
+            match e {
+                Expr::BinaryOp { left, right, .. } => { walk_e(left, out); walk_e(right, out); }
+                Expr::UnaryOp { operand, .. } => walk_e(operand, out),
+                Expr::FieldAccess { object, .. } => walk_e(object, out),
+                Expr::Index { object, index } => { walk_e(object, out); walk_e(index, out); }
+                Expr::If { condition, then_block, else_block } => {
+                    walk_e(condition, out);
+                    walk_b(then_block, out);
+                    if let Some(b) = else_block { walk_b(b, out); }
+                }
+                Expr::For { iterable, body, .. } => { walk_e(iterable, out); walk_b(body, out); }
+                Expr::While { condition, body } => { walk_e(condition, out); walk_b(body, out); }
+                Expr::Loop { body } => walk_b(body, out),
+                Expr::Match { subject, arms } => {
+                    walk_e(subject, out);
+                    for a in arms {
+                        walk_e(&a.body, out);
+                        if let Some(g) = &a.guard { walk_e(g, out); }
+                    }
+                }
+                Expr::Lambda { body, .. } => walk_e(body, out),
+                Expr::Block(b) => walk_b(b, out),
+                _ => {}
+            }
+        }
+        fn walk_b(b: &Block, out: &mut std::collections::HashSet<String>) {
+            for s in &b.statements { walk_s(s, out); }
+            if let Some(e) = &b.expr { walk_e(e, out); }
+        }
+        fn walk_s(s: &Statement, out: &mut std::collections::HashSet<String>) {
+            match s {
+                Statement::Expr(e) | Statement::Return(Some(e)) | Statement::Throw(Some(e)) | Statement::Break(Some(e)) => walk_e(e, out),
+                Statement::Let { value, .. } | Statement::Const { value, .. } | Statement::Mut { value, .. } => walk_e(value, out),
+                Statement::Assignment { target, value, .. } => { walk_e(target, out); walk_e(value, out); }
+                _ => {}
+            }
+        }
+        walk_b(body, out);
+    }
+
+    /// Detect if `self` (or `this`) is used as a receiver anywhere in body.
+    fn body_has_self_k(body: &Block) -> bool {
+        fn walk_e(e: &Expr) -> bool {
+            match e {
+                Expr::Ident(n) if n == "self" || n == "this" || n == "sf" => true,
+                Expr::MethodCall { object, args, .. } => walk_e(object) || args.iter().any(|a| walk_e(&a.value)),
+                Expr::Call { callee, args } => walk_e(callee) || args.iter().any(|a| walk_e(&a.value)),
+                Expr::FieldAccess { object, .. } => walk_e(object),
+                Expr::BinaryOp { left, right, .. } => walk_e(left) || walk_e(right),
+                Expr::UnaryOp { operand, .. } => walk_e(operand),
+                Expr::Index { object, index } => walk_e(object) || walk_e(index),
+                Expr::If { condition, then_block, else_block } => {
+                    walk_e(condition)
+                        || walk_b(then_block)
+                        || else_block.as_ref().map_or(false, walk_b)
+                }
+                Expr::For { iterable, body, .. } => walk_e(iterable) || walk_b(body),
+                Expr::While { condition, body } => walk_e(condition) || walk_b(body),
+                Expr::Loop { body } => walk_b(body),
+                Expr::Match { subject, arms } => {
+                    walk_e(subject)
+                        || arms.iter().any(|a| walk_e(&a.body) || a.guard.as_ref().map_or(false, walk_e))
+                }
+                Expr::Lambda { body, .. } => walk_e(body),
+                Expr::Block(b) => walk_b(b),
+                _ => false,
+            }
+        }
+        fn walk_b(b: &Block) -> bool {
+            for s in &b.statements { if walk_s(s) { return true; } }
+            if let Some(e) = &b.expr { return walk_e(e); }
+            false
+        }
+        fn walk_s(s: &Statement) -> bool {
+            match s {
+                Statement::Expr(e) | Statement::Return(Some(e)) | Statement::Throw(Some(e)) | Statement::Break(Some(e)) => walk_e(e),
+                Statement::Let { value, .. } | Statement::Const { value, .. } | Statement::Mut { value, .. } => walk_e(value),
+                Statement::Assignment { target, value, .. } => walk_e(target) || walk_e(value),
+                _ => false,
+            }
+        }
+        walk_b(body)
+    }
+
+    /// Recursively check whether a method-call with the given name appears
+    /// anywhere in the body.
+    fn body_has_call_name_k(body: &Block, name: &str) -> bool {
+        fn walk_e(e: &Expr, name: &str) -> bool {
+            match e {
+                Expr::MethodCall { object, method, args } => {
+                    method == name
+                        || walk_e(object, name)
+                        || args.iter().any(|a| walk_e(&a.value, name))
+                }
+                Expr::Call { callee, args } => {
+                    walk_e(callee, name) || args.iter().any(|a| walk_e(&a.value, name))
+                }
+                Expr::BinaryOp { left, right, .. } => walk_e(left, name) || walk_e(right, name),
+                Expr::UnaryOp { operand, .. } => walk_e(operand, name),
+                Expr::FieldAccess { object, .. } => walk_e(object, name),
+                Expr::Index { object, index } => walk_e(object, name) || walk_e(index, name),
+                Expr::If { condition, then_block, else_block } => {
+                    walk_e(condition, name)
+                        || walk_b(then_block, name)
+                        || else_block.as_ref().map_or(false, |b| walk_b(b, name))
+                }
+                Expr::Block(b) => walk_b(b, name),
+                _ => false,
+            }
+        }
+        fn walk_b(b: &Block, name: &str) -> bool {
+            for s in &b.statements { if walk_s(s, name) { return true; } }
+            if let Some(e) = &b.expr { return walk_e(e, name); }
+            false
+        }
+        fn walk_s(s: &Statement, name: &str) -> bool {
+            match s {
+                Statement::Expr(e) | Statement::Return(Some(e)) | Statement::Throw(Some(e)) | Statement::Break(Some(e)) => walk_e(e, name),
+                Statement::Let { value, .. } | Statement::Const { value, .. } | Statement::Mut { value, .. } => walk_e(value, name),
+                Statement::Assignment { target, value, .. } => walk_e(target, name) || walk_e(value, name),
+                _ => false,
+            }
+        }
+        walk_b(body, name)
+    }
+
+    /// Walk a body and collect `field.METHOD(...)` call sites so the struct
+    /// field's type can be inferred from mutable-collection ops.
+    fn collect_field_mutating_calls<'a>(
+        field_name: &str,
+        body: &'a Block,
+        method_params: &'a [Param],
+        out: &mut Vec<(&'a str, Option<&'a Param>)>,
+    ) {
+        fn walk_e<'a>(e: &'a Expr, field_name: &str, method_params: &'a [Param], out: &mut Vec<(&'a str, Option<&'a Param>)>) {
+            match e {
+                Expr::MethodCall { object, method, args } => {
+                    // `field.X(args)` — and also implicit `X(args)` where
+                    // field is the receiver of the current impl block, but
+                    // that's harder. Look for explicit `field.METHOD`.
+                    let hit = matches!(object.as_ref(), Expr::Ident(n) if n == field_name);
+                    if hit {
+                        let first_arg = args.first().and_then(|a| match &a.value {
+                            Expr::Ident(n) => method_params.iter().find(|p| p.name == *n),
+                            _ => None,
+                        });
+                        // SAFETY: transmute the lifetime of the &'static str
+                        // via match on the known method-name patterns below.
+                        let key: &'a str = match method.as_str() {
+                            "add" => "add", "push" => "push",
+                            "remove_last" => "remove_last",
+                            "remove_at" => "remove_at", "insert" => "insert",
+                            "clear" => "clear", "is_not_empty" => "is_not_empty",
+                            "is_empty" => "is_empty", "size" => "size",
+                            "get" => "get",
+                            _ => "",
+                        };
+                        if !key.is_empty() { out.push((key, first_arg)); }
+                    }
+                    walk_e(object, field_name, method_params, out);
+                    for a in args { walk_e(&a.value, field_name, method_params, out); }
+                }
+                Expr::BinaryOp { left, right, .. } => { walk_e(left, field_name, method_params, out); walk_e(right, field_name, method_params, out); }
+                Expr::UnaryOp { operand, .. } => walk_e(operand, field_name, method_params, out),
+                Expr::Call { callee, args } => { walk_e(callee, field_name, method_params, out); for a in args { walk_e(&a.value, field_name, method_params, out); } }
+                Expr::FieldAccess { object, .. } => walk_e(object, field_name, method_params, out),
+                Expr::Index { object, index } => { walk_e(object, field_name, method_params, out); walk_e(index, field_name, method_params, out); }
+                Expr::If { condition, then_block, else_block } => {
+                    walk_e(condition, field_name, method_params, out);
+                    for s in &then_block.statements { walk_s(s, field_name, method_params, out); }
+                    if let Some(e) = &then_block.expr { walk_e(e, field_name, method_params, out); }
+                    if let Some(b) = else_block {
+                        for s in &b.statements { walk_s(s, field_name, method_params, out); }
+                        if let Some(e) = &b.expr { walk_e(e, field_name, method_params, out); }
+                    }
+                }
+                _ => {}
+            }
+        }
+        fn walk_s<'a>(s: &'a Statement, field_name: &str, method_params: &'a [Param], out: &mut Vec<(&'a str, Option<&'a Param>)>) {
+            match s {
+                Statement::Expr(e) | Statement::Return(Some(e)) | Statement::Break(Some(e)) | Statement::Throw(Some(e)) => walk_e(e, field_name, method_params, out),
+                Statement::Let { value, .. } | Statement::Const { value, .. } | Statement::Mut { value, .. } => walk_e(value, field_name, method_params, out),
+                Statement::Assignment { target, value, .. } => { walk_e(target, field_name, method_params, out); walk_e(value, field_name, method_params, out); }
+                _ => {}
+            }
+        }
+        for s in &body.statements { walk_s(s, field_name, method_params, out); }
+        if let Some(e) = &body.expr { walk_e(e, field_name, method_params, out); }
+    }
+
+    /// Collect identifier names that appear as either operand of a binary
+    /// ordering comparison (`<`, `>`, `<=`, `>=`). Used to add a
+    /// `Comparable<T>` bound to generic params.
+    fn scan_ordered_idents_k(
+        stmts: &[Statement],
+        trailing: &Option<Box<Expr>>,
+        out: &mut std::collections::BTreeSet<String>,
+    ) {
+        for s in stmts { Self::scan_ordered_stmt_k(s, out); }
+        if let Some(t) = trailing { Self::scan_ordered_expr_k(t, out); }
+    }
+    fn scan_ordered_stmt_k(s: &Statement, out: &mut std::collections::BTreeSet<String>) {
+        match s {
+            Statement::Expr(e) | Statement::Return(Some(e)) | Statement::Break(Some(e)) | Statement::Throw(Some(e)) => Self::scan_ordered_expr_k(e, out),
+            Statement::Let { value, .. } | Statement::Const { value, .. } | Statement::Mut { value, .. } => Self::scan_ordered_expr_k(value, out),
+            Statement::Assignment { target, value, .. } => { Self::scan_ordered_expr_k(target, out); Self::scan_ordered_expr_k(value, out); }
+            _ => {}
+        }
+    }
+    fn scan_ordered_expr_k(e: &Expr, out: &mut std::collections::BTreeSet<String>) {
+        match e {
+            Expr::BinaryOp { left, op, right } => {
+                if matches!(op, BinOp::Less | BinOp::Greater | BinOp::LessEq | BinOp::GreaterEq) {
+                    if let Expr::Ident(n) = left.as_ref() { out.insert(n.clone()); }
+                    if let Expr::Ident(n) = right.as_ref() { out.insert(n.clone()); }
+                }
+                Self::scan_ordered_expr_k(left, out);
+                Self::scan_ordered_expr_k(right, out);
+            }
+            Expr::UnaryOp { operand, .. } => Self::scan_ordered_expr_k(operand, out),
+            Expr::Call { callee, args } => { Self::scan_ordered_expr_k(callee, out); for a in args { Self::scan_ordered_expr_k(&a.value, out); } }
+            Expr::MethodCall { object, args, .. } => { Self::scan_ordered_expr_k(object, out); for a in args { Self::scan_ordered_expr_k(&a.value, out); } }
+            Expr::FieldAccess { object, .. } => Self::scan_ordered_expr_k(object, out),
+            Expr::Index { object, index } => { Self::scan_ordered_expr_k(object, out); Self::scan_ordered_expr_k(index, out); }
+            Expr::If { condition, then_block, else_block } => {
+                Self::scan_ordered_expr_k(condition, out);
+                Self::scan_ordered_idents_k(&then_block.statements, &then_block.expr, out);
+                if let Some(b) = else_block { Self::scan_ordered_idents_k(&b.statements, &b.expr, out); }
+            }
+            Expr::Match { subject, arms } => {
+                Self::scan_ordered_expr_k(subject, out);
+                for a in arms { Self::scan_ordered_expr_k(&a.body, out); if let Some(g) = &a.guard { Self::scan_ordered_expr_k(g, out); } }
+            }
+            Expr::Block(b) => Self::scan_ordered_idents_k(&b.statements, &b.expr, out),
+            _ => {}
+        }
+    }
+
+    /// Find a trait whose method set equals the impl's method set (by name
+    /// only). Case-sensitive exact match. Single trait is assumed when there
+    /// are ties; otherwise `None`.
+    fn find_matching_trait(&self, impl_methods: &[Statement]) -> Option<String> {
+        let impl_names: std::collections::BTreeSet<String> = impl_methods.iter()
+            .filter_map(|m| if let Statement::FnDecl { name, .. } = m { Some(name.clone()) } else { None })
+            .collect();
+        if impl_names.is_empty() { return None; }
+        let mut matches: Vec<&String> = self.trait_methods.iter()
+            .filter(|(_, names)| {
+                let t: std::collections::BTreeSet<String> = names.iter().cloned().collect();
+                impl_names == t
+            })
+            .map(|(k, _)| k)
+            .collect();
+        if matches.len() == 1 { Some(matches.remove(0).clone()) } else { None }
     }
 
     fn neb_type(&self, t: &TypeExpr) -> String {
@@ -3139,7 +3988,8 @@ impl KotlinGen {
             TypeExpr::Generic(name, args) => {
                 let a: Vec<String> = args.iter().map(|a| self.neb_type(a)).collect();
                 match name.as_str() {
-                    "List" | "Array" => format!("List<{}>", a.first().cloned().unwrap_or_else(|| "Any".into())),
+                    "List" => format!("List<{}>", a.first().cloned().unwrap_or_else(|| "Any".into())),
+                    "Array" => format!("Array<{}>", a.first().cloned().unwrap_or_else(|| "Any".into())),
                     "Map" | "Dictionary" => format!("MutableMap<{}, {}>", a.first().cloned().unwrap_or_else(|| "Any".into()), a.get(1).cloned().unwrap_or_else(|| "Any".into())),
                     "Set" => format!("Set<{}>", a.first().cloned().unwrap_or_else(|| "Any".into())),
                     "Option" | "Optional" => format!("{}?", a.first().cloned().unwrap_or_else(|| "Any".into())),
@@ -3165,6 +4015,19 @@ impl KotlinGen {
                             }
                             parts.join(".")
                         } else { name.clone() };
+                        // Kotlin maps `java.util.List<T>` to the read-only
+                        // `kotlin.collections.List<T>` at compile time, which
+                        // rejects a returned `ArrayList`. Translate both
+                        // `java.util.List` and `java.util.Collection` to
+                        // their mutable Kotlin-native counterparts so
+                        // `return ArrayList<T>()` type-checks.
+                        let rendered_name = match rendered_name.as_str() {
+                            "java.util.List" => "MutableList".into(),
+                            "java.util.Collection" => "MutableCollection".into(),
+                            "java.util.Map" => "MutableMap".into(),
+                            "java.util.Set" => "MutableSet".into(),
+                            _ => rendered_name,
+                        };
                         format!("{}<{}>", rendered_name, a.join(", "))
                     }
                 }
@@ -3198,12 +4061,37 @@ impl KotlinGen {
                 let t = type_ann.as_ref().map(|t| format!(": {}", self.neb_type(t))).unwrap_or_default();
                 format!("{}var {}{} = {}", self.ind(), name, t, v)
             }
-            Statement::FnDecl { name, params, body, return_type, .. } => {
+            Statement::FnDecl { name, params, body, return_type, decorators, .. } => {
+                let is_suspend = decorators.iter().any(|(n, _)| n == "suspend")
+                    || Self::fn_body_needs_suspend(body);
+                // Pre-compute: does any param get passed to a higher-order
+                // method like `.map(f)` / `.filter(f)` that takes `(T) -> R`?
+                // Used below to upgrade `Any`-typed param → a function type.
+                let mut callable_params: std::collections::HashSet<String> = std::collections::HashSet::new();
+                Self::collect_callable_kotlin_params(body, &mut callable_params);
+                // Receiver generic (e.g. `List<T>` → `T`) if extension fn is
+                // reconstructed from the name prefix.
+                let recv_elem = if name.starts_with("list_") || name.starts_with("set_") { Some("T") }
+                    else if name.starts_with("map_") { Some("V") }
+                    else { None };
+                let ret_inner = return_type.as_ref().and_then(|rt| {
+                    if let TypeExpr::Generic(_, args) = rt {
+                        args.first().map(|t| self.neb_type(t))
+                    } else { None }
+                });
+                let name_has_indexed = name.contains("indexed") || name.contains("with_index");
                 let ps: Vec<String> = params.iter()
                     .filter(|p| p.name != "sf")
                     .map(|p| {
                         let t = p.type_ann.as_ref().map(|t| self.neb_type(t)).unwrap_or_else(|| "Any".into());
-                        format!("{}: {}", p.name, t)
+                        let upgraded_t = if t == "Any" && callable_params.contains(&p.name) {
+                            match (recv_elem, ret_inner.as_deref()) {
+                                (Some(recv), Some(r)) if name_has_indexed => format!("(Int, {}) -> {}", recv, r),
+                                (Some(recv), Some(r)) => format!("({}) -> {}", recv, r),
+                                _ => t,
+                            }
+                        } else { t };
+                        format!("{}: {}", p.name, upgraded_t)
                     })
                     .collect();
                 let ret = return_type.as_ref().map(|t| self.neb_type(t)).unwrap_or_else(|| "Any".into());
@@ -3213,10 +4101,77 @@ impl KotlinGen {
                     if let Some(t) = &p.type_ann { Self::collect_generics_k(t, &mut generic_set); }
                 }
                 if let Some(rt) = return_type { Self::collect_generics_k(rt, &mut generic_set); }
+                // Detect Comparable bound: generic params used with `>`, `<`,
+                // etc. in the body need `T : Comparable<T>` so Kotlin's
+                // String.compareTo overload doesn't get picked by mistake.
+                let mut ordered_params: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+                Self::scan_ordered_idents_k(&body.statements, &body.expr, &mut ordered_params);
+                let mut ordered_generics: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+                for p in params.iter().filter(|p| p.name != "sf") {
+                    if let Some(TypeExpr::Named(tn)) = &p.type_ann {
+                        if generic_set.contains(tn) && ordered_params.contains(&p.name) {
+                            ordered_generics.insert(tn.clone());
+                        }
+                    }
+                }
+                // Detect `filterIsInstance<T>()` in the body — Kotlin needs
+                // `inline fun <reified T>` for reified type params.
+                let uses_reified = Self::body_has_call_name_k(body, "filter_is_instance");
+                // Extension-function heuristic: function name begins with a
+                // known receiver-type prefix (`list_`, `string_`, `map_`,
+                // `set_`) AND body uses `this`/`self` → emit as receiver
+                // extension. Also adds receiver's generic params (T, K, V,
+                // etc.) to the generic_set so the fn signature declares
+                // them.
+                let receiver = {
+                    let body_uses_this = Self::body_has_self_k(body);
+                    let (recv, remainder, extra_gens) = if name.starts_with("list_") {
+                        (Some("List<T>".to_string()), name[5..].to_string(), vec!["T"])
+                    } else if name.starts_with("string_") {
+                        (Some("String".to_string()), name[7..].to_string(), vec![])
+                    } else if name.starts_with("map_") {
+                        (Some("Map<K, V>".to_string()), name[4..].to_string(), vec!["K", "V"])
+                    } else if name.starts_with("set_") {
+                        (Some("Set<T>".to_string()), name[4..].to_string(), vec!["T"])
+                    } else {
+                        (None, name.clone(), vec![])
+                    };
+                    if body_uses_this && recv.is_some() { Some((recv.unwrap(), remainder, extra_gens)) } else { None }
+                };
+                let mut generic_set = generic_set;
+                if let Some((_, _, extra)) = &receiver {
+                    for g in extra { generic_set.insert(g.to_string()); }
+                }
                 let gen_str = if generic_set.is_empty() { String::new() }
-                    else { format!(" <{}>", generic_set.iter().cloned().collect::<Vec<_>>().join(", ")) };
+                    else {
+                        let items: Vec<String> = generic_set.iter().map(|g| {
+                            let prefix = if uses_reified { "reified " } else { "" };
+                            if ordered_generics.contains(g) {
+                                format!("{}{} : Comparable<{}>", prefix, g, g)
+                            } else { format!("{}{}", prefix, g) }
+                        }).collect();
+                        format!(" <{}>", items.join(", "))
+                    };
                 let body_empty = body.statements.is_empty() && body.expr.is_none();
-                let mut out = format!("{}fun{} {}({}): {} {{\n", self.ind(), gen_str, name, ps.join(", "), ret);
+                let fn_prefix = if uses_reified && !generic_set.is_empty() { "inline " } else { "" };
+                // If the fn returns `Flow<T>` and calls `emit(...)`, wrap the
+                // body as `return flow { body }`. Kotlin's `flow` builder IS
+                // a suspend/receiver scope, so strip the `suspend` modifier —
+                // collecting a Flow is what's suspend, not producing it.
+                let uses_flow_builder = ret.starts_with("Flow<")
+                    && Self::body_calls_emit(body);
+                // `async { body }` needs a CoroutineScope receiver. If the fn
+                // body invokes `async_call(...)` but isn't itself inside a
+                // builder, wrap the body in `coroutineScope { }` so the
+                // builder resolves.
+                let uses_coroutine_scope = !uses_flow_builder
+                    && Self::body_calls_builder(body, "async_call");
+                let suspend_kw = if is_suspend && !uses_flow_builder { "suspend " } else { "" };
+                let mut out = if let Some((recv, rem, _)) = receiver {
+                    format!("{}{}{}fun{} {}.{}({}): {} {{\n", self.ind(), suspend_kw, fn_prefix, gen_str, recv, rem, ps.join(", "), ret)
+                } else {
+                    format!("{}{}{}fun{} {}({}): {} {{\n", self.ind(), suspend_kw, fn_prefix, gen_str, name, ps.join(", "), ret)
+                };
                 self.indent += 1;
                 self.scopes.push(std::collections::HashSet::new());
                 for p in params { self.declare(&p.name); }
@@ -3228,26 +4183,100 @@ impl KotlinGen {
                 self.current_fn_returns_nullable = prev_null;
                 self.current_fn_return_type = prev_rt;
                 self.scopes.pop();
-                out.push_str(&body_str);
+                if uses_flow_builder {
+                    // Wrap the entire body in `flow { ... }` and emit a return.
+                    out.push_str(&format!("{}return flow {{\n", self.ind()));
+                    out.push_str(&body_str);
+                    out.push_str(&format!("{}}}\n", self.ind()));
+                } else if uses_coroutine_scope {
+                    // Wrap the body in `coroutineScope { }` so nested `async`
+                    // / `launch` calls resolve against a receiver.
+                    out.push_str(&format!("{}return coroutineScope {{\n", self.ind()));
+                    // Strip the first `return ` from body_str since the outer
+                    // return is now on coroutineScope.
+                    let b = body_str.trim_start();
+                    let b = b.strip_prefix("return ").unwrap_or(b);
+                    out.push_str(&format!("{}{}", self.ind(), b));
+                    if !b.ends_with('\n') { out.push('\n'); }
+                    out.push_str(&format!("{}}}\n", self.ind()));
+                } else {
+                    out.push_str(&body_str);
+                }
                 if body_empty {
-                    out.push_str(&format!("{}return Unit\n", self.ind()));
+                    // Non-Unit return types need a value; use TODO() which
+                    // returns Nothing and is assignable everywhere. For Unit
+                    // returns, just `return Unit`.
+                    if ret == "Unit" {
+                        out.push_str(&format!("{}return Unit\n", self.ind()));
+                    } else {
+                        out.push_str(&format!("{}TODO()\n", self.ind()));
+                    }
                 }
                 self.indent -= 1;
                 out.push_str(&format!("{}}}", self.ind()));
                 out
             }
             Statement::StructDecl { name, fields, .. } => {
+                // Hoisted sealed-class variant: skip top-level emit; it's
+                // embedded in the sealed-class body via `nested_variants`.
+                if self.hoisted_variant_names.contains(name) {
+                    return String::new();
+                }
                 let real_fields: Vec<&crate::ast::Field> = fields.iter()
                     .filter(|f| !(f.name == "_empty" && matches!(&f.type_ann,
                         crate::ast::TypeExpr::Named(n) if n == "Any")))
                     .collect();
+                // If this struct is already emitted inline (abstract class
+                // merged with its impl), skip the separate decl.
+                if self.abstract_emitted.contains(name) {
+                    return String::new();
+                }
+                // If ALL fields are `_nst_X: Any` placeholders from nested
+                // class decls, emit as a sealed class with variants. Prefer
+                // the hoisted-variant field info when available.
+                let all_nst = !real_fields.is_empty() && real_fields.iter().all(|f|
+                    f.name.starts_with("_nst_")
+                    && matches!(&f.type_ann, TypeExpr::Named(n) if n == "Any"));
+                if all_nst {
+                    let mut out = format!("{}sealed class {} {{\n", self.ind(), name);
+                    self.indent += 1;
+                    // Lookup table: hoisted variants of this parent.
+                    let hoisted_for_parent: std::collections::HashMap<String, Vec<(String, String)>> =
+                        self.nested_variants.get(name).cloned().unwrap_or_default()
+                            .into_iter().collect();
+                    for f in &real_fields {
+                        let raw = &f.name[5..];  // strip `_nst_`
+                        let variant = Self::pascal_k(raw);
+                        if let Some(variant_fields) = hoisted_for_parent.get(&variant) {
+                            if !variant_fields.is_empty() {
+                                let fs: Vec<String> = variant_fields.iter()
+                                    .map(|(fname, ftype)| format!("val {}: {}", fname, ftype))
+                                    .collect();
+                                out.push_str(&format!("{}data class {}({}) : {}()\n",
+                                    self.ind(), variant, fs.join(", "), name));
+                                continue;
+                            }
+                        }
+                        out.push_str(&format!("{}object {} : {}()\n", self.ind(), variant, name));
+                    }
+                    self.indent -= 1;
+                    out.push_str(&format!("{}}}", self.ind()));
+                    return out;
+                }
                 if real_fields.is_empty() {
                     return format!("{}class {}", self.ind(), name);
                 }
                 let fs: Vec<String> = real_fields.iter().map(|f| {
-                    format!("val {}: {}", f.name, self.neb_type(&f.type_ann))
+                    let t = self.inferred_field_types
+                        .get(&(name.clone(), f.name.clone()))
+                        .cloned()
+                        .unwrap_or_else(|| self.neb_type(&f.type_ann));
+                    format!("val {}: {}", f.name, t)
                 }).collect();
-                format!("{}data class {}({})", self.ind(), name, fs.join(", "))
+                let gen = if self.structs_with_inferred_generic.contains(name) {
+                    "<T>".to_string()
+                } else { String::new() };
+                format!("{}data class {}{}({})", self.ind(), name, gen, fs.join(", "))
             }
             Statement::EnumDecl { name, variants, .. } => {
                 let mut out = format!("{}sealed class {} {{\n", self.ind(), name);
@@ -3301,11 +4330,23 @@ impl KotlinGen {
                 // preserve wildcard/short package names.
                 let mut parts: Vec<String> = path.iter().cloned().collect();
                 if let Some(last) = parts.last_mut() {
-                    if last != "*" && last.chars().next().map_or(false, |c| c.is_ascii_lowercase()) {
+                    let short = matches!(last.as_str(),
+                        "io" | "fmt" | "fs" | "net" | "util" | "time" | "math"
+                        | "text" | "nio" | "lang" | "coroutines" | "flow");
+                    if last != "*" && !short && last.chars().next().map_or(false, |c| c.is_ascii_lowercase()) {
                         *last = Self::pascal_k(last);
                     }
                 }
-                format!("{}import {}", self.ind(), parts.join("."))
+                // Kotlin imports are commonly wildcarded; if the path ends in
+                // `coroutines` or `flow` and there's no explicit item, add `.*`.
+                let last = parts.last().cloned().unwrap_or_default();
+                let needs_star = matches!(last.as_str(), "coroutines" | "flow");
+                let joined = parts.join(".");
+                if needs_star {
+                    format!("{}import {}.*", self.ind(), joined)
+                } else {
+                    format!("{}import {}", self.ind(), joined)
+                }
             }
             Statement::Module { path } => {
                 format!("{}package {}", self.ind(), path.join("."))
@@ -3358,6 +4399,77 @@ impl KotlinGen {
                 out
             }
             Statement::ImplBlock { target, methods, .. } => {
+                // Trait-match wins over abstract: prefer `class T : Trait` when
+                // the impl method-set exactly matches a declared trait.
+                let trait_link = self.find_matching_trait(methods);
+                if let Some(trait_name) = &trait_link {
+                    if !self.structs_with_fields.contains(target) {
+                        self.abstract_emitted.insert(target.clone());
+                        let mut out = format!("{}class {} : {} {{\n", self.ind(), target, trait_name);
+                        self.indent += 1;
+                        for m in methods {
+                            if let Statement::FnDecl { name: mname, params, body, return_type, .. } = m {
+                                let ps: Vec<String> = params.iter().filter(|p| p.name != "sf").map(|p| {
+                                    let t = p.type_ann.as_ref().map(|t| self.neb_type(t)).unwrap_or_else(|| "Any".into());
+                                    format!("{}: {}", p.name, t)
+                                }).collect();
+                                let ret = return_type.as_ref().map(|t| self.neb_type(t)).unwrap_or_else(|| "Any".into());
+                                let body_empty = body.statements.is_empty() && body.expr.is_none();
+                                out.push_str(&format!("{}override fun {}({}): {} {{\n", self.ind(), mname, ps.join(", "), ret));
+                                self.indent += 1;
+                                self.scopes.push(std::collections::HashSet::new());
+                                for p in params { self.declare(&p.name); }
+                                let bs = self.gen_fn_block(body);
+                                self.scopes.pop();
+                                out.push_str(&bs);
+                                if body_empty {
+                                    if ret == "Unit" {
+                                        out.push_str(&format!("{}return Unit\n", self.ind()));
+                                    } else {
+                                        out.push_str(&format!("{}TODO()\n", self.ind()));
+                                    }
+                                }
+                                self.indent -= 1;
+                                out.push_str(&format!("{}}}\n", self.ind()));
+                            }
+                        }
+                        self.indent -= 1;
+                        out.push_str(&format!("{}}}", self.ind()));
+                        return out;
+                    }
+                }
+                // Abstract-class pattern: fieldless struct + impl with at
+                // least one empty-body method. Emit as `abstract class X`.
+                if self.abstract_emitted.contains(target) {
+                    let mut out = format!("{}abstract class {} {{\n", self.ind(), target);
+                    self.indent += 1;
+                    for m in methods {
+                        if let Statement::FnDecl { name: mname, params, body, return_type, .. } = m {
+                            let ps: Vec<String> = params.iter().filter(|p| p.name != "sf").map(|p| {
+                                let t = p.type_ann.as_ref().map(|t| self.neb_type(t)).unwrap_or_else(|| "Any".into());
+                                format!("{}: {}", p.name, t)
+                            }).collect();
+                            let ret = return_type.as_ref().map(|t| self.neb_type(t)).unwrap_or_else(|| "Any".into());
+                            let body_empty = body.statements.is_empty() && body.expr.is_none();
+                            if body_empty {
+                                out.push_str(&format!("{}abstract fun {}({}): {}\n", self.ind(), mname, ps.join(", "), ret));
+                            } else {
+                                out.push_str(&format!("{}open fun {}({}): {} {{\n", self.ind(), mname, ps.join(", "), ret));
+                                self.indent += 1;
+                                self.scopes.push(std::collections::HashSet::new());
+                                for p in params { self.declare(&p.name); }
+                                let bs = self.gen_fn_block(body);
+                                self.scopes.pop();
+                                out.push_str(&bs);
+                                self.indent -= 1;
+                                out.push_str(&format!("{}}}\n", self.ind()));
+                            }
+                        }
+                    }
+                    self.indent -= 1;
+                    out.push_str(&format!("{}}}", self.ind()));
+                    return out;
+                }
                 let mut out = String::new();
                 for m in methods {
                     if let Statement::FnDecl { name: mname, params, body, return_type, .. } = m {
@@ -3380,8 +4492,11 @@ impl KotlinGen {
                         // (methods likely reference them via implicit `this`).
                         let treat_as_extension = has_self
                             || self.structs_with_fields.contains(target);
+                        let target_with_gen = if self.structs_with_inferred_generic.contains(target) {
+                            format!("{}<T>", target)
+                        } else { target.clone() };
                         let prefix = if treat_as_extension {
-                            format!("fun{} {}.{}", gen_str, target, mname)
+                            format!("fun{} {}.{}", gen_str, target_with_gen, mname)
                         } else {
                             format!("fun{} {}_{}", gen_str, target, mname)
                         };
@@ -3394,7 +4509,11 @@ impl KotlinGen {
                         self.scopes.pop();
                         out.push_str(&bs);
                         if body_empty {
-                            out.push_str(&format!("{}return Unit\n", self.ind()));
+                            if ret == "Unit" {
+                                out.push_str(&format!("{}return Unit\n", self.ind()));
+                            } else {
+                                out.push_str(&format!("{}TODO()\n", self.ind()));
+                            }
                         }
                         self.indent -= 1;
                         out.push_str(&format!("{}}}\n", self.ind()));
@@ -3479,6 +4598,8 @@ impl KotlinGen {
             Expr::Ident(n) => {
                 if n == "sf" { "this".into() }
                 else if n.contains('_') && n.chars().next().map_or(false, |c| c.is_ascii_lowercase())
+                    && !self.known_fn_names.contains(n)
+                    && !self.is_declared(n)
                     && Self::is_likely_java_type(n)
                 { Self::pascal_k(n) }
                 else { n.clone() }
@@ -3498,6 +4619,30 @@ impl KotlinGen {
                 format!("{}{}", o, self.gen_expr(operand))
             }
             Expr::Call { callee, args } => {
+                // Coroutine builder sugar: `async_call(block)` (the IL
+                // placeholder for Kotlin's `async { body }`) re-emits as the
+                // trailing-closure form. The arg survives as either a Block
+                // or a Lambda depending on what Nebula's parser chose.
+                if let Expr::Ident(n) = callee.as_ref() {
+                    if n == "async_call" && args.len() == 1 {
+                        let body_expr = match &args[0].value {
+                            Expr::Lambda { body, .. } => Some(body.as_ref().clone()),
+                            Expr::Block(_) => Some(args[0].value.clone()),
+                            _ => None,
+                        };
+                        if let Some(b) = body_expr {
+                            let s = self.gen_expr(&b);
+                            // Strip outer `{ ... }` if gen_expr already wrapped.
+                            let stripped = s.trim();
+                            let inner = if stripped.starts_with('{') && stripped.ends_with('}') {
+                                stripped[1..stripped.len()-1].trim().to_string()
+                            } else {
+                                stripped.to_string()
+                            };
+                            return format!("async {{ {} }}", inner);
+                        }
+                    }
+                }
                 let a: Vec<String> = args.iter().map(|a| self.gen_expr(&a.value)).collect();
                 let c = self.gen_expr(callee);
                 if c == "prt" || c == "print" || c == "println" { format!("println({})", a.join(", ")) }
@@ -3516,6 +4661,8 @@ impl KotlinGen {
                         "local_time" => "LocalTime".into(),
                         "local_date_time" => "LocalDateTime".into(),
                         s if s.contains('_') && s.chars().next().map_or(false, |c| c.is_ascii_lowercase())
+                            && !self.known_fn_names.contains(s)
+                            && !self.is_declared(s)
                             && Self::is_likely_java_type(s) => Self::pascal_k(s),
                         _ => c,
                     };
@@ -3523,6 +4670,18 @@ impl KotlinGen {
                     // element types — add a turbofish from the current fn's
                     // return type.
                     if a.is_empty() && (converted == "mutableMapOf" || converted == "mutableListOf" || converted == "mutableSetOf") {
+                        if let Some(rt) = &self.current_fn_return_type {
+                            if let TypeExpr::Generic(_, args) = rt {
+                                let args_s: Vec<String> = args.iter().map(|t| self.neb_type(t)).collect();
+                                return format!("{}<{}>()", converted, args_s.join(", "));
+                            }
+                        }
+                    }
+                    // Empty `ArrayList()` / `Array()` / `HashMap()` / `HashSet()`
+                    // can't infer E — borrow the generic args from the
+                    // current fn return type if possible.
+                    if a.is_empty() && matches!(converted.as_str(),
+                        "ArrayList" | "HashMap" | "HashSet" | "LinkedList" | "TreeMap" | "TreeSet") {
                         if let Some(rt) = &self.current_fn_return_type {
                             if let TypeExpr::Generic(_, args) = rt {
                                 let args_s: Vec<String> = args.iter().map(|t| self.neb_type(t)).collect();
@@ -3553,6 +4712,17 @@ impl KotlinGen {
                     "is_na_n" => "isNaN".into(),
                     other => snake_to_camel(other),
                 };
+                // `filterIsInstance()` on an empty arg list can't infer T —
+                // borrow the turbofish from the enclosing fn's return type
+                // inner generic.
+                if m_owned == "filterIsInstance" && a.is_empty() {
+                    if let Some(TypeExpr::Generic(_, args)) = &self.current_fn_return_type {
+                        if let Some(t) = args.first() {
+                            let ts = self.neb_type(t);
+                            return format!("{}.filterIsInstance<{}>()", self.gen_expr(object), ts);
+                        }
+                    }
+                }
                 format!("{}.{}({})", self.gen_expr(object), m_owned, a.join(", "))
             }
             Expr::Tuple(items) => {
@@ -3572,11 +4742,18 @@ impl KotlinGen {
                     .collect();
                 format!("mutableMapOf({})", pairs.join(", "))
             }
-            Expr::TryCatch { try_block, error_binding, catch_block } => {
+            Expr::TryCatch { try_block, error_binding, catch_block, finally_block } => {
                 let mut out = String::from("try {\n");
                 self.indent += 1; out.push_str(&self.gen_block(try_block)); self.indent -= 1;
-                out.push_str(&format!("{}}} catch ({}: Exception) {{\n", self.ind(), error_binding));
-                self.indent += 1; out.push_str(&self.gen_block(catch_block)); self.indent -= 1;
+                let has_catch = !catch_block.statements.is_empty() || catch_block.expr.is_some() || error_binding != "_";
+                if has_catch {
+                    out.push_str(&format!("{}}} catch ({}: Exception) {{\n", self.ind(), error_binding));
+                    self.indent += 1; out.push_str(&self.gen_block(catch_block)); self.indent -= 1;
+                }
+                if let Some(fb) = finally_block {
+                    out.push_str(&format!("{}}} finally {{\n", self.ind()));
+                    self.indent += 1; out.push_str(&self.gen_block(fb)); self.indent -= 1;
+                }
                 out.push_str(&format!("{}}}", self.ind()));
                 out
             }
@@ -3597,8 +4774,17 @@ impl KotlinGen {
             }
             Expr::Lambda { params, body } => {
                 let ps: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
-                if ps.is_empty() { format!("{{ {} }}", self.gen_expr(body)) }
-                else { format!("{{ {} -> {} }}", ps.join(", "), self.gen_expr(body)) }
+                // If the body is a Block, inline its statements inside the
+                // single pair of `{ ... }` so the lambda body is the block's
+                // contents, not a nested lambda.
+                let body_str = if let Expr::Block(b) = body.as_ref() {
+                    let mut parts: Vec<String> = Vec::new();
+                    for s in &b.statements { parts.push(self.gen_stmt(s).trim_start().to_string()); }
+                    if let Some(e) = &b.expr { parts.push(self.gen_expr(e)); }
+                    parts.join("; ")
+                } else { self.gen_expr(body) };
+                if ps.is_empty() { format!("{{ {} }}", body_str) }
+                else { format!("{{ {} -> {} }}", ps.join(", "), body_str) }
             }
             Expr::Block(block) => {
                 let mut out = String::from("{\n");
@@ -3647,23 +4833,48 @@ impl KotlinGen {
             Expr::List(items) => {
                 let i: Vec<String> = items.iter().map(|e| self.gen_expr(e)).collect();
                 if items.is_empty() {
-                    "mutableListOf<Any>()".into()
+                    // Default element type is Any, but if the enclosing fn's
+                    // return is List<T>, prefer that so `out.add(...)` type-checks.
+                    let elem = self.current_fn_return_type.as_ref().and_then(|rt| {
+                        if let TypeExpr::Generic(n, args) = rt {
+                            if matches!(n.as_str(), "List" | "Array" | "MutableList" | "Vec") {
+                                return args.first().map(|t| self.neb_type(t));
+                            }
+                        }
+                        None
+                    }).unwrap_or_else(|| "Any".into());
+                    format!("mutableListOf<{}>()", elem)
                 } else {
                     format!("mutableListOf({})", i.join(", "))
                 }
             }
             Expr::NilCoalesce { left, right } => format!("({} ?: {})", self.gen_expr(left), self.gen_expr(right)),
             Expr::Range { start, end, inclusive } => {
-                // Descending inclusive range `10..=0` → `10 downTo 0` in Kotlin.
-                if *inclusive {
-                    if let (Expr::IntLit(s), Expr::IntLit(e)) = (start.as_ref(), end.as_ref()) {
-                        if s > e {
-                            return format!("({} downTo {})", s, e);
-                        }
+                // Detect `start..end.step_by(N)` (parse-precedence artifact from
+                // Kotlin `a..b step N`): pull the step out and render as a
+                // Kotlin range with `step`.
+                let (end_expr, step_arg) = if let Expr::MethodCall { object, method, args } = end.as_ref() {
+                    if method == "step_by" && args.len() == 1 {
+                        (object.as_ref().clone(), Some(self.gen_expr(&args[0].value)))
+                    } else {
+                        ((**end).clone(), None)
                     }
-                    format!("({}..{})", self.gen_expr(start), self.gen_expr(end))
-                }
-                else { format!("({} until {})", self.gen_expr(start), self.gen_expr(end)) }
+                } else {
+                    ((**end).clone(), None)
+                };
+                let start_s = self.gen_expr(start);
+                let end_s = self.gen_expr(&end_expr);
+                // Descending inclusive range `10..=0` → `10 downTo 0` in Kotlin.
+                let core = if *inclusive {
+                    if let (Expr::IntLit(s), Expr::IntLit(e)) = (start.as_ref(), &end_expr) {
+                        if s > e {
+                            format!("({} downTo {})", s, e)
+                        } else { format!("({}..{})", start_s, end_s) }
+                    } else { format!("({}..{})", start_s, end_s) }
+                } else { format!("({} until {})", start_s, end_s) };
+                if let Some(step) = step_arg {
+                    format!("({} step {})", core, step)
+                } else { core }
             }
             Expr::Pipe { left, right } => {
                 if let Expr::Ident(n) = right.as_ref() { format!("{}({})", n, self.gen_expr(left)) }
@@ -3696,7 +4907,16 @@ impl KotlinGen {
                             out.push_str(&format!("{}else -> {}\n", self.ind(), self.gen_expr(&arm.body)));
                         }
                         Pattern::Literal(lit) => {
-                            out.push_str(&format!("{}{} -> {}\n", self.ind(), self.gen_expr(lit), self.gen_expr(&arm.body)));
+                            // `Parent.Variant` where Parent has nested_variants
+                            // → Kotlin sealed-class `when` needs `is Parent.Variant`.
+                            let rendered = self.gen_expr(lit);
+                            let needs_is = if let Expr::FieldAccess { object, .. } = lit {
+                                if let Expr::Ident(o) = object.as_ref() {
+                                    self.nested_variants.contains_key(o)
+                                } else { false }
+                            } else { false };
+                            let prefix = if needs_is { "is " } else { "" };
+                            out.push_str(&format!("{}{}{} -> {}\n", self.ind(), prefix, rendered, self.gen_expr(&arm.body)));
                         }
                         Pattern::Range(start, end, inclusive) => {
                             let op = if *inclusive { ".." } else { " until " };
@@ -3708,7 +4928,10 @@ impl KotlinGen {
                             // if the name path looks like `Enum.Name` with a capitalized
                             // last segment, emit that literal; otherwise add `is` prefix.
                             let path = name.replace('.', ".");
-                            out.push_str(&format!("{}{} -> {}\n", self.ind(), path, self.gen_expr(&arm.body)));
+                            let parent = name.split('.').next().unwrap_or("");
+                            let needs_is = self.nested_variants.contains_key(parent);
+                            let prefix = if needs_is { "is " } else { "" };
+                            out.push_str(&format!("{}{}{} -> {}\n", self.ind(), prefix, path, self.gen_expr(&arm.body)));
                         }
                     }
                 }
@@ -4127,11 +5350,18 @@ impl TsGen {
             }
             Expr::NilCoalesce { left, right } => format!("({} ?? {})", self.gen_expr(left), self.gen_expr(right)),
             Expr::Try(inner) => self.gen_expr(inner),
-            Expr::TryCatch { try_block, error_binding, catch_block } => {
+            Expr::TryCatch { try_block, error_binding, catch_block, finally_block } => {
                 let mut out = format!("{}try {{\n", self.ind());
                 self.indent += 1; out.push_str(&self.gen_block(try_block)); self.indent -= 1;
-                out.push_str(&format!("{}}} catch ({}) {{\n", self.ind(), error_binding));
-                self.indent += 1; out.push_str(&self.gen_block(catch_block)); self.indent -= 1;
+                let has_catch = !catch_block.statements.is_empty() || catch_block.expr.is_some() || error_binding != "_";
+                if has_catch {
+                    out.push_str(&format!("{}}} catch ({}) {{\n", self.ind(), error_binding));
+                    self.indent += 1; out.push_str(&self.gen_block(catch_block)); self.indent -= 1;
+                }
+                if let Some(fb) = finally_block {
+                    out.push_str(&format!("{}}} finally {{\n", self.ind()));
+                    self.indent += 1; out.push_str(&self.gen_block(fb)); self.indent -= 1;
+                }
                 out.push_str(&format!("{}}}", self.ind()));
                 out
             }
@@ -4168,6 +5398,10 @@ struct RustGen {
     /// Whether the current function returns `Vec<_>` — drives
     /// `.collect::<Vec<_>>()` wrapping on trailing iter-chain expressions.
     current_fn_returns_vec: bool,
+    /// Collect target turbofish for the current fn's return type, if the
+    /// body's trailing expression is an iter-chain. Ex: `Some("HashSet<_>")`
+    /// for `fn f() -> HashSet<X>`. `None` means no auto-collect.
+    current_fn_collect_target: Option<String>,
     /// The `Ok`-type of the current fn's Result return, if any. Used to
     /// emit a turbofish on `.parse()` so type inference picks a concrete
     /// numeric type: `s.parse::<i64>()?`.
@@ -4291,6 +5525,14 @@ impl RustGen {
         {
             prefix.push_str("use std::any::Any;\n");
         }
+        // std::io import when `io::` is used in body but not already imported.
+        // Source may have had `use std::io::{self, Read, Write}` and the `self`
+        // was lost during ingest; we resurrect it here so `io::Result` resolves.
+        if body.contains("io::") && !body.contains("use std::io;")
+            && !body.contains("std::io::{self")
+        {
+            prefix.push_str("use std::io;\n");
+        }
         let time_needs: Vec<&str> = ["Duration", "Instant"]
             .iter()
             .filter(|t| {
@@ -4391,6 +5633,68 @@ impl RustGen {
         }
     }
 
+    /// Recursively check whether an expression (inside for/if/etc.) contains
+    /// a `return Some(...)` or `return None` statement.
+    fn expr_has_some_return(e: &Expr) -> bool {
+        fn check_block(b: &Block) -> bool {
+            for s in &b.statements {
+                if let Statement::Return(Some(re)) = s {
+                    let is_opt = matches!(re, Expr::Nil)
+                        || matches!(re, Expr::Call { callee, .. } if matches!(callee.as_ref(), Expr::Ident(n) if n == "Some" || n == "None"))
+                        || matches!(re, Expr::Ident(n) if n == "None");
+                    if is_opt { return true; }
+                }
+                if let Statement::Expr(se) = s {
+                    if RustGen::expr_has_some_return(se) { return true; }
+                }
+            }
+            if let Some(e) = &b.expr { if RustGen::expr_has_some_return(e) { return true; } }
+            false
+        }
+        match e {
+            Expr::For { body, .. } | Expr::While { body, .. } | Expr::Loop { body } => check_block(body),
+            Expr::If { then_block, else_block, .. } => {
+                check_block(then_block) || else_block.as_ref().map_or(false, check_block)
+            }
+            Expr::Match { arms, .. } => arms.iter().any(|a| Self::expr_has_some_return(&a.body)),
+            Expr::Block(b) => check_block(b),
+            _ => false,
+        }
+    }
+
+    /// Detect if a fn body uses Option-return patterns. Matches when body
+    /// contains `return Some(...)`, `return None`, OR trails with `None`.
+    fn body_returns_option(body: &Block) -> bool {
+        fn is_some_or_none(e: &Expr) -> bool {
+            match e {
+                Expr::Nil => true,
+                Expr::Call { callee, .. } => matches!(callee.as_ref(),
+                    Expr::Ident(n) if n == "Some" || n == "None"),
+                Expr::Ident(n) => n == "None",
+                _ => false,
+            }
+        }
+        fn check_stmt(s: &Statement) -> bool {
+            if let Statement::Return(Some(e)) = s { return is_some_or_none(e); }
+            false
+        }
+        // Trailing expr `None` counts.
+        if let Some(e) = &body.expr {
+            if is_some_or_none(e) { return true; }
+        }
+        for s in &body.statements {
+            if check_stmt(s) { return true; }
+            // Recurse into nested blocks
+            match s {
+                Statement::Expr(e) | Statement::Return(Some(e)) => {
+                    if Self::expr_has_some_return(e) { return true; }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
     /// Walk a block's statements + trailing expression, collecting ident
     /// names that appear as `Call { callee: Ident(n) }` anywhere inside.
     /// Used to detect which generic-typed parameters are invoked as
@@ -4473,8 +5777,11 @@ impl RustGen {
                 Self::scan_callable_expr(subject, out);
                 for arm in arms { Self::scan_callable_expr(&arm.body, out); }
             }
-            Expr::TryCatch { try_block, catch_block, .. } => {
+            Expr::TryCatch { try_block, catch_block, finally_block, .. } => {
                 Self::scan_callable_idents(&try_block.statements, &try_block.expr.clone().map(|e| e), out);
+                if let Some(fb) = finally_block {
+                    Self::scan_callable_idents(&fb.statements, &fb.expr.clone().map(|e| e), out);
+                }
                 Self::scan_callable_idents(&catch_block.statements, &catch_block.expr.clone().map(|e| e), out);
             }
             Expr::Lambda { body, .. } => Self::scan_callable_expr(body, out),
@@ -4672,6 +5979,31 @@ impl RustGen {
         }
     }
 
+    /// Walk a method-call chain and report whether it yields `&T`, so a
+    /// terminal `.collect::<Vec<T>>()` benefits from `.copied()`. Chains that
+    /// start from a `Range` expr or `.into_iter()` yield owned values and
+    /// should NOT get `.copied()` inserted. A bare identifier root means a
+    /// `.iter()` will be auto-inserted at render time, so assume refs.
+    fn chain_yields_references(e: &Expr) -> bool {
+        let mut cur = e;
+        loop {
+            match cur {
+                Expr::MethodCall { object, method, .. } => {
+                    if matches!(method.as_str(), "iter" | "values" | "keys") {
+                        return true;
+                    }
+                    if matches!(method.as_str(), "into_iter" | "drain") {
+                        return false;
+                    }
+                    cur = object;
+                }
+                Expr::Range { .. } => return false,
+                Expr::Ident(_) | Expr::FieldAccess { .. } => return true,
+                _ => return false,
+            }
+        }
+    }
+
     /// Lowercase stdlib type identifiers that lost their case at ingest.
     fn rust_type_rename(s: &str) -> Option<&'static str> {
         Some(match s {
@@ -4742,6 +6074,10 @@ impl RustGen {
                 "String" | "Str" => "String".into(),
                 "Bool" => "bool".into(),
                 "Char" => "char".into(), "Nil" => "()".into(),
+                // `Any` in return position is an opaque concrete type the
+                // caller doesn't need to name. `impl std::any::Any` satisfies
+                // that contract and compiles for any single underlying type.
+                "Any" if !as_param => "impl std::any::Any".into(),
                 // Unsized types that must be passed by reference.
                 "Path" if as_param => "&Path".into(),
                 "str" if as_param => "&str".into(),
@@ -4843,12 +6179,29 @@ impl RustGen {
                 let ps: Vec<String> = params.iter().filter(|p| p.name != "sf")
                     .map(|p| {
                         let t = p.type_ann.as_ref().map(|t| self.neb_type_param(t)).unwrap_or("_".into());
+                        // Display/Debug `fn fmt(&self, f: fmt::Formatter) -> fmt::Result`
+                        // must take `&mut fmt::Formatter`. Source-side `&mut` was
+                        // lost on ingest; re-insert here when name + shape match.
+                        let is_formatter = name == "fmt"
+                            && (t == "fmt::Formatter" || t == "Formatter");
+                        if is_formatter {
+                            return format!("{}: &mut {}", p.name, t);
+                        }
                         let needs_mut = matches!(io_method_calls_pre.get(&p.name),
                             Some(b) if *b == "std::io::Write");
                         let prefix = if needs_mut { "mut " } else { "" };
                         format!("{}{}: {}", prefix, p.name, t)
                     }).collect();
-                let ret = return_type.as_ref().map(|t| format!(" -> {}", self.neb_type(t))).unwrap_or_default();
+                // Detect `return Some(...)` / trailing `None` in body — IL
+                // lost the `Option<T>` wrapping on the return type; wrap here.
+                let body_uses_option_returns = Self::body_returns_option(body);
+                let ret_rendered = return_type.as_ref().map(|t| self.neb_type(t));
+                let ret = match (&ret_rendered, body_uses_option_returns) {
+                    (Some(r), true) if !r.starts_with("Option<") && !r.starts_with("Result<")
+                        => format!(" -> Option<{}>", r),
+                    (Some(r), _) => format!(" -> {}", r),
+                    (None, _) => String::new(),
+                };
                 let mut generic_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
                 for p in params.iter().filter(|p| p.name != "sf") {
                     if let Some(t) = &p.type_ann { Self::collect_generics(t, &mut generic_set); }
@@ -4939,11 +6292,33 @@ impl RustGen {
                     };
                 let prev_ret = self.current_fn_returns_string;
                 let prev_vec = self.current_fn_returns_vec;
+                let prev_collect = self.current_fn_collect_target.clone();
                 let prev_ok = self.current_fn_result_ok_type.clone();
                 self.current_fn_returns_string = matches!(return_type,
                     Some(TypeExpr::Named(n)) if n == "String" || n == "Str");
                 self.current_fn_returns_vec = matches!(return_type,
                     Some(TypeExpr::Generic(n, _)) if n == "List" || n == "Vec" || n == "Array");
+                self.current_fn_collect_target = match return_type {
+                    Some(TypeExpr::Generic(n, _)) if n == "List" || n == "Vec" || n == "Array"
+                        => Some("Vec<_>".into()),
+                    Some(TypeExpr::Generic(n, args)) if n == "HashSet" || n == "Set"
+                        => Some(format!("HashSet<{}>", args.first().map(|a| self.neb_type(a)).unwrap_or_else(|| "_".into()))),
+                    Some(TypeExpr::Generic(n, args)) if n == "BTreeSet"
+                        => Some(format!("BTreeSet<{}>", args.first().map(|a| self.neb_type(a)).unwrap_or_else(|| "_".into()))),
+                    Some(TypeExpr::Generic(n, args)) if n == "HashMap" || n == "Map" || n == "Dict"
+                        => {
+                            let k = args.first().map(|a| self.neb_type(a)).unwrap_or_else(|| "_".into());
+                            let v = args.get(1).map(|a| self.neb_type(a)).unwrap_or_else(|| "_".into());
+                            Some(format!("HashMap<{}, {}>", k, v))
+                        }
+                    Some(TypeExpr::Generic(n, args)) if n == "BTreeMap"
+                        => {
+                            let k = args.first().map(|a| self.neb_type(a)).unwrap_or_else(|| "_".into());
+                            let v = args.get(1).map(|a| self.neb_type(a)).unwrap_or_else(|| "_".into());
+                            Some(format!("BTreeMap<{}, {}>", k, v))
+                        }
+                    _ => None,
+                };
                 self.current_fn_result_ok_type = match return_type {
                     Some(TypeExpr::Generic(n, args)) if n == "Result" => {
                         args.first().map(|a| self.neb_type(a))
@@ -4963,6 +6338,7 @@ impl RustGen {
                 self.scopes.pop();
                 self.current_fn_returns_string = prev_ret;
                 self.current_fn_returns_vec = prev_vec;
+                self.current_fn_collect_target = prev_collect;
                 self.current_fn_result_ok_type = prev_ok;
                 self.string_params = prev_strings;
                 out.push_str(&format!("{}}}", self.ind()));
@@ -5032,8 +6408,15 @@ impl RustGen {
                         let mut ps: Vec<String> = Vec::new();
                         if has_self { ps.push("&self".into()); }
                         for p in params.iter().filter(|p| p.name != "sf") {
-                            let t = p.type_ann.as_ref().map(|t| self.neb_type(t)).unwrap_or_else(|| "_".into());
-                            ps.push(format!("{}: {}", p.name, t));
+                            let t = p.type_ann.as_ref().map(|t| self.neb_type_param(t)).unwrap_or_else(|| "_".into());
+                            // Display/Debug `fmt` must take `&mut Formatter`.
+                            if mname == "fmt"
+                                && (t == "fmt::Formatter" || t == "Formatter")
+                            {
+                                ps.push(format!("{}: &mut {}", p.name, t));
+                            } else {
+                                ps.push(format!("{}: {}", p.name, t));
+                            }
                         }
                         let ret = return_type.as_ref().map(|t| format!(" -> {}", self.neb_type(t))).unwrap_or_default();
                         // Recover generics from param/return types
@@ -5117,11 +6500,7 @@ impl RustGen {
                 }
                 format!("{}{} {} {};", self.ind(), self.gen_expr(target), o, self.gen_expr(value))
             }
-            Statement::Use { path, .. } => {
-                // PascalCase the last segment when it looks like a type
-                // (snake_case or all-lowercase), so `std.fmt.display` →
-                // `std::fmt::Display`. Leave already-PascalCase or short
-                // stdlib-module names (`io`, `fmt`) alone.
+            Statement::Use { path, items, alias } => {
                 let mut parts: Vec<String> = path.iter().cloned().collect();
                 if let Some(last) = parts.last_mut() {
                     let short_stdlib = matches!(last.as_str(),
@@ -5134,7 +6513,21 @@ impl RustGen {
                         *last = Self::pascal(last);
                     }
                 }
-                format!("{}use {};", self.ind(), parts.join("::"))
+                let base = parts.join("::");
+                if let Some(items) = items {
+                    let pitems: Vec<String> = items.iter().map(|i|
+                        if i.chars().next().map_or(false, |c| c.is_ascii_lowercase())
+                            && !matches!(i.as_str(),
+                                "io" | "fmt" | "fs" | "net" | "env" | "mem" | "str"
+                                | "vec" | "iter" | "cmp" | "ops")
+                        { Self::pascal(i) } else { i.clone() }
+                    ).collect();
+                    format!("{}use {}::{{{}}};", self.ind(), base, pitems.join(", "))
+                } else if let Some(alias) = alias {
+                    format!("{}use {} as {};", self.ind(), base, alias)
+                } else {
+                    format!("{}use {};", self.ind(), base)
+                }
             }
             Statement::LetDestructure { names, value, mutable } => {
                 let kw = if *mutable { "let mut" } else { "let" };
@@ -5152,22 +6545,30 @@ impl RustGen {
         let mut out = String::new();
         for s in &block.statements { out.push_str(&self.gen_stmt(s)); out.push('\n'); }
         if let Some(e) = &block.expr {
-            let needs_collect = self.current_fn_returns_vec && Self::is_iter_chain_tail(e);
+            let collect_target = self.current_fn_collect_target.clone();
+            let is_vec_target = collect_target.as_deref() == Some("Vec<_>");
+            let needs_collect = collect_target.is_some() && Self::is_iter_chain_tail(e);
             let needs_unwrap_default = matches!(e.as_ref(), Expr::MethodCall { method, .. }
-                if matches!(method.as_str(), "first" | "last" | "min" | "max" | "get"))
-                && !self.current_fn_returns_vec
+                if matches!(method.as_str(), "first" | "last" | "min" | "max" | "get" | "find"))
+                && !is_vec_target
                 && !matches!(e.as_ref(), Expr::Call { .. });
             // When collecting into `Vec<i64>`/`Vec<f64>` etc. from a Vec
             // reference iterator (e.g. `xs.iter().step_by(2).collect()`),
             // the element type is `&T` — insert `.copied()` first.
-            let needs_copied_before_collect = needs_collect
+            // Only do this for Vec<_>; HashSet/HashMap targets usually
+            // already get .cloned() / tuple map() in the chain.
+            let needs_copied_before_collect = needs_collect && is_vec_target
                 && matches!(e.as_ref(), Expr::MethodCall { method, .. }
-                    if !matches!(method.as_str(), "copied" | "cloned" | "map"));
+                    if !matches!(method.as_str(), "copied" | "cloned" | "map"))
+                && Self::chain_yields_references(e);
             let rendered = self.gen_expr(e);
-            let final_expr = if needs_collect && needs_copied_before_collect {
-                format!("{}.copied().collect::<Vec<_>>()", rendered)
-            } else if needs_collect {
-                format!("{}.collect::<Vec<_>>()", rendered)
+            let final_expr = if needs_collect {
+                let target = collect_target.as_deref().unwrap_or("Vec<_>");
+                if needs_copied_before_collect {
+                    format!("{}.copied().collect::<{}>()", rendered, target)
+                } else {
+                    format!("{}.collect::<{}>()", rendered, target)
+                }
             } else if needs_unwrap_default {
                 format!("{}.copied().unwrap_or_default()", rendered)
             } else { rendered };
@@ -5381,6 +6782,53 @@ impl RustGen {
                     else { format!("{}.iter()", obj_str) }
                 } else if needs_parens { format!("({})", obj_str) }
                 else { obj_str };
+                // `.step_by(e)` expects `usize`, but IL `Int` emits `i64`.
+                // Cast a non-literal arg. Literals inline fine either way.
+                if m == "step_by" && args.len() == 1 {
+                    let is_int_lit = matches!(&args[0].value, Expr::IntLit(_));
+                    if !is_int_lit {
+                        return format!("{}.step_by(({}) as usize)", obj_wrapped, a.join(", "));
+                    }
+                }
+                // `.enumerate()` yields `(usize, T)` but IL's `Int` target
+                // expects `i64`. Post-wrap with a cast so downstream consumers
+                // see `(i64, T)`. If we auto-inserted `.iter()`, the value
+                // slot is `&T`; copy it so downstream owned-T consumers work.
+                if m == "enumerate" {
+                    let iter_inserted = needs_iter && !already_iter;
+                    if iter_inserted {
+                        return format!("{}.enumerate().map(|(__i, __v)| (__i as i64, __v.clone()))", obj_wrapped);
+                    }
+                    return format!("{}.enumerate().map(|(__i, __v)| (__i as i64, __v))", obj_wrapped);
+                }
+                // `.zip(other)` — when object is an `.iter()` chain, the
+                // arg must also yield `&T` for the pair types to line up.
+                // Auto-insert `.iter()` on a bare-ident or field-access arg,
+                // then post-wrap `.map` to deref both components so
+                // downstream consumers see owned tuples.
+                if m == "zip" && args.len() == 1 {
+                    let iter_inserted = needs_iter && !already_iter;
+                    let arg_needs_iter = iter_inserted
+                        && matches!(&args[0].value, Expr::Ident(_) | Expr::FieldAccess { .. });
+                    if arg_needs_iter {
+                        return format!("{}.zip({}.iter()).map(|(&__x, &__y)| (__x, __y))", obj_wrapped, a[0]);
+                    }
+                }
+                // `.find(|x| pred)` on an iter() chain: the bound `x` is
+                // `&&T`, breaking numeric comparisons like `x > 0`. Rewrite
+                // the lambda header to double-deref via pattern: `|&&x|`.
+                if m == "find" && args.len() == 1 {
+                    let iter_inserted = needs_iter && !already_iter;
+                    if iter_inserted {
+                        if let Expr::Lambda { params: lp, body: lb } = &args[0].value {
+                            if lp.len() == 1 {
+                                let pname = &lp[0].name;
+                                let body_rendered = self.gen_expr(lb);
+                                return format!("{}.find(|&&{}| {})", obj_wrapped, pname, body_rendered);
+                            }
+                        }
+                    }
+                }
                 format!("{}.{}({})", obj_wrapped, m, a.join(", "))
             }
             Expr::FieldAccess { object, field } => {
@@ -5545,6 +6993,25 @@ impl RustGen {
 struct CGen {
     indent: usize,
     scopes: Vec<std::collections::HashSet<String>>,
+    /// User-defined struct/enum/typedef names; prevents `c_type` from
+    /// appending `*` to them (they're value types by default).
+    user_types: std::collections::HashSet<String>,
+    /// If the current fn returns `T*`, this holds the C rendering for T*.
+    /// Used to cast `malloc(...)` results to the expected pointer type.
+    current_fn_ret_ptr: Option<String>,
+    /// The C-rendered return type of the current fn (pointer or not). Used
+    /// to infer struct-literal tuple types.
+    current_fn_ret_raw: Option<String>,
+    /// Local idents whose C type is a pointer. `FieldAccess` on these uses
+    /// `->` instead of `.`, and the variable assigned from `malloc` etc.
+    /// ends up in this set.
+    ptr_idents: std::collections::HashSet<String>,
+    /// Map of struct-field-count → struct-name (unique matches only) so
+    /// top-level tuple initializers can be typed as that struct.
+    structs_by_arity: std::collections::HashMap<usize, String>,
+    /// Map of struct name → vec of field types (as TypeExpr). Used for
+    /// disambiguation when multiple structs share an arity.
+    struct_fields: std::collections::HashMap<String, Vec<TypeExpr>>,
 }
 
 impl CGen {
@@ -5562,8 +7029,75 @@ impl CGen {
     fn ind(&self) -> String { "    ".repeat(self.indent) }
 
     fn gen_program(&mut self, program: &Program) -> String {
-        let mut out = String::from("#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <math.h>\n\n");
+        // Pre-scan for user-defined value types so c_type doesn't wrap them
+        // in `*`. Also build an arity → unique-struct-name map so top-level
+        // tuple initializers can pick the right struct type.
+        let mut arity_counts: std::collections::HashMap<usize, Vec<String>> = std::collections::HashMap::new();
+        for stmt in &program.statements {
+            match stmt {
+                Statement::StructDecl { name, fields, .. } => {
+                    self.user_types.insert(name.clone());
+                    self.struct_fields.insert(name.clone(), fields.iter().map(|f| f.type_ann.clone()).collect());
+                    arity_counts.entry(fields.len()).or_default().push(name.clone());
+                }
+                Statement::EnumDecl { name, .. }
+                | Statement::TypeAlias { name, .. } => {
+                    self.user_types.insert(name.clone());
+                }
+                _ => {}
+            }
+        }
+        for (arity, names) in arity_counts {
+            if names.len() == 1 {
+                self.structs_by_arity.insert(arity, names.into_iter().next().unwrap());
+            }
+        }
+        // Render body first so we can scan it for stdlib type references
+        // (va_list → <stdarg.h>, int64_t → <stdint.h>).
+        let mut body_scratch = String::new();
+        for stmt in &program.statements {
+            body_scratch.push_str(&self.gen_stmt(stmt));
+            body_scratch.push('\n');
+        }
+        let body_preview = body_scratch.to_string();
+        let mut out = String::from("#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <math.h>\n#include <stdint.h>\n");
+        if body_preview.contains("va_list") || body_preview.contains("va_start") || body_preview.contains("va_end") {
+            out.push_str("#include <stdarg.h>\n");
+        }
+        if body_preview.contains("errno") {
+            out.push_str("#include <errno.h>\n");
+        }
+        if body_preview.contains("FILE") || body_preview.contains("fopen")
+            || body_preview.contains("fclose") || body_preview.contains("fprintf")
+            || body_preview.contains("fscanf") || body_preview.contains("stderr")
+            || body_preview.contains("stdout") || body_preview.contains("stdin")
+        {
+            // stdio.h is already included above but keep the block
+            // consistent for future stdio-only additions.
+        }
+        out.push('\n');
 
+        // Emit TypeAlias FIRST so struct fields and fn sigs can reference.
+        // For an Any-typed alias, try to infer a function-pointer signature
+        // by finding a typed param with this alias that gets called.
+        for stmt in &program.statements {
+            if let Statement::TypeAlias { name, type_expr } = stmt {
+                let is_any = matches!(type_expr, TypeExpr::Named(n) if n == "Any");
+                if is_any {
+                    if let Some((ret, arg_types)) = Self::infer_c_fnptr_signature(program, name) {
+                        let args_s = if arg_types.is_empty() { "void".into() }
+                            else { arg_types.join(", ") };
+                        out.push_str(&format!("typedef {} (*{})({});\n", ret, name, args_s));
+                        continue;
+                    }
+                }
+                let t = match type_expr {
+                    TypeExpr::Named(n) if n == "Any" => "void*".into(),
+                    _ => self.c_type(type_expr),
+                };
+                out.push_str(&format!("typedef {} {};\n", t, name));
+            }
+        }
         // Forward declarations + struct/enum definitions first
         for stmt in &program.statements {
             match stmt {
@@ -5578,7 +7112,7 @@ impl CGen {
                     let simple = variants.iter().all(|v| v.fields.is_empty());
                     if simple {
                         let vs: Vec<String> = variants.iter().enumerate()
-                            .map(|(i, v)| format!("{}_{} = {}", name, v.name, i))
+                            .map(|(i, v)| format!("{} = {}", v.name, i))
                             .collect();
                         out.push_str(&format!("typedef enum {{ {} }} {};\n\n", vs.join(", "), name));
                     }
@@ -5590,11 +7124,144 @@ impl CGen {
         // Functions and statements
         for stmt in &program.statements {
             match stmt {
-                Statement::StructDecl { .. } | Statement::EnumDecl { .. } => {} // already handled
+                Statement::StructDecl { .. } | Statement::EnumDecl { .. }
+                | Statement::TypeAlias { .. } => {} // already handled
                 _ => { out.push_str(&self.gen_stmt(stmt)); out.push('\n'); }
             }
         }
         out
+    }
+
+    /// Try to infer a C function-pointer signature for an `Any` typedef by
+    /// scanning the program for a `fn(alias_param: NAME, ...)` that calls
+    /// `alias_param(args)`. Returns `(return_type, arg_types)`.
+    fn infer_c_fnptr_signature(program: &Program, alias_name: &str) -> Option<(String, Vec<String>)> {
+        for stmt in &program.statements {
+            if let Statement::FnDecl { params, return_type, body, .. } = stmt {
+                for p in params {
+                    let matches_alias = matches!(&p.type_ann,
+                        Some(TypeExpr::Named(n)) if n == alias_name);
+                    if !matches_alias { continue; }
+                    // Scan body for Call(Ident(p.name), args)
+                    let mut arg_tys: Option<Vec<String>> = None;
+                    Self::scan_call_on_ident(body, &p.name, params, &mut arg_tys);
+                    if let Some(tys) = arg_tys {
+                        let gen = CGen {
+                            indent: 0,
+                            scopes: vec![std::collections::HashSet::new()],
+                            user_types: std::collections::HashSet::new(),
+                            current_fn_ret_ptr: None,
+                            current_fn_ret_raw: None,
+                            ptr_idents: std::collections::HashSet::new(),
+                            structs_by_arity: std::collections::HashMap::new(),
+                            struct_fields: std::collections::HashMap::new(),
+                        };
+                        let ret_rendered = return_type.as_ref().map(|t| gen.c_type(t)).unwrap_or_else(|| "void".into());
+                        return Some((ret_rendered, tys));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn scan_call_on_ident(body: &Block, name: &str, params: &[Param], out: &mut Option<Vec<String>>) {
+        fn walk_e(e: &Expr, name: &str, params: &[Param], out: &mut Option<Vec<String>>) {
+            if let Expr::Call { callee, args } = e {
+                if matches!(callee.as_ref(), Expr::Ident(n) if n == name) {
+                    let tys: Vec<String> = args.iter().map(|a| {
+                        if let Expr::Ident(n) = &a.value {
+                            if let Some(p) = params.iter().find(|p| p.name == *n) {
+                                if let Some(t) = &p.type_ann {
+                                    let gen = CGen {
+                                        indent: 0,
+                                        scopes: vec![std::collections::HashSet::new()],
+                                        user_types: std::collections::HashSet::new(),
+                                        current_fn_ret_ptr: None,
+                                        current_fn_ret_raw: None,
+                                        ptr_idents: std::collections::HashSet::new(),
+                                        structs_by_arity: std::collections::HashMap::new(),
+                                        struct_fields: std::collections::HashMap::new(),
+                                    };
+                                    return gen.c_type(t);
+                                }
+                            }
+                        }
+                        "int64_t".to_string()
+                    }).collect();
+                    *out = Some(tys);
+                    return;
+                }
+            }
+            match e {
+                Expr::Call { callee, args } => { walk_e(callee, name, params, out); for a in args { walk_e(&a.value, name, params, out); } }
+                Expr::MethodCall { object, args, .. } => { walk_e(object, name, params, out); for a in args { walk_e(&a.value, name, params, out); } }
+                Expr::BinaryOp { left, right, .. } => { walk_e(left, name, params, out); walk_e(right, name, params, out); }
+                Expr::UnaryOp { operand, .. } => walk_e(operand, name, params, out),
+                Expr::FieldAccess { object, .. } => walk_e(object, name, params, out),
+                Expr::Index { object, index } => { walk_e(object, name, params, out); walk_e(index, name, params, out); }
+                Expr::If { condition, then_block, else_block } => {
+                    walk_e(condition, name, params, out);
+                    walk_b(then_block, name, params, out);
+                    if let Some(b) = else_block { walk_b(b, name, params, out); }
+                }
+                Expr::Block(b) => walk_b(b, name, params, out),
+                _ => {}
+            }
+        }
+        fn walk_b(b: &Block, name: &str, params: &[Param], out: &mut Option<Vec<String>>) {
+            for s in &b.statements { walk_s(s, name, params, out); if out.is_some() { return; } }
+            if let Some(e) = &b.expr { walk_e(e, name, params, out); }
+        }
+        fn walk_s(s: &Statement, name: &str, params: &[Param], out: &mut Option<Vec<String>>) {
+            match s {
+                Statement::Expr(e) | Statement::Return(Some(e)) | Statement::Throw(Some(e)) | Statement::Break(Some(e)) => walk_e(e, name, params, out),
+                Statement::Let { value, .. } | Statement::Const { value, .. } | Statement::Mut { value, .. } => walk_e(value, name, params, out),
+                Statement::Assignment { target, value, .. } => { walk_e(target, name, params, out); walk_e(value, name, params, out); }
+                _ => {}
+            }
+        }
+        walk_b(body, name, params, out);
+    }
+
+    /// Scan a block's AST for any Call/Ident that matches `name`. Used to
+    /// detect variadic-function hints (`va_start`) and similar.
+    fn c_body_text_contains(body: &Block, name: &str) -> bool {
+        fn walk_e(e: &Expr, name: &str) -> bool {
+            match e {
+                Expr::Ident(n) => n == name,
+                Expr::Call { callee, args } => {
+                    walk_e(callee, name) || args.iter().any(|a| walk_e(&a.value, name))
+                }
+                Expr::MethodCall { object, args, .. } => {
+                    walk_e(object, name) || args.iter().any(|a| walk_e(&a.value, name))
+                }
+                Expr::BinaryOp { left, right, .. } => walk_e(left, name) || walk_e(right, name),
+                Expr::UnaryOp { operand, .. } => walk_e(operand, name),
+                Expr::FieldAccess { object, .. } => walk_e(object, name),
+                Expr::If { condition, then_block, else_block } => {
+                    walk_e(condition, name)
+                        || walk_b(then_block, name)
+                        || else_block.as_ref().map_or(false, |b| walk_b(b, name))
+                }
+                Expr::Block(b) => walk_b(b, name),
+                _ => false,
+            }
+        }
+        fn walk_b(b: &Block, name: &str) -> bool {
+            for s in &b.statements { if walk_s(s, name) { return true; } }
+            if let Some(e) = &b.expr { return walk_e(e, name); }
+            false
+        }
+        fn walk_s(s: &Statement, name: &str) -> bool {
+            match s {
+                Statement::Expr(e) | Statement::Return(Some(e)) | Statement::Throw(Some(e)) | Statement::Break(Some(e)) => walk_e(e, name),
+                Statement::Let { value, .. } | Statement::Const { value, .. } | Statement::Mut { value, .. } => walk_e(value, name),
+                Statement::Assignment { target, value, .. } => walk_e(target, name) || walk_e(value, name),
+                _ => false,
+            }
+        }
+        walk_b(body, name)
     }
 
     fn c_type(&self, t: &TypeExpr) -> String {
@@ -5607,7 +7274,16 @@ impl CGen {
                 "Char" => "char".into(),
                 "Nil" => "void".into(),
                 "Any" => "void*".into(),
+                // Stdlib types that are NOT pointer-typed by default.
+                "va_list" | "size_t" | "ssize_t" | "time_t" | "clock_t" | "FILE"
+                | "int8_t" | "int16_t" | "int32_t" | "int64_t"
+                | "uint8_t" | "uint16_t" | "uint32_t" | "uint64_t"
+                | "intptr_t" | "uintptr_t" | "ptrdiff_t"
+                | "int" | "long" | "short" | "float" | "double"
+                | "unsigned" | "signed" | "bool" => n.clone(),
                 other if other.contains('.') => format!("{}*", other.replace('.', "_")),
+                // User-defined struct/enum/typedef names — don't wrap in `*`.
+                other if self.user_types.contains(other) => other.to_string(),
                 other => format!("{}*", other),
             },
             TypeExpr::Generic(name, args) => match name.as_str() {
@@ -5620,6 +7296,16 @@ impl CGen {
                 _ => format!("{}*", name),
             },
             TypeExpr::Option(inner) => format!("{}*", self.c_type(inner)),
+            TypeExpr::Function(params, ret) => {
+                // `Fn(T1, T2) -> R` → `R (*)(T1, T2)` anonymous fn-ptr.
+                // The caller must wrap this with the parameter name, e.g.
+                // `int64_t (*f)(int64_t)`. Emit a placeholder form; gen_stmt
+                // for FnDecl param rendering interposes the name.
+                let ps: Vec<String> = params.iter().map(|t| self.c_type(t)).collect();
+                let ret_s = self.c_type(ret);
+                let ret_s = if ret_s == "void" { "void".to_string() } else { ret_s };
+                format!("{} (*{{}})({})", ret_s, ps.join(", "))
+            }
             _ => "void*".into(),
         }
     }
@@ -5628,30 +7314,95 @@ impl CGen {
         match stmt {
             Statement::Let { name, type_ann, value } | Statement::Const { name, type_ann, value } => {
                 let t = type_ann.as_ref().map(|t| self.c_type(t)).unwrap_or_else(|| self.infer_c_type(value));
+                // Tuple RHS + no explicit type → find a struct whose field
+                // count matches AND whose field types are compatible with
+                // the tuple's elements. Recovers `ShapeVTable circle_vt =
+                // { ... }` from IL `circle_vt := (a, b)`.
+                let t = if type_ann.is_none() {
+                    if let Expr::Tuple(items) = value {
+                        // Pick a unique struct by arity; otherwise look for
+                        // the struct whose field types look right (fn idents
+                        // → Any fields, etc.).
+                        let struct_name = self.structs_by_arity.get(&items.len()).cloned()
+                            .or_else(|| {
+                                // Try to find a struct with matching arity
+                                // whose fields are all `Any` when all tuple
+                                // elements are bare idents (callable refs).
+                                let all_idents = items.iter().all(|i| matches!(i, Expr::Ident(_)));
+                                if !all_idents { return None; }
+                                let mut candidates: Vec<String> = Vec::new();
+                                for (sname, tys) in &self.struct_fields {
+                                    if tys.len() != items.len() { continue; }
+                                    let all_any = tys.iter().all(|t| matches!(t, TypeExpr::Named(n) if n == "Any"));
+                                    if all_any { candidates.push(sname.clone()); }
+                                }
+                                if candidates.len() == 1 { Some(candidates.into_iter().next().unwrap()) } else { None }
+                            });
+                        if let Some(sname) = struct_name {
+                            sname
+                        } else { t }
+                    } else { t }
+                } else { t };
+                if t.ends_with('*') && t != "void*" { self.ptr_idents.insert(name.clone()); }
                 let v = self.gen_expr(value);
                 self.declare(name);
                 format!("{}{} {} = {};", self.ind(), t, name, v)
             }
             Statement::Mut { name, type_ann, value } => {
                 let t = type_ann.as_ref().map(|t| self.c_type(t)).unwrap_or_else(|| self.infer_c_type(value));
-                let v = self.gen_expr(value);
+                if t.ends_with('*') && t != "void*" { self.ptr_idents.insert(name.clone()); }
                 self.declare(name);
+                // `mt name: T` with no explicit value → bare decl.
+                if type_ann.is_some() && matches!(value, Expr::Nil) {
+                    return format!("{}{} {};", self.ind(), t, name);
+                }
+                let v = self.gen_expr(value);
                 format!("{}{} {} = {};", self.ind(), t, name, v)
             }
             Statement::FnDecl { name, params, return_type, body, .. } => {
                 let ret = return_type.as_ref().map(|t| self.c_type(t)).unwrap_or("void".into());
-                let ps: Vec<String> = params.iter().filter(|p| p.name != "sf")
+                let mut ps: Vec<String> = params.iter().filter(|p| p.name != "sf")
                     .map(|p| {
                         let t = p.type_ann.as_ref().map(|t| self.c_type(t)).unwrap_or("void*".into());
+                        // Function-pointer types carry a `{}` placeholder for
+                        // the param name — substitute and return directly.
+                        if t.contains("(*{})") {
+                            return t.replace("{}", &p.name);
+                        }
                         format!("{} {}", t, p.name)
                     }).collect();
+                // Variadic detection: if body references `va_start`, the fn
+                // must have `, ...` trailing params. Ingest lost the `...`
+                // marker; recover at codegen.
+                let body_uses_va_start = Self::c_body_text_contains(body, "va_start");
+                if body_uses_va_start { ps.push("...".to_string()); }
                 self.scopes.push(std::collections::HashSet::new());
                 for p in params { self.declare(&p.name); }
+                // Track pointer-typed params so `p.field` emits as `p->field`.
+                let saved_ptr_idents = self.ptr_idents.clone();
+                for p in params.iter().filter(|p| p.name != "sf") {
+                    if let Some(t) = &p.type_ann {
+                        let rendered = self.c_type(t);
+                        if rendered.ends_with('*') && rendered != "void*" && rendered != "const char*" && rendered != "char*" {
+                            self.ptr_idents.insert(p.name.clone());
+                        }
+                    }
+                }
+                // Track pointer-return for malloc cast recovery.
+                let saved_ret_ptr = self.current_fn_ret_ptr.clone();
+                self.current_fn_ret_ptr = if ret.ends_with('*') && ret != "void*" {
+                    Some(ret.clone())
+                } else { None };
+                let saved_ret_raw = self.current_fn_ret_raw.clone();
+                self.current_fn_ret_raw = Some(ret.clone());
                 let mut out = format!("{}{} {}({}) {{\n", self.ind(), ret, name, ps.join(", "));
                 self.indent += 1;
                 out.push_str(&self.gen_block(body));
                 self.indent -= 1;
                 self.scopes.pop();
+                self.current_fn_ret_ptr = saved_ret_ptr;
+                self.current_fn_ret_raw = saved_ret_raw;
+                self.ptr_idents = saved_ptr_idents;
                 out.push_str(&format!("{}}}\n", self.ind()));
                 out
             }
@@ -5686,6 +7437,15 @@ impl CGen {
             }
             Statement::LetDestructure { names, value, .. } => {
                 format!("{}/* destructure */ {} = {};", self.ind(), names.join(", "), self.gen_expr(value))
+            }
+            Statement::TypeAlias { name, type_expr } => {
+                // `typedef T name;` — lossy for function-pointer aliases (IL
+                // flattens to `Any`), but enough to resolve `name` as a symbol.
+                let t = match type_expr {
+                    TypeExpr::Named(n) if n == "Any" => "void*".into(),
+                    _ => self.c_type(type_expr),
+                };
+                format!("{}typedef {} {};", self.ind(), t, name)
             }
             // Iter-24 Bug D: explicit Use/Module handlers for C.
             Statement::Use { path, .. } => {
@@ -5745,8 +7505,54 @@ impl CGen {
                 UnaryOp::Not => "int".into(),
                 _ => self.infer_c_type(operand),
             },
-            Expr::Index { .. } | Expr::FieldAccess { .. } | Expr::Call { .. }
+            // Infer return types of well-known stdlib calls so
+            // `FILE *f = fopen(...)` doesn't get typed as int64_t.
+            Expr::Call { callee, args } => {
+                if let Expr::Ident(name) = callee.as_ref() {
+                    // `__cast("T", v)` — take the first arg's literal as the
+                    // target type. Drives `c := __cast("const Circle*", s)` to
+                    // declare `c` as `const Circle*`.
+                    if name == "__cast" && args.len() == 2 {
+                        if let Expr::StringLit(s) = &args[0].value {
+                            let ty: String = s.parts.iter().filter_map(|p| match p {
+                                StringPart::Literal(t) => Some(t.as_str()),
+                                _ => None,
+                            }).collect();
+                            if !ty.is_empty() { return ty; }
+                        }
+                    }
+                    match name.as_str() {
+                        "fopen" | "freopen" | "tmpfile" => return "FILE*".into(),
+                        // Default `malloc` family to the enclosing fn's
+                        // pointer return type so `Account *a = malloc(...)`
+                        // compiles. Falls back to void* when no pointer
+                        // context is known.
+                        "malloc" | "calloc" | "realloc" | "alloca" => {
+                            return self.current_fn_ret_ptr.clone().unwrap_or_else(|| "void*".into());
+                        }
+                        "strdup" | "strndup" | "strerror" | "ctime" | "asctime"
+                        | "getenv" | "strstr" | "strchr" | "strrchr" | "strtok" => return "char*".into(),
+                        "time" => return "time_t".into(),
+                        "clock" => return "clock_t".into(),
+                        _ => {}
+                    }
+                }
+                "int64_t".into()
+            }
+            Expr::Index { .. } | Expr::FieldAccess { .. }
             | Expr::MethodCall { .. } | Expr::Ident(_) => "int64_t".into(),
+            // Struct-literal tuple: if the enclosing fn returns a user type,
+            // assume this tuple initializer is for that type so the decl
+            // types correctly.
+            Expr::Tuple(_) => {
+                if let Some(rt) = &self.current_fn_ret_raw {
+                    let base = rt.trim_end_matches('*');
+                    if self.user_types.contains(base) {
+                        return base.to_string();
+                    }
+                }
+                "int64_t".into()
+            }
             _ => "int64_t".into(),
         }
     }
@@ -5809,15 +7615,48 @@ impl CGen {
                             format!("printf({})", a.join(", "))
                         }
                     }
+                    "__addr" => format!("&{}", a.join(", ")),
+                    "__deref" => format!("*{}", a.join(", ")),
+                    "__cast" if args.len() == 2 => {
+                        // args[0] is the string-literal type; args[1] is the
+                        // value. Emit as `(TYPE)(VALUE)`.
+                        let ty_s = match &args[0].value {
+                            Expr::StringLit(s) => s.parts.iter().filter_map(|p| match p {
+                                StringPart::Literal(t) => Some(t.as_str()),
+                                _ => None,
+                            }).collect::<String>(),
+                            _ => return format!("(/* cast */ {})", a[1]),
+                        };
+                        format!("({})({})", ty_s, a[1])
+                    }
+                    // Nebula `len(x)` → `strlen(x)` for string args (the
+                    // common C shape; non-string uses would need a real
+                    // type inferencer).
+                    "len" | "ln" => format!("strlen({})", a.join(", ")),
                     _ => format!("{}({})", c, a.join(", ")),
                 }
             }
             Expr::MethodCall { object, method, args } => {
                 let a: Vec<String> = args.iter().map(|a| self.gen_expr(&a.value)).collect();
                 let obj = self.gen_expr(object);
-                format!("{}_{}{}{}", obj, method, if a.is_empty() { "" } else { "(" }, if a.is_empty() { "".into() } else { format!("{})", a.join(", ")) })
+                // C has no method-call syntax. Treat it as struct-field call:
+                // `obj.field(args)` or `obj->field(args)` for pointer-typed obj.
+                let sep = if let Expr::Ident(n) = object.as_ref() {
+                    if self.ptr_idents.contains(n) { "->" } else { "." }
+                } else { "." };
+                if a.is_empty() {
+                    format!("{}{}{}()", obj, sep, method)
+                } else {
+                    format!("{}{}{}({})", obj, sep, method, a.join(", "))
+                }
             }
-            Expr::FieldAccess { object, field } => format!("{}.{}", self.gen_expr(object), field),
+            Expr::FieldAccess { object, field } => {
+                // C pointer member access uses `->`, not `.`.
+                let sep = if let Expr::Ident(n) = object.as_ref() {
+                    if self.ptr_idents.contains(n) { "->" } else { "." }
+                } else { "." };
+                format!("{}{}{}", self.gen_expr(object), sep, field)
+            }
             Expr::Index { object, index } => format!("{}[{}]", self.gen_expr(object), self.gen_expr(index)),
             Expr::Slice { object, start, end } => {
                 // C has no slice type. Emit pointer-plus-start as the closest form;
@@ -5833,6 +7672,17 @@ impl CGen {
                 } else {
                     base
                 }
+            }
+            Expr::Tuple(items) => {
+                // Emit as C brace-init so `{ a, b }` can initialize a struct.
+                // Wrapped assignment context handles the enclosing `struct X x = { ... }`.
+                let is: Vec<String> = items.iter().map(|e| self.gen_expr(e)).collect();
+                format!("{{ {} }}", is.join(", "))
+            }
+            Expr::List(items) => {
+                // Array literal `{ a, b, c }` — the same shape as C aggregate init.
+                let is: Vec<String> = items.iter().map(|e| self.gen_expr(e)).collect();
+                format!("{{ {} }}", is.join(", "))
             }
             Expr::If { condition, then_block, else_block } => {
                 if let (Some(te), Some(eb)) = (&then_block.expr, else_block) {

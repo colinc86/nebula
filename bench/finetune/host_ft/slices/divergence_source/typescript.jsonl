@@ -1,0 +1,35 @@
+{"pattern":"array_type","native":"function head<T>(xs: T[]): T | undefined {\n    return xs[0];\n}"}
+{"pattern":"array_type","native":"function concat(a: string[], b: string[]): string[] {\n    return [...a, ...b];\n}"}
+{"pattern":"fn_type","native":"function apply<T, U>(xs: T[], f: (x: T) => U): U[] {\n    return xs.map(f);\n}"}
+{"pattern":"fn_type","native":"function retry(n: number, fn: () => void): void {\n    for (let i = 0; i < n; i++) fn();\n}"}
+{"pattern":"interface","native":"interface User {\n    id: number;\n    name: string;\n    email?: string;\n}"}
+{"pattern":"interface","native":"interface Point {\n    x: number;\n    y: number;\n}"}
+{"pattern":"type_alias_primitive","native":"type Id = string;\ntype Count = number;"}
+{"pattern":"type_union","native":"type Id = string | number;\nfunction key(x: Id): string {\n    return String(x);\n}"}
+{"pattern":"type_intersection","native":"type Named = { name: string };\ntype Stamped = { ts: number };\ntype Event = Named & Stamped;"}
+{"pattern":"enum_decl","native":"enum Color {\n    Red,\n    Green,\n    Blue,\n}"}
+{"pattern":"enum_decl","native":"enum Status {\n    Pending = \"pending\",\n    Active = \"active\",\n    Done = \"done\",\n}"}
+{"pattern":"access_modifier","native":"class Cache<K, V> {\n    private store = new Map<K, V>();\n    get(k: K): V | undefined {\n        return this.store.get(k);\n    }\n    set(k: K, v: V): void {\n        this.store.set(k, v);\n    }\n}"}
+{"pattern":"class_readonly","native":"class User {\n    constructor(public readonly id: number, public name: string) {}\n}"}
+{"pattern":"arrow_fn","native":"const double = (x: number): number => x * 2;\nconst add = (a: number, b: number): number => a + b;"}
+{"pattern":"arrow_fn","native":"const triple = (x: number) => x * 3;"}
+{"pattern":"generic_fn_ts","native":"function first<T>(xs: T[]): T | undefined {\n    return xs[0];\n}"}
+{"pattern":"generic_fn_ts","native":"function keyBy<T>(xs: T[], key: (x: T) => string): Record<string, T> {\n    const out: Record<string, T> = {};\n    for (const x of xs) out[key(x)] = x;\n    return out;\n}"}
+{"pattern":"async_ts","native":"async function fetchJson(url: string): Promise<any> {\n    const resp = await fetch(url);\n    return resp.json();\n}"}
+{"pattern":"promise_chain","native":"function chain(x: number): Promise<number> {\n    return Promise.resolve(x)\n        .then(v => v + 1)\n        .catch(e => 0);\n}"}
+{"pattern":"destructure_param","native":"function merge({a, b, ...rest}: {a: number, b: number, [k: string]: any}): object {\n    return {a, b, rest};\n}"}
+{"pattern":"destructure_param","native":"function greet({name, age}: {name: string, age: number}): string {\n    return `hi, ${name}, ${age}`;\n}"}
+{"pattern":"template_literal","native":"function greet(name: string, age: number): string {\n    return `Hello, ${name}, age ${age}`;\n}"}
+{"pattern":"template_literal","native":"function url(base: string, path: string): string {\n    return `${base}/${path}`;\n}"}
+{"pattern":"optional_prop","native":"interface Config {\n    host: string;\n    port?: number;\n    debug?: boolean;\n}"}
+{"pattern":"readonly_arr","native":"function size(xs: readonly number[]): number {\n    return xs.length;\n}"}
+{"pattern":"tuple_type","native":"function minMax(xs: number[]): [number, number] {\n    return [Math.min(...xs), Math.max(...xs)];\n}"}
+{"pattern":"index_sig","native":"interface Dict {\n    [key: string]: number;\n}"}
+{"pattern":"class_implements","native":"interface Speakable {\n    speak(): string;\n}\nclass Dog implements Speakable {\n    constructor(private name: string) {}\n    speak(): string {\n        return `${this.name} barks`;\n    }\n}"}
+{"pattern":"class_extends","native":"class Animal {\n    constructor(public name: string) {}\n    speak(): string {\n        return `${this.name} makes a sound`;\n    }\n}\nclass Dog extends Animal {\n    speak(): string {\n        return `${this.name} barks`;\n    }\n}"}
+{"pattern":"type_assertion","native":"function asNumber(x: unknown): number {\n    return x as number;\n}"}
+{"pattern":"nullish_coalesce","native":"function withDefault(x: string | null): string {\n    return x ?? \"default\";\n}"}
+{"pattern":"optional_chain_ts","native":"function city(user?: {addr?: {city?: string}}): string {\n    return user?.addr?.city ?? \"unknown\";\n}"}
+{"pattern":"ts_function","native":"function sum(xs: number[]): number {\n    return xs.reduce((a, b) => a + b, 0);\n}"}
+{"pattern":"map_filter","native":"function evenSquares(xs: number[]): number[] {\n    return xs.filter(x => x % 2 === 0).map(x => x * x);\n}"}
+{"pattern":"object_literal","native":"function makeUser(name: string, age: number): {name: string, age: number} {\n    return {name, age};\n}"}

@@ -12,19 +12,22 @@ GAIA is heavy on web-browsing, image parsing, and file-download tasks — none o
 
 See `subset.txt`. 20 level-1 tasks selected by hand-filtering the GAIA validation split for tasks that can be completed with read_file + grep + bash + small edits. The format is one task id per line. Each id maps to a `{id, question, files[], answer}` record in the dataset.
 
-## Status — 2026-04-14
+## Headline result (N=1, 13 code-editing-shaped tasks)
 
-**Infrastructure complete; dataset fetch blocked on HuggingFace credentials.**
+| Config | Correct | Total host $ | Δ vs builtins |
+|---|---:|---:|---:|
+| builtins | 10/13 | $1.1038 | — |
+| delegate | 10/13 | $0.9433 | **−14.5%** |
 
-GAIA is a gated dataset on HuggingFace (`gaia-benchmark/GAIA`). To fetch it you need:
+**Accuracy-invariant** — both configs fail the same 3 tasks (`2d83110e`, `42576abe`, `e142056d`); no task flipped direction between configs. Aggregate host cost drops 14.5% under the delegate. That's a smaller delta than the matched-pair Go benchmark (−51.2%) because GAIA's code-editing subset skews toward single-turn shapes where the delegate sits near the break-even point from the [cost model](../cost_model.md#3-break-even-point) — consistent with the model's prediction, not an anomaly.
 
-1. A HuggingFace account that has accepted the GAIA terms (one-click on the dataset page)
-2. A HuggingFace token exported as `HF_TOKEN` in the shell
-3. The `datasets` Python package installed: `pip install datasets`
+Full per-task breakdown in [`summary.csv`](summary.csv). Re-run anytime with the instructions below.
 
-Because these are per-user credentials and not present in this repo, Thread D's runs are not part of this session. All scaffolding is in place to run them as soon as credentials are set up.
+## Reproducing
 
-## How to run (once credentials are configured)
+GAIA is a gated dataset on HuggingFace (`gaia-benchmark/GAIA`). One-time setup: accept the dataset terms on the HF page, then export `HF_TOKEN` and install `datasets`.
+
+## How to run
 
 ```bash
 cd bench/gaia

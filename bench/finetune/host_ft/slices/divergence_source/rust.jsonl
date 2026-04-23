@@ -1,0 +1,41 @@
+{"pattern":"turbofish","native":"fn parse_num(s: &str) -> Result<i64, String> {\n    s.parse::<i64>().map_err(|e| e.to_string())\n}"}
+{"pattern":"turbofish","native":"fn write_u16<W: Write>(w: &mut W, v: u16) -> io::Result<()> {\n    w.write_u16::<LittleEndian>(v)\n}"}
+{"pattern":"turbofish","native":"fn collect_nums(xs: &[String]) -> Vec<i32> {\n    xs.iter().map(|s| s.parse::<i32>().unwrap_or(0)).collect()\n}"}
+{"pattern":"impl_trait_return","native":"fn make_counter() -> impl FnMut() -> i32 {\n    let mut n = 0;\n    move || { n += 1; n }\n}"}
+{"pattern":"impl_trait_return","native":"fn doubles() -> impl Iterator<Item = i32> {\n    (0..).map(|x| x * 2)\n}"}
+{"pattern":"impl_trait_return","native":"fn dyn_writer() -> Box<dyn Write> {\n    Box::new(stdout())\n}"}
+{"pattern":"lifetimes","native":"fn first<'a>(xs: &'a [i32]) -> Option<&'a i32> {\n    xs.iter().next()\n}"}
+{"pattern":"lifetimes","native":"fn join<'a>(parts: &'a [&'a str], sep: &str) -> String {\n    parts.join(sep)\n}"}
+{"pattern":"ref_type","native":"fn count(s: &str) -> usize {\n    s.chars().count()\n}"}
+{"pattern":"ref_type","native":"fn reverse_inplace(xs: &mut Vec<i32>) {\n    xs.reverse();\n}"}
+{"pattern":"ref_type","native":"fn head(xs: &[i32]) -> Option<i32> {\n    xs.first().copied()\n}"}
+{"pattern":"question_mark","native":"fn load(path: &str) -> io::Result<String> {\n    let mut f = File::open(path)?;\n    let mut s = String::new();\n    f.read_to_string(&mut s)?;\n    Ok(s)\n}"}
+{"pattern":"question_mark","native":"fn fetch(url: &str) -> Result<String, reqwest::Error> {\n    let body = reqwest::blocking::get(url)?.text()?;\n    Ok(body)\n}"}
+{"pattern":"if_let","native":"fn greet(name: Option<String>) -> String {\n    if let Some(n) = name {\n        format!(\"hello, {}\", n)\n    } else {\n        \"hello\".to_string()\n    }\n}"}
+{"pattern":"if_let","native":"fn double_opt(x: Option<i32>) -> Option<i32> {\n    if let Some(v) = x {\n        Some(v * 2)\n    } else {\n        None\n    }\n}"}
+{"pattern":"match_guard","native":"fn classify(n: i32) -> &'static str {\n    match n {\n        0 => \"zero\",\n        n if n > 0 => \"positive\",\n        _ => \"negative\",\n    }\n}"}
+{"pattern":"match_guard","native":"fn kind(x: i32) -> &'static str {\n    match x {\n        1 | 2 | 3 => \"small\",\n        n if n < 100 => \"medium\",\n        _ => \"big\",\n    }\n}"}
+{"pattern":"pattern_amp_amp","native":"fn first_positive(xs: &[i32]) -> Option<i32> {\n    xs.iter().find(|&&x| x > 0).copied()\n}"}
+{"pattern":"pattern_amp_amp","native":"fn count_even(xs: &[i32]) -> usize {\n    xs.iter().filter(|&&x| x % 2 == 0).count()\n}"}
+{"pattern":"move_closure","native":"fn make_adder(n: i32) -> impl Fn(i32) -> i32 {\n    move |x| x + n\n}"}
+{"pattern":"move_closure","native":"fn boxed_logger(prefix: String) -> Box<dyn Fn(&str)> {\n    Box::new(move |msg| println!(\"{}: {}\", prefix, msg))\n}"}
+{"pattern":"iterator_chain","native":"fn evens_squared(xs: &[i32]) -> Vec<i32> {\n    xs.iter().filter(|&&x| x % 2 == 0).map(|&x| x * x).collect()\n}"}
+{"pattern":"iterator_chain","native":"fn sum_positive(xs: &[i32]) -> i32 {\n    xs.iter().filter(|&&x| x > 0).sum()\n}"}
+{"pattern":"trait_impl","native":"trait Speak {\n    fn speak(&self) -> String;\n}\nstruct Dog {\n    name: String,\n}\nimpl Speak for Dog {\n    fn speak(&self) -> String {\n        format!(\"{} barks\", self.name)\n    }\n}"}
+{"pattern":"generic_fn","native":"fn greet<T: std::fmt::Display>(x: T) -> String {\n    format!(\"hi, {}\", x)\n}"}
+{"pattern":"generic_fn","native":"fn max<T: PartialOrd>(a: T, b: T) -> T {\n    if a > b { a } else { b }\n}"}
+{"pattern":"option_unwrap","native":"fn must_parse(s: &str) -> i32 {\n    s.parse().unwrap()\n}"}
+{"pattern":"option_unwrap","native":"fn first_key(m: &HashMap<String, i32>) -> String {\n    m.keys().next().unwrap().clone()\n}"}
+{"pattern":"struct_method","native":"struct Temp {\n    celsius: f64,\n}\nimpl Temp {\n    fn fahrenheit(&self) -> f64 {\n        self.celsius * 9.0 / 5.0 + 32.0\n    }\n    fn new(c: f64) -> Self {\n        Temp { celsius: c }\n    }\n}"}
+{"pattern":"enum_variant","native":"enum Result<T, E> {\n    Ok(T),\n    Err(E),\n}"}
+{"pattern":"enum_variant","native":"enum Shape {\n    Circle(f64),\n    Rect(f64, f64),\n}"}
+{"pattern":"enum_match","native":"fn area(s: Shape) -> f64 {\n    match s {\n        Shape::Circle(r) => 3.14159 * r * r,\n        Shape::Rect(w, h) => w * h,\n    }\n}"}
+{"pattern":"option_chain","native":"fn get_nested(m: &HashMap<String, Vec<i32>>, k: &str) -> Option<i32> {\n    m.get(k).and_then(|xs| xs.first().copied())\n}"}
+{"pattern":"result_ok","native":"fn safe_div(a: i32, b: i32) -> Result<i32, String> {\n    if b == 0 {\n        Err(\"division by zero\".to_string())\n    } else {\n        Ok(a / b)\n    }\n}"}
+{"pattern":"println_macro","native":"fn greet(name: &str) {\n    println!(\"Hello, {}!\", name);\n}"}
+{"pattern":"println_macro","native":"fn debug_dump(label: &str, value: i32) {\n    eprintln!(\"{} = {}\", label, value);\n}"}
+{"pattern":"format_macro","native":"fn compose(a: &str, b: &str) -> String {\n    format!(\"{}-{}\", a, b)\n}"}
+{"pattern":"closure_capture","native":"fn counter() -> impl FnMut() -> i32 {\n    let mut n = 0;\n    move || {\n        n += 1;\n        n\n    }\n}"}
+{"pattern":"slice_iter","native":"fn total(xs: &[i32]) -> i32 {\n    xs.iter().copied().sum()\n}"}
+{"pattern":"string_push","native":"fn repeat(s: &str, n: usize) -> String {\n    let mut out = String::new();\n    for _ in 0..n {\n        out.push_str(s);\n    }\n    out\n}"}
+{"pattern":"range_iter","native":"fn squares(n: i32) -> Vec<i32> {\n    (0..n).map(|x| x * x).collect()\n}"}

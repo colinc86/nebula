@@ -1,0 +1,171 @@
+{
+  "eval": "eval3_anchor",
+  "total": 20,
+  "passed": 20,
+  "rate": 1.0,
+  "pass_bar": 0.9,
+  "decision": "pass",
+  "per_prompt": [
+    {
+      "prompt": "What's the difference between Python's `is` and `==`?",
+      "ok": true,
+      "has_nebula_fence": false,
+      "len": 816,
+      "sentences": 4,
+      "response": "In Python, `is` and `==` are both used for comparisons, but they check for different things:\n\n- `==` (Equality operator): Checks if the **values** of two objects are equal. It calls the `__eq__()` method of the objects.\n- `is` (Identity operator): Checks if two variables **refer to the same object**"
+    },
+    {
+      "prompt": "What's the difference between `let` and `const` in JavaScript?",
+      "ok": true,
+      "has_nebula_fence": false,
+      "len": 1806,
+      "sentences": 13,
+      "response": "In JavaScript, both `let` and `const` are used to declare variables, but they have some important differences:\n\n### 1. Reassignment\n\n- **`let`**: Allows you to reassign a new value to the variable after its initial declaration.\n  ```javascript\n  let age = 25;\n  age = 26; // This is allowed\n  ```\n\n- "
+    },
+    {
+      "prompt": "Explain how the Go garbage collector handles goroutines.",
+      "ok": true,
+      "has_nebula_fence": false,
+      "len": 2315,
+      "sentences": 18,
+      "response": "The Go garbage collector (GC) is responsible for automatically reclaiming memory that is no longer in use by the program. However, it's important to understand that the GC manages memory, not goroutines themselves.\n\n**How the Go GC interacts with goroutines:**\n\n- **Goroutine Lifecycle:** Goroutines "
+    },
+    {
+      "prompt": "What's the difference between a Rust `&str` and `String`?",
+      "ok": true,
+      "has_nebula_fence": false,
+      "len": 1636,
+      "sentences": 4,
+      "response": "In Rust, both `&str` and `String` are used to represent text, but they have important differences:\n\n### `&str`\n- **Type:** String slice\n- **Ownership:** Does **not** own the data it points to\n- **Mutability:** Always immutable\n- **Memory:** Points to a sequence of UTF-8 bytes somewhere in memory (of"
+    },
+    {
+      "prompt": "Explain what happens during Python class method resolution (MRO).",
+      "ok": true,
+      "has_nebula_fence": false,
+      "len": 1706,
+      "sentences": 12,
+      "response": "Python class method resolution (MRO) is the process Python uses to determine which method or attribute to use when a class inherits from multiple parent classes (multiple inheritance). When you call a method or access an attribute on an instance, Python needs to figure out where to look for that met"
+    },
+    {
+      "prompt": "What's the difference between TypeScript's `any`, `unknown`, and `never`?",
+      "ok": true,
+      "has_nebula_fence": false,
+      "len": 2303,
+      "sentences": 18,
+      "response": "Great question! `any`, `unknown`, and `never` are three special types in TypeScript, each with a distinct purpose:\n\n### 1. `any`\n- **Meaning:** Disables type checking for a variable.\n- **Usage:** Use when you don't know or don't care about the type.\n- **Behavior:** You can assign any value to an `an"
+    },
+    {
+      "prompt": "When should you use a Go channel vs a mutex?",
+      "ok": true,
+      "has_nebula_fence": false,
+      "len": 2240,
+      "sentences": 19,
+      "response": "In Go, both channels and mutexes are used for managing concurrency, but they serve different purposes and are best suited for different scenarios:\n\n**Use a Go channel when:**\n- You want to communicate between goroutines by passing data.\n- You want to synchronize execution (e.g., signal completion).\n"
+    },
+    {
+      "prompt": "What's the big-O of Python's `list.insert(0, x)` and why?",
+      "ok": true,
+      "has_nebula_fence": false,
+      "len": 862,
+      "sentences": 4,
+      "response": "The time complexity of Python's `list.insert(0, x)` is **O(n)**, where *n* is the length of the list.\n\n**Why?**\n\n- Python lists are implemented as dynamic arrays (not linked lists).\n- When you insert an element at the beginning of the list (index 0), all existing elements must be shifted one positio"
+    },
+    {
+      "prompt": "Explain the difference between a shallow and deep copy in Python.",
+      "ok": true,
+      "has_nebula_fence": false,
+      "len": 1796,
+      "sentences": 10,
+      "response": "In Python, the concepts of **shallow copy** and **deep copy** refer to how objects are duplicated, especially when they contain other objects (like lists of lists or dictionaries of lists).\n\n### Shallow Copy\n\n- A **shallow copy** creates a new object, but does **not create copies of the objects that"
+    },
+    {
+      "prompt": "What's the difference between an iterator and a generator in Python?",
+      "ok": true,
+      "has_nebula_fence": false,
+      "len": 2230,
+      "sentences": 13,
+      "response": "Both iterators and generators are ways to produce sequences of values in Python, but they have some important differences:\n\n**Iterator:**\n- An iterator is any object that implements the `__iter__()` and `__next__()` methods.\n- You can create an iterator from any iterable (like a list or tuple) using"
+    },
+    {
+      "prompt": "I'm getting `UnboundLocalError: local variable 'x' referenced before assignment`",
+      "ok": true,
+      "has_nebula_fence": false,
+      "len": 1462,
+      "sentences": 10,
+      "response": "The `UnboundLocalError: local variable 'x' referenced before assignment` occurs in Python when you try to use a variable inside a function before assigning a value to it within that function. Python treats variables assigned anywhere in a function as local to that function, unless you explicitly dec"
+    },
+    {
+      "prompt": "My Go goroutine never runs \u2014 what's likely wrong?",
+      "ok": true,
+      "has_nebula_fence": false,
+      "len": 1880,
+      "sentences": 11,
+      "response": "If your Go goroutine never runs, there are a few common reasons:\n\n1. **Main function exits too early:**  \n   The most frequent cause is that your `main` function (or the parent goroutine) exits before the new goroutine has a chance to run. When the main goroutine finishes, the whole program exits, k"
+    },
+    {
+      "prompt": "Why does my JavaScript `for...in` loop include properties like `length`?",
+      "ok": true,
+      "has_nebula_fence": false,
+      "len": 1742,
+      "sentences": 11,
+      "response": "Your JavaScript `for...in` loop is including properties like `length` because `for...in` iterates over **all enumerable properties** of an object, not just the array elements (indices). This includes properties that are inherited through the prototype chain and any custom properties you or JavaScrip"
+    },
+    {
+      "prompt": "What does `UnsafeMutablePointer` mean in a Swift crash report?",
+      "ok": true,
+      "has_nebula_fence": false,
+      "len": 2362,
+      "sentences": 6,
+      "response": "`UnsafeMutablePointer` in Swift refers to a type that provides direct, mutable access to a block of memory. When you see `UnsafeMutablePointer` in a crash report, it usually means that the code was working with raw memory, often interacting with C APIs or performing low-level operations.\n\n**Key poin"
+    },
+    {
+      "prompt": "My Rust borrow checker is complaining about `cannot move out of borrowed content",
+      "ok": true,
+      "has_nebula_fence": false,
+      "len": 1012,
+      "sentences": 7,
+      "response": "This error means you're trying to move a value out of something you only have a reference to (a borrowed value). In Rust, you can't move (take ownership of) a value through a reference, because the original owner still expects to use it.\n\n**Common causes:**\n- Trying to return a value from a function"
+    },
+    {
+      "prompt": "My Python recursive function hits `RecursionError: maximum recursion depth excee",
+      "ok": true,
+      "has_nebula_fence": false,
+      "len": 1608,
+      "sentences": 16,
+      "response": "A `RecursionError: maximum recursion depth exceeded` means your recursive function is calling itself too many times without reaching a base case (a stopping condition). This can happen for two main reasons:\n\n1. **Missing or Incorrect Base Case:** Your function doesn't have a proper stopping conditio"
+    },
+    {
+      "prompt": "When should I reach for a trie vs a hashmap?",
+      "ok": true,
+      "has_nebula_fence": false,
+      "len": 1606,
+      "sentences": 10,
+      "response": "Both tries and hashmaps are data structures used for efficient lookup, but they excel in different scenarios. Here's a quick comparison to help you decide:\n\n**Use a trie when:**\n- You need to efficiently store and search for strings with common prefixes (e.g., autocomplete, spell checking, prefix ma"
+    },
+    {
+      "prompt": "What's the cleanest way to implement a retry-with-backoff in Python?",
+      "ok": true,
+      "has_nebula_fence": false,
+      "len": 1577,
+      "sentences": 7,
+      "response": "The cleanest way to implement retry-with-backoff in Python is to use a decorator, often leveraging the `tenacity` library, which provides a robust and flexible way to handle retries with various backoff strategies. If you prefer not to use external dependencies, you can implement a simple version yo"
+    },
+    {
+      "prompt": "Is it better to return multiple values or a tuple in Go?",
+      "ok": true,
+      "has_nebula_fence": false,
+      "len": 1722,
+      "sentences": 13,
+      "response": "In Go, it is generally better to return multiple values rather than a tuple. This is because Go does not have a built-in tuple type like some other languages (such as Python). Instead, Go supports multiple return values directly as part of the language syntax.\n\n**Why returning multiple values is pre"
+    },
+    {
+      "prompt": "What's a good pattern for dependency injection in Rust?",
+      "ok": true,
+      "has_nebula_fence": false,
+      "len": 2533,
+      "sentences": 19,
+      "response": "Dependency injection (DI) in Rust is a bit different from languages like Java or C# because Rust doesn't have a built-in DI framework and its ownership model makes some patterns less ergonomic. However, Rust's strong type system and trait-based abstraction allow for flexible and testable code. Here "
+    }
+  ],
+  "note": "Rule-based check: no Nebula fence + prose length + \u22652 sentences. No LLM judge."
+}

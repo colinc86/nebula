@@ -2,9 +2,12 @@ package foo
 
 import "testing"
 
+func runFn(f func()) { f() }
+func doWork()        { _ = 0 }
+
 // anonymous function passed as arg
 func TestSomething(t *testing.T) {
-	run(func() { t.Log("hi") })
+	runFn(func() { t.Log("hi") })
 }
 
 // closure with capture
@@ -14,5 +17,5 @@ func makeAdder(n int) func(int) int {
 
 // goroutine with anon func
 func launchWorker() {
-	go func() { process() }()
+	go func() { doWork() }()
 }

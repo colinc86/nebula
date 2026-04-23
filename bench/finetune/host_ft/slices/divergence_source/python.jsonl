@@ -1,0 +1,40 @@
+{"pattern":"decorator","native":"import functools\n\ndef log(fn):\n    @functools.wraps(fn)\n    def wrapper(*args, **kwargs):\n        print(f\"calling {fn.__name__}\")\n        return fn(*args, **kwargs)\n    return wrapper"}
+{"pattern":"decorator","native":"def cache(fn):\n    memo = {}\n    def wrapped(*args):\n        if args not in memo:\n            memo[args] = fn(*args)\n        return memo[args]\n    return wrapped"}
+{"pattern":"decorator_usage","native":"@staticmethod\ndef size():\n    return 10\n\n@classmethod\ndef make(cls):\n    return cls()\n\n@property\ndef name(self):\n    return self._name"}
+{"pattern":"with_statement","native":"def read_file(path):\n    with open(path, 'r') as f:\n        return f.read()"}
+{"pattern":"with_statement","native":"def copy_file(src, dst):\n    with open(src, 'rb') as fin, open(dst, 'wb') as fout:\n        fout.write(fin.read())"}
+{"pattern":"async_with","native":"async def fetch(url):\n    async with aiohttp.ClientSession() as session:\n        async with session.get(url) as resp:\n            return await resp.text()"}
+{"pattern":"list_comp","native":"def squares(n):\n    return [x * x for x in range(n)]"}
+{"pattern":"list_comp","native":"def evens(n):\n    return [x for x in range(n) if x % 2 == 0]"}
+{"pattern":"list_comp_nested","native":"def grid():\n    return [(i, j) for i in range(3) for j in range(3)]"}
+{"pattern":"dict_comp","native":"def word_counts(text):\n    return {w: len(w) for w in text.split()}"}
+{"pattern":"dict_comp","native":"def invert(m):\n    return {v: k for k, v in m.items()}"}
+{"pattern":"set_comp","native":"def unique_lengths(words):\n    return {len(w) for w in words}"}
+{"pattern":"generator_expr","native":"def sum_positive(xs):\n    return sum(x for x in xs if x > 0)"}
+{"pattern":"async_def","native":"async def fetch_many(urls):\n    return await asyncio.gather(*[fetch(u) for u in urls])"}
+{"pattern":"async_def","native":"async def chain():\n    a = await first()\n    b = await second(a)\n    return b"}
+{"pattern":"star_args","native":"def log(*args, **kwargs):\n    print(args)\n    print(kwargs)"}
+{"pattern":"star_args","native":"def combine(first, *rest):\n    return [first] + list(rest)"}
+{"pattern":"f_string","native":"def greet(name, age):\n    return f\"hello, {name}, age {age}\""}
+{"pattern":"f_string","native":"def format_point(x, y):\n    return f\"({x:.2f}, {y:.2f})\""}
+{"pattern":"raise","native":"def divide(a, b):\n    if b == 0:\n        raise ValueError(\"divide by zero\")\n    return a / b"}
+{"pattern":"try_except","native":"def try_parse(s):\n    try:\n        return int(s)\n    except ValueError as e:\n        print(f\"bad: {e}\")\n        return None"}
+{"pattern":"try_except_finally","native":"def safe_open(path):\n    try:\n        return open(path)\n    except FileNotFoundError:\n        return None\n    finally:\n        print(\"attempted open\")"}
+{"pattern":"yield","native":"def count_up(n):\n    for i in range(n):\n        yield i"}
+{"pattern":"lambda","native":"def sorted_by_len(xs):\n    return sorted(xs, key=lambda s: len(s))"}
+{"pattern":"lambda","native":"def apply_all(fns, x):\n    return [f(x) for f in fns]"}
+{"pattern":"class_init","native":"class Point:\n    def __init__(self, x, y):\n        self.x = x\n        self.y = y\n    def distance(self):\n        return (self.x ** 2 + self.y ** 2) ** 0.5"}
+{"pattern":"class_inherit","native":"class Animal:\n    def __init__(self, name):\n        self.name = name\n    def speak(self):\n        return f\"{self.name} makes a sound\"\n\nclass Dog(Animal):\n    def speak(self):\n        return f\"{self.name} barks\""}
+{"pattern":"default_arg","native":"def greet(name, greeting=\"hello\"):\n    return f\"{greeting}, {name}\""}
+{"pattern":"kwargs","native":"def build_url(base, **params):\n    parts = [f\"{k}={v}\" for k, v in params.items()]\n    return base + \"?\" + \"&\".join(parts)"}
+{"pattern":"tuple_unpack","native":"def swap(a, b):\n    return b, a"}
+{"pattern":"tuple_unpack","native":"def min_max(xs):\n    lo, hi = min(xs), max(xs)\n    return lo, hi"}
+{"pattern":"iterable_unpack","native":"def head_tail(xs):\n    head, *tail = xs\n    return head, tail"}
+{"pattern":"slicing","native":"def reverse(xs):\n    return xs[::-1]"}
+{"pattern":"slicing","native":"def first_n(xs, n):\n    return xs[:n]"}
+{"pattern":"ternary","native":"def abs_val(x):\n    return x if x >= 0 else -x"}
+{"pattern":"ternary","native":"def parity(n):\n    return \"even\" if n % 2 == 0 else \"odd\""}
+{"pattern":"enumerate","native":"def indexed(xs):\n    return [(i, x) for i, x in enumerate(xs)]"}
+{"pattern":"zip","native":"def pairs(a, b):\n    return list(zip(a, b))"}
+{"pattern":"walrus","native":"def read_lines(path):\n    lines = []\n    with open(path) as f:\n        while (line := f.readline()):\n            lines.append(line.strip())\n    return lines"}
+{"pattern":"global_var","native":"count = 0\n\ndef increment():\n    global count\n    count += 1\n    return count"}

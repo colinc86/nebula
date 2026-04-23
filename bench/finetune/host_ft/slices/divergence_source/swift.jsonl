@@ -1,0 +1,44 @@
+{"pattern":"unnamed_label","native":"func greet(_ name: String) -> String {\n    return \"hi, \\(name)\"\n}"}
+{"pattern":"unnamed_label","native":"func process(_ data: [Int], _ filter: (Int) -> Bool) -> [Int] {\n    return data.filter(filter)\n}"}
+{"pattern":"external_label","native":"func apply(to xs: [Int], _ f: (Int) -> Int) -> [Int] {\n    return xs.map(f)\n}"}
+{"pattern":"external_label","native":"func save(user user: User, in store: Store) {\n    store.put(user)\n}"}
+{"pattern":"guard_let","native":"func greet(_ name: String?) -> String {\n    guard let n = name else { return \"anonymous\" }\n    return \"hi, \\(n)\"\n}"}
+{"pattern":"guard_let","native":"func parseAge(_ s: String?) -> Int {\n    guard let text = s else { return 0 }\n    return Int(text) ?? 0\n}"}
+{"pattern":"guard_let","native":"func first(_ xs: [Int]?) -> Int? {\n    guard let arr = xs else { return nil }\n    return arr.first\n}"}
+{"pattern":"struct_inheritance","native":"protocol Speakable {\n    func speak() -> String\n}\nstruct Dog: Speakable {\n    let name: String\n    func speak() -> String {\n        return \"\\(name) barks\"\n    }\n}"}
+{"pattern":"struct_inheritance","native":"struct Point: Equatable {\n    let x: Int\n    let y: Int\n}"}
+{"pattern":"computed_property","native":"struct Temperature {\n    var celsius: Double\n    var fahrenheit: Double {\n        get { return celsius * 9 / 5 + 32 }\n        set { celsius = (newValue - 32) * 5 / 9 }\n    }\n}"}
+{"pattern":"computed_property","native":"struct Circle {\n    var radius: Double\n    var area: Double {\n        return 3.14159 * radius * radius\n    }\n}"}
+{"pattern":"enum_generic","native":"enum Result<T, E> {\n    case success(T)\n    case failure(E)\n}"}
+{"pattern":"enum_generic","native":"enum Optional<T> {\n    case some(T)\n    case none\n}"}
+{"pattern":"enum_case","native":"enum Direction {\n    case north\n    case south\n    case east\n    case west\n}"}
+{"pattern":"optional_chain","native":"func city(_ user: User?) -> String {\n    return user?.address?.city ?? \"unknown\"\n}"}
+{"pattern":"interpolation","native":"func greet(_ name: String, _ age: Int) -> String {\n    return \"Hello, \\(name), you are \\(age) years old\"\n}"}
+{"pattern":"interpolation","native":"func format(_ x: Double, _ y: Double) -> String {\n    return \"(\\(x), \\(y))\"\n}"}
+{"pattern":"closure_trailing","native":"func apply(xs: [Int], f: (Int) -> Int) -> [Int] {\n    return xs.map(f)\n}"}
+{"pattern":"dict_literal","native":"func makeMap() -> [String: Int] {\n    return [\"a\": 1, \"b\": 2]\n}"}
+{"pattern":"string_method","native":"func shout(_ s: String) -> String {\n    return s.uppercased() + \"!\"\n}"}
+{"pattern":"string_method","native":"func cleanup(_ s: String) -> String {\n    return s.trimmingCharacters(in: .whitespaces)\n}"}
+{"pattern":"array_higher_order","native":"func evens(_ xs: [Int]) -> [Int] {\n    return xs.filter { $0 % 2 == 0 }\n}"}
+{"pattern":"array_higher_order","native":"func doubled(_ xs: [Int]) -> [Int] {\n    return xs.map { $0 * 2 }\n}"}
+{"pattern":"array_higher_order","native":"func sum(_ xs: [Int]) -> Int {\n    return xs.reduce(0, +)\n}"}
+{"pattern":"class_init","native":"class Animal {\n    let name: String\n    init(name: String) {\n        self.name = name\n    }\n    func speak() -> String {\n        return \"\\(name) makes a sound\"\n    }\n}"}
+{"pattern":"protocol","native":"protocol Drawable {\n    func draw()\n    var color: String { get }\n}"}
+{"pattern":"extension","native":"extension String {\n    func shouted() -> String {\n        return uppercased() + \"!\"\n    }\n}"}
+{"pattern":"nested_fn","native":"func outer(_ x: Int) -> Int {\n    func inner(_ y: Int) -> Int {\n        return y * 2\n    }\n    return inner(x) + 1\n}"}
+{"pattern":"tuple_return","native":"func minMax(_ xs: [Int]) -> (Int, Int) {\n    return (xs.min() ?? 0, xs.max() ?? 0)\n}"}
+{"pattern":"if_let","native":"func process(_ maybe: Int?) -> Int {\n    if let v = maybe {\n        return v * 2\n    }\n    return 0\n}"}
+{"pattern":"switch_enum","native":"func area(_ s: Shape) -> Double {\n    switch s {\n    case .circle(let r):\n        return 3.14159 * r * r\n    case .rect(let w, let h):\n        return w * h\n    }\n}"}
+{"pattern":"array_init","native":"func zeros(_ n: Int) -> [Int] {\n    return Array(repeating: 0, count: n)\n}"}
+{"pattern":"var_mutable","native":"func concat(_ xs: [String]) -> String {\n    var result = \"\"\n    for x in xs {\n        result += x\n    }\n    return result\n}"}
+{"pattern":"range","native":"func sum1toN(_ n: Int) -> Int {\n    var total = 0\n    for i in 1...n {\n        total += i\n    }\n    return total\n}"}
+{"pattern":"range","native":"func indices(_ n: Int) -> [Int] {\n    return Array(0..<n)\n}"}
+{"pattern":"throws","native":"func parse(_ s: String) throws -> Int {\n    guard let n = Int(s) else {\n        throw ParseError.invalid\n    }\n    return n\n}"}
+{"pattern":"do_catch","native":"func safeParse(_ s: String) -> Int {\n    do {\n        return try parse(s)\n    } catch {\n        return 0\n    }\n}"}
+{"pattern":"class_method","native":"class Counter {\n    private var n: Int = 0\n    func increment() {\n        n += 1\n    }\n    func value() -> Int {\n        return n\n    }\n}"}
+{"pattern":"init_arg_label","native":"struct Point {\n    let x: Int\n    let y: Int\n    init(x: Int, y: Int) {\n        self.x = x\n        self.y = y\n    }\n}"}
+{"pattern":"inout_param","native":"func swap(_ a: inout Int, _ b: inout Int) {\n    let t = a\n    a = b\n    b = t\n}"}
+{"pattern":"typealias","native":"typealias Callback = (Int) -> Void\nfunc register(_ cb: Callback) {\n    callbacks.append(cb)\n}"}
+{"pattern":"static_member","native":"struct MathUtil {\n    static func square(_ x: Double) -> Double {\n        return x * x\n    }\n}"}
+{"pattern":"default_param","native":"func greet(_ name: String, emoji: String = \"👋\") -> String {\n    return \"\\(emoji) hi, \\(name)\"\n}"}
+{"pattern":"class_speak","native":"class Dog {\n    let name: String\n    init(name: String) { self.name = name }\n    func speak() -> String { return \"\\(name) barks\" }\n}"}

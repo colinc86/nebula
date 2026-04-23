@@ -1,0 +1,39 @@
+{"pattern":"init_if","native":"func load() error {\n\tif err := fetch(); err != nil {\n\t\treturn err\n\t}\n\treturn nil\n}"}
+{"pattern":"init_if","native":"func read(f *os.File) (string, error) {\n\tif data, err := io.ReadAll(f); err != nil {\n\t\treturn \"\", err\n\t} else {\n\t\treturn string(data), nil\n\t}\n}"}
+{"pattern":"init_if","native":"func check(m map[string]int, key string) bool {\n\tif v, ok := m[key]; ok && v > 0 {\n\t\treturn true\n\t}\n\treturn false\n}"}
+{"pattern":"init_if","native":"func Parse(s string) (int, error) {\n\tif n, err := strconv.Atoi(s); err != nil {\n\t\treturn 0, fmt.Errorf(\"bad input: %w\", err)\n\t} else {\n\t\treturn n, nil\n\t}\n}"}
+{"pattern":"init_if","native":"func Open(path string) (*os.File, error) {\n\tif f, err := os.Open(path); err != nil {\n\t\treturn nil, err\n\t} else {\n\t\treturn f, nil\n\t}\n}"}
+{"pattern":"init_if","native":"func Connect(addr string) (net.Conn, error) {\n\tif c, err := net.Dial(\"tcp\", addr); err != nil {\n\t\treturn nil, err\n\t} else {\n\t\treturn c, nil\n\t}\n}"}
+{"pattern":"qualified_tuple_return","native":"func FindFile(tarFile io.Reader, name string) (io.Reader, error) {\n\treturn nil, nil\n}"}
+{"pattern":"qualified_tuple_return","native":"func GetClient(ctx context.Context) (http.Client, error) {\n\treturn http.Client{}, nil\n}"}
+{"pattern":"qualified_tuple_return","native":"func Decode(r io.Reader) (json.RawMessage, error) {\n\treturn nil, nil\n}"}
+{"pattern":"qualified_tuple_return","native":"func Fetch(url string) (io.ReadCloser, error) {\n\treturn nil, nil\n}"}
+{"pattern":"qualified_tuple_return","native":"func Parse(data []byte) (*bytes.Buffer, error) {\n\treturn bytes.NewBuffer(data), nil\n}"}
+{"pattern":"infinite_for","native":"package main\nfunc run() {\n\tfor {\n\t\tevent, ok := <-queue\n\t\tif !ok {\n\t\t\tbreak\n\t\t}\n\t\tprocess(event)\n\t}\n}"}
+{"pattern":"infinite_for","native":"package main\nfunc poll() {\n\tfor {\n\t\tif done() {\n\t\t\treturn\n\t\t}\n\t\ttime.Sleep(1 * time.Second)\n\t}\n}"}
+{"pattern":"infinite_for","native":"package main\nfunc serve() {\n\tfor {\n\t\tconn := accept()\n\t\tgo handle(conn)\n\t}\n}"}
+{"pattern":"range_for","native":"func sum(xs []int) int {\n\ttotal := 0\n\tfor _, x := range xs {\n\t\ttotal += x\n\t}\n\treturn total\n}"}
+{"pattern":"range_for","native":"func keys(m map[string]int) []string {\n\tvar out []string\n\tfor k := range m {\n\t\tout = append(out, k)\n\t}\n\treturn out\n}"}
+{"pattern":"range_for","native":"func Index(xs []string) map[string]int {\n\tout := map[string]int{}\n\tfor i, x := range xs {\n\t\tout[x] = i\n\t}\n\treturn out\n}"}
+{"pattern":"anon_func","native":"package foo\nimport \"testing\"\nfunc TestRun(t *testing.T) {\n\tt.Run(\"subtest\", func(t *testing.T) {\n\t\tdoWork(t)\n\t})\n}"}
+{"pattern":"anon_func","native":"package foo\nfunc spawn() {\n\tgo func() {\n\t\tdoWork()\n\t}()\n}"}
+{"pattern":"anon_func","native":"func compose(a, b func(int) int) func(int) int {\n\treturn func(x int) int {\n\t\treturn a(b(x))\n\t}\n}"}
+{"pattern":"channels","native":"func producer(out chan<- int) {\n\tout <- 1\n\tout <- 2\n\tclose(out)\n}"}
+{"pattern":"channels","native":"func consumer(in <-chan int) int {\n\ttotal := 0\n\tfor v := range in {\n\t\ttotal += v\n\t}\n\treturn total\n}"}
+{"pattern":"defer","native":"func write(path string, data []byte) error {\n\tf, err := os.Create(path)\n\tif err != nil {\n\t\treturn err\n\t}\n\tdefer f.Close()\n\t_, err = f.Write(data)\n\treturn err\n}"}
+{"pattern":"defer","native":"func locked(mu *sync.Mutex, f func()) {\n\tmu.Lock()\n\tdefer mu.Unlock()\n\tf()\n}"}
+{"pattern":"interface_empty","native":"func Marshal(v interface{}) ([]byte, error) {\n\treturn json.Marshal(v)\n}"}
+{"pattern":"interface_empty","native":"func Store(key string, val interface{}) {\n\tcache[key] = val\n}"}
+{"pattern":"named_returns","native":"func Split(s string) (head, tail string) {\n\thead = s\n\ttail = \"\"\n\treturn\n}"}
+{"pattern":"type_assertion","native":"func asString(v interface{}) string {\n\tif s, ok := v.(string); ok {\n\t\treturn s\n\t}\n\treturn \"\"\n}"}
+{"pattern":"make","native":"func newSet(n int) []string {\n\treturn make([]string, 0, n)\n}"}
+{"pattern":"make","native":"func newMap() map[string]int {\n\treturn make(map[string]int)\n}"}
+{"pattern":"append","native":"func push(s []int, x int) []int {\n\treturn append(s, x)\n}"}
+{"pattern":"struct_embedding","native":"type ReadWriter struct {\n\tReader\n\tWriter\n\tName string\n}"}
+{"pattern":"struct_literal","native":"func newPoint(x, y int) Point {\n\treturn Point{X: x, Y: y}\n}"}
+{"pattern":"method_receiver","native":"type Stack struct {\n\titems []int\n}\nfunc (s *Stack) Push(v int) {\n\ts.items = append(s.items, v)\n}\nfunc (s *Stack) Pop() (int, bool) {\n\tif len(s.items) == 0 {\n\t\treturn 0, false\n\t}\n\tlast := s.items[len(s.items)-1]\n\ts.items = s.items[:len(s.items)-1]\n\treturn last, true\n}"}
+{"pattern":"method_receiver","native":"type Counter struct {\n\tn int\n}\nfunc (c *Counter) Inc() {\n\tc.n++\n}\nfunc (c *Counter) Value() int {\n\treturn c.n\n}"}
+{"pattern":"init_if","native":"func write(path string, data []byte) error {\n\tif err := os.WriteFile(path, data, 0644); err != nil {\n\t\treturn err\n\t}\n\treturn nil\n}"}
+{"pattern":"init_if","native":"func ensureDir(p string) error {\n\tif _, err := os.Stat(p); err != nil {\n\t\treturn os.MkdirAll(p, 0755)\n\t}\n\treturn nil\n}"}
+{"pattern":"error_wrap","native":"func run(cmd string) error {\n\terr := exec.Command(cmd).Run()\n\tif err != nil {\n\t\treturn fmt.Errorf(\"run %s failed: %w\", cmd, err)\n\t}\n\treturn nil\n}"}
+{"pattern":"select","native":"func multiplex(a, b <-chan int) int {\n\tselect {\n\tcase x := <-a:\n\t\treturn x\n\tcase y := <-b:\n\t\treturn y\n\t}\n}"}

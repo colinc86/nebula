@@ -1254,16 +1254,34 @@ impl Interpreter {
                 try_block,
                 error_binding,
                 catch_block,
+                finally_block,
             } => {
-                match self.eval_block(try_block) {
+                let primary = match self.eval_block(try_block) {
                     Ok(val) => Ok(val),
                     Err(e) => {
-                        self.scopes.push(Scope::new());
-                        self.define_var(error_binding, Value::String(e.message), false);
-                        let result = self.eval_block(catch_block)?;
-                        self.scopes.pop();
-                        Ok(result)
+                        let has_catch = !catch_block.statements.is_empty()
+                            || catch_block.expr.is_some()
+                            || error_binding != "_";
+                        if has_catch {
+                            self.scopes.push(Scope::new());
+                            self.define_var(error_binding, Value::String(e.message.clone()), false);
+                            let result = self.eval_block(catch_block);
+                            self.scopes.pop();
+                            result
+                        } else {
+                            Err(e)
+                        }
                     }
+                };
+                // `finally` runs regardless, before the overall result propagates.
+                // If the finally block itself errors, that error supersedes.
+                if let Some(fb) = finally_block {
+                    match self.eval_block(fb) {
+                        Ok(_) => primary,
+                        Err(fe) => Err(fe),
+                    }
+                } else {
+                    primary
                 }
             },
         }

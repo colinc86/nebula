@@ -42,6 +42,7 @@ pub enum Token {
     Spawn,
     Try,
     Catch,
+    Finally,
     Throw,
     And,
     Or,
@@ -106,8 +107,6 @@ pub enum Token {
 
     // Special
     Newline,
-    Indent,       // Increase in indentation level
-    Dedent,       // Decrease in indentation level
     Eof,
 }
 
@@ -830,6 +829,7 @@ impl Lexer {
             "sp" | "spawn" => Token::Spawn,
             "try" => Token::Try,
             "ch" | "catch" | "except" => Token::Catch,
+            "finally" => Token::Finally,
             "throw" | "raise" => Token::Throw,
             "and" => Token::And,
             "or" => Token::Or,

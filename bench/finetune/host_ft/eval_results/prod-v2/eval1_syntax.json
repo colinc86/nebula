@@ -1,0 +1,195 @@
+{
+  "eval": "eval1_syntax",
+  "total": 30,
+  "passed": 27,
+  "rate": 0.9,
+  "natural_total": 28,
+  "natural_passed": 27,
+  "natural_rate": 0.9642857142857143,
+  "truncated": 2,
+  "pass_bar": 0.95,
+  "decision": "pass",
+  "note": "Decision uses natural_rate (responses that finished without hitting max_tokens). rate (includes truncation) is reported for visibility.",
+  "per_prompt": [
+    {
+      "prompt": "Translate this Swift snippet into Nebula IL:\n\n```swift\nfunc apply(to xs: [Int], ",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef apply(xs: List, f: Any) -> List:\n  return xs.map(f)\n```"
+    },
+    {
+      "prompt": "Port this Go to Nebula IL:\n\n```go\nfunc load() error {\n\tif err := fetch(); err !=",
+      "ok": false,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef load() -> error:\n  if err := fetch(); err != None:\n    return err\n  return None\n```"
+    },
+    {
+      "prompt": "Translate this Swift snippet into Nebula IL:\n\n```swift\nfunc shout(_ s: String) -",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef shout(s: Str) -> Str:\n  return s.uppercased() + \"not \"\n```"
+    },
+    {
+      "prompt": "Translate this JavaScript snippet into Nebula IL:\n\n```js\nasync function sum(ids)",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\nfn sum(ids):\n  users := promise.all(ids.map(fetch_user))\n  return users.len\n```"
+    },
+    {
+      "prompt": "Port this Go to Nebula IL:\n\n```go\nfunc Parse(s string) (int, error) {\n\tif n, err",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef parse(s: Str) -> (int, error):\n  (n, err) = strconv.atoi(s)\n  if err != None:\n    return (0, fmt.errorf(\"bad input: %w\", err))\n  else:\n    return (n, None)\n```"
+    },
+    {
+      "prompt": "Translate this TypeScript snippet into Nebula IL:\n\n```ts\ninterface Point {\n    x",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\nstruct Point:\n  x: Int\n  y: Int\n```"
+    },
+    {
+      "prompt": "Translate this Kotlin snippet into Nebula IL:\n\n```kt\nfun sortedUnique(xs: List<I",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef sorted_unique(xs: List[Int]) -> List[Int]:\n  return xs.distinct().sorted()\n```"
+    },
+    {
+      "prompt": "Write a function equivalent to C's `strcpy_safe(char *dst, const char *src, size",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef strcpy_safe(dst: Str, src: Str, n: Int):\n  strncpy(dst, src, n)\n  dst[n - 1] = 0\n```"
+    },
+    {
+      "prompt": "Write a function equivalent to Go's `run(cmd string) error`. Respond in Nebula I",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef run(cmd: Str) -> error:\n  return run_with_env(cmd, None)\n```"
+    },
+    {
+      "prompt": "Port this C to Nebula IL:\n\n```c\nunsigned int low_byte(unsigned int v) {\n    retu",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef low_byte(v: Int) -> Int:\n  return v & 0xff\n```"
+    },
+    {
+      "prompt": "Translate this JavaScript snippet into Nebula IL:\n\n```js\nfunction keys(m) {\n    ",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef keys(m):\n  out := []\n  for k in object.keys(m):\n    out.append(k)\n  return out\n```"
+    },
+    {
+      "prompt": "Translate this TypeScript snippet into Nebula IL:\n\n```ts\ninterface User {\n    id",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\nstruct User:\n  id: Int\n  name: Str\n  email: Str\n```"
+    },
+    {
+      "prompt": "Translate this C snippet into Nebula IL:\n\n```c\nint count_pairs(int *xs, size_t n",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef count_pairs(xs: Int, n: Int) -> Int:\n  count := 0\n  i = 0\n  while i < n:\n    j = i + 1\n    while j < n:\n      if xs[i] + xs[j] == 10:\n        count += 1\n      j += 1\n    i += 1\n  return count\n```"
+    },
+    {
+      "prompt": "Translate this Rust snippet into Nebula IL:\n\n```rs\nfn classify(n: i32) -> &'stat",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef classify(n: Int) -> Str:\n  match n:\n      0 => \"zero\"\n      n if n > 0 => \"positive\"\n      _ => \"negative\"\n```"
+    },
+    {
+      "prompt": "Translate this Kotlin snippet into Nebula IL:\n\n```kt\nfun length(s: String?): Int",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef length(s: Str) -> Int:\n  return s?.length ?? 0\n```"
+    },
+    {
+      "prompt": "Translate this JavaScript code into Nebula IL:\n\n```js\nfunction makeUser(name, ag",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef make_user(name, age):\n  return {name: name, age: age}\n```"
+    },
+    {
+      "prompt": "Write a Nebula function that returns the sum of a list of numbers.",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\nfn sum_list(xs) = xs.fold(0, |acc, x| acc + x)\n```"
+    },
+    {
+      "prompt": "Write a function equivalent to Kotlin's `putFloatExtra(key: String, value: Float",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\n  def put_float_extra(key: Str, value: Float):\n    intent.put_extra(key, value)\n```"
+    },
+    {
+      "prompt": "Write a function equivalent to Rust's `type_info()`. Respond in Nebula IL.",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef type_info() -> TypeInfo:\n  TypeInfo.new(\"String\")\n```"
+    },
+    {
+      "prompt": "Write a function equivalent to Go's `AddFileRoutes(serverRouter *mux.Router, sh ",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef add_file_routes(server_router: MuxRouter, sh: ModuleStoreStoreHolder):\n  file_router = server_router.path_prefix(\"/file\").subrouter()\n  file_router.handle_func(\"/upload\", file_upload_handler(sh)).methods(\"POST\")\n  file_router.handle_func(\"/download/{id}\", file_download_handler(sh)).met"
+    },
+    {
+      "prompt": "Write a function equivalent to Go's `BenchmarkAzureServiceBusPubSub(b *testing.B",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef benchmark_azure_service_bus_pub_sub(b: TestingB):\n  benchmark_pub_sub(b, \"azure_service_bus\", map)\n```"
+    },
+    {
+      "prompt": "Write a function equivalent to Kotlin's `prepare()`. Respond in Nebula IL.",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\n  def prepare():\n    if (not is_prepared):\n      is_prepared = True\n      on_prepare()\n```"
+    },
+    {
+      "prompt": "Write a function equivalent to TypeScript's `capitalize(s: string)`. Respond in ",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef capitalize(s: Str):\n  return s[0].to_upper_case() + s.slice(1)\n```"
+    },
+    {
+      "prompt": "Write a function equivalent to C's `sub_help_menu_pt(void)`. Respond in Nebula I",
+      "ok": false,
+      "finish_reason": "length",
+      "response": "```nebula\ndef sub_help_menu_pt(_):\n  print(\"Menu de Ajuda\")\n  print(\"1. Ajuda do menu principal\")\n  print(\"2. Ajuda do menu de cadastro\")\n  print(\"3. Ajuda do menu de busca\")\n  print(\"4. Ajuda do menu de listagem\")\n  print(\"5. Ajuda do menu de exclusao\")\n  print(\"6. Ajuda do menu de atualizacao\")\n  "
+    },
+    {
+      "prompt": "Write a function `find_max` that Write a function that accepts a list of strings",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef find_max(lst):\n    max_unique = 0\n    max_str = \"\"\n    for s in lst:\n        unique_chars = len(set(s))\n        if unique_chars > max_unique:\n            max_unique = unique_chars\n            max_str = s\n        elif unique_chars == max_unique and s < max_str:\n            max_str = s\n "
+    },
+    {
+      "prompt": "Write a function equivalent to C's `mp_hal_pin_config(mp_hal_pin_obj_t pin_obj, ",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\ndef mp_hal_pin_config(pin_obj: mp_hal_pin_obj_t, mode: Int, pull: Int, alt: Int):\n  GPIO_InitTypeDef GPIO_InitStructure\n  GPIO_InitStructure.pin = pin_obj.pin_mask\n  GPIO_InitStructure.mode = mode\n  GPIO_InitStructure.pull = pull\n  GPIO_InitStructure.speed = GPIO_SPEED_FREQ_VERY_HIGH\n  GPI"
+    },
+    {
+      "prompt": "Write a function equivalent to Kotlin's `whenSha1HashCalledOnStringThenResultIsC",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\n  def when_sha1_hash_called_on_string_then_result_is_correct():\n    assert_that(\"test\".sha1_hash()).is_equal_to(\"a94a8fe5ccb19ba61c4c0873d391e987982fbbd3\")\n```"
+    },
+    {
+      "prompt": "Write a function equivalent to Swift's `addChallenge()`. Respond in Nebula IL.",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\n  def add_challenge():\n    challenge = challenge()\n    challenge.name = \"My Challenge\"\n    challenge.start_date = date()\n    challenge.end_date = date().adding_time_interval(60 * 60 * 24 * 7)\n    challenge.goal = 10000\n    challenge.unit = \"steps\"\n    challenge.frequency = \"daily\"\n    chal"
+    },
+    {
+      "prompt": "Write a function equivalent to Go's `TestMetrics(t *testing.T)`. Respond in Nebu",
+      "ok": false,
+      "finish_reason": "length",
+      "response": "```nebula\ndef test_metrics(t: TestingT):\n  test_metrics := new_test_metrics()\n  test_metrics.add(\"test\", 1)\n  test_metrics.add(\"test\", 2)\n  test_metrics.add(\"test\", 3)\n  test_metrics.add(\"test\", 4)\n  test_metrics.add(\"test\", 5)\n  test_metrics.add(\"test\", 6)\n  test_metrics.add(\"test\", 7)\n  test_metri"
+    },
+    {
+      "prompt": "Write a function equivalent to Kotlin's `encrypts_and_decrypts_with_keys_in_memo",
+      "ok": true,
+      "finish_reason": "stop",
+      "response": "```nebula\n  def encrypts_and_decrypts_with_keys_in_memory():\n    key := key_generator.generate_key()\n    encrypted := encryptor.encrypt(\"hello world\", key)\n    decrypted := encryptor.decrypt(encrypted, key)\n    assert_that(decrypted).is_equal_to(\"hello world\")\n```"
+    }
+  ]
+}
